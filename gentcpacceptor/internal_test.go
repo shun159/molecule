@@ -47,7 +47,7 @@ func TestAdapter(t *testing.T) {
 	sock := Socket{PID: pid}
 	a := adapter[rstate]{b: recorder{}, activeN: 3}
 
-	c, effs := a.Handle(conn[rstate]{}, info("before attach"))
+	c, effs := a.Handle(initial(a), info("before attach"))
 	if c.ready || effs != nil {
 		t.Errorf("before attach: %+v, %#v", c, effs)
 	}
@@ -80,7 +80,7 @@ func TestAdapter(t *testing.T) {
 	}
 
 	m := adapter[int]{b: minimal{}, activeN: 1}
-	mc, _ := m.Handle(conn[int]{}, info(attached{sock}))
+	mc, _ := m.Handle(initial(m), info(attached{sock}))
 	if mc, effs = m.Handle(mc, info("ignored")); effs != nil || mc.state != 0 {
 		t.Errorf("info without InfoHandler: %+v, %#v", mc, effs)
 	}
@@ -152,10 +152,10 @@ func (terminator) Terminate(n int, reason error) []gen.Effect {
 func TestAdapterTerminate(t *testing.T) {
 	a := adapter[int]{b: terminator{}, activeN: 1}
 	boom := errors.New("boom")
-	if effs := a.Terminate(conn[int]{}, boom); effs != nil {
+	if effs := a.Terminate(initial(a), boom); effs != nil {
 		t.Errorf("Terminate before Init: %#v", effs)
 	}
-	c, _ := a.Handle(conn[int]{}, info(attached{Socket{}}))
+	c, _ := a.Handle(initial(a), info(attached{Socket{}}))
 	if effs := a.Terminate(c, boom); !reflect.DeepEqual(effs, gen.Do(gen.Stop{Reason: boom})) {
 		t.Errorf("Terminate after Init: %#v", effs)
 	}
@@ -265,4 +265,11 @@ func TestSocketHandsOverFullReads(t *testing.T) {
 	if !bytes.Equal(first.b, chunks[0]) || !bytes.Equal(second.b, chunks[1]) {
 		t.Errorf("first read now %q..., second %q...", first.b[:4], second.b[:4])
 	}
+}
+
+// initial is the state of a connection process once started, as the
+// runtime makes it with Init.
+func initial[S any](a adapter[S]) conn[S] {
+	c, _, _ := a.Init(proc.PID{}, nil)
+	return c
 }

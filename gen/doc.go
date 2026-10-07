@@ -36,6 +36,12 @@
 // [Start] or [StartLink] owns the process: it receives the messages, calls
 // the behaviour, and performs the effects.
 //
+// The state is passed and returned by value, and the runtime copies it from
+// call to call. A large state, such as a big struct, makes every call copy
+// it and enlarges the stack of the process; it is better kept small, with
+// large data behind a pointer to something never modified, or in a map or
+// slice copied when changed.
+//
 // Handle gets a [Msg]: a [CallMsg], a [CastMsg], an [InfoMsg] for any other
 // message, or a [ContinueMsg]. An InfoMsg also carries the outcome of an
 // effect: a [Down] for a Monitor, a [Response] for a SendRequest, the

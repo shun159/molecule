@@ -48,11 +48,20 @@ type Terminator[S any] interface {
 
 // conn is the state of the connection process: the state of the
 // behaviour, once the socket is attached.
+//
+// The runtime copies its state from call to call, so conn stays small:
+// what does not change for the life of the connection is behind a pointer.
+// What it points to is never modified, so sharing it keeps the state pure.
 type conn[S any] struct {
-	self  proc.PID
-	sock  Socket
+	id    *ident
 	ready bool
 	state S
+}
+
+// ident is what a connection process knows of itself.
+type ident struct {
+	self proc.PID
+	sock Socket
 }
 
 // adapter runs a Behaviour as a gen.Behaviour.
@@ -62,7 +71,7 @@ type adapter[S any] struct {
 }
 
 func (adapter[S]) Init(self proc.PID, _ any) (conn[S], []gen.Effect, error) {
-	return conn[S]{self: self}, nil, nil
+	return conn[S]{id: &ident{self: self}}, nil, nil
 }
 
 func (a adapter[S]) Handle(c conn[S], msg gen.Msg) (conn[S], []gen.Effect) {
@@ -72,25 +81,26 @@ func (a adapter[S]) Handle(c conn[S], msg gen.Msg) (conn[S], []gen.Effect) {
 	}
 	switch m := info.Msg.(type) {
 	case attached:
-		state, effs, err := a.b.Init(c.self, m.sock)
+		state, effs, err := a.b.Init(c.id.self, m.sock)
 		if err != nil {
 			return c, gen.Do(gen.Stop{Reason: err})
 		}
-		return conn[S]{self: c.self, sock: m.sock, ready: true, state: state}, then(effs, m.sock.active(a.activeN))
+		id := &ident{self: c.id.self, sock: m.sock}
+		return conn[S]{id: id, ready: true, state: state}, then(effs, m.sock.active(a.activeN))
 	case data:
-		if !c.ready || m.sock != c.sock.PID {
+		if !c.ready || m.sock != c.id.sock.PID {
 			return c, nil
 		}
 		var effs []gen.Effect
-		c.state, effs = a.b.HandleData(c.state, c.sock, m.b)
-		return c, then(effs, c.sock.active(1))
+		c.state, effs = a.b.HandleData(c.state, c.id.sock, m.b)
+		return c, then(effs, c.id.sock.active(1))
 	case closed:
-		if !c.ready || m.sock != c.sock.PID {
+		if !c.ready || m.sock != c.id.sock.PID {
 			return c, nil
 		}
 		if h, ok := a.b.(ClosedHandler[S]); ok {
 			var effs []gen.Effect
-			c.state, effs = h.HandleClosed(c.state, c.sock, m.err)
+			c.state, effs = h.HandleClosed(c.state, c.id.sock, m.err)
 			return c, effs
 		}
 		if m.err == nil {
@@ -107,7 +117,7 @@ func (a adapter[S]) info(c conn[S], msg any) (conn[S], []gen.Effect) {
 		return c, nil
 	}
 	var effs []gen.Effect
-	c.state, effs = h.HandleInfo(c.state, c.sock, msg)
+	c.state, effs = h.HandleInfo(c.state, c.id.sock, msg)
 	return c, effs
 }
 

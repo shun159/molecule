@@ -7,7 +7,9 @@ import (
 	"hash/crc32"
 	"io"
 	"net"
+	"runtime"
 	"testing"
+	"time"
 
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/gentcpacceptor"
@@ -258,6 +260,38 @@ func BenchmarkStream(b *testing.B) {
 			}
 			if n := binary.BigEndian.Uint64(got[:]); n != want {
 				b.Fatalf("server counted %d bytes, want %d", n, want)
+			}
+		})
+	}
+}
+
+// BenchmarkIdleConnMemory reports the memory an idle connection takes,
+// heap and stack apart, client side included alike for both servers.
+func BenchmarkIdleConnMemory(b *testing.B) {
+	const conns = 1000
+	for _, srv := range servers {
+		b.Run(srv.name, func(b *testing.B) {
+			addr := srv.start(b)
+			var before, after runtime.MemStats
+			runtime.GC()
+			runtime.ReadMemStats(&before)
+			var cs []net.Conn
+			for range conns {
+				c, err := net.Dial("tcp", addr)
+				if err != nil {
+					b.Fatal(err)
+				}
+				cs = append(cs, c)
+			}
+			time.Sleep(time.Second)
+			for range 5 { // stacks shrink by half per collection
+				runtime.GC()
+			}
+			runtime.ReadMemStats(&after)
+			b.ReportMetric(float64(after.HeapInuse-before.HeapInuse)/conns/1024, "heap-KB/conn")
+			b.ReportMetric(float64(after.StackInuse-before.StackInuse)/conns/1024, "stack-KB/conn")
+			for _, c := range cs {
+				c.Close()
 			}
 		})
 	}
