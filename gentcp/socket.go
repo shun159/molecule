@@ -134,7 +134,8 @@ func (s Socket) ControllingProcess(ctx context.Context, caller gen.Caller, owner
 
 // Shutdown closes one side of the connection, or both, like
 // gen_tcp:shutdown: Write tells the peer no more data comes, while the
-// socket still receives.
+// socket still receives. It needs a TCP connection, and fails on another,
+// such as TLS, given to Start.
 func (s Socket) Shutdown(ctx context.Context, caller gen.Caller, how How) error {
 	return s.call(ctx, caller, shutdownReq{how})
 }
@@ -218,7 +219,7 @@ func Connect(ctx context.Context, owner *proc.Self, addr string, opts Options) (
 // Start makes a socket of conn, a connection made by other means, owned by
 // owner. The socket owns conn from then on, and closes it.
 func Start(n *proc.Node, conn net.Conn, owner proc.PID, opts Options) Socket {
-	w := &writer{conn: conn, packet: opts.Packet, timeout: opts.SendTimeout}
+	w := newWriter(conn, opts)
 	addrs := Socket{LocalAddr: conn.LocalAddr(), RemoteAddr: conn.RemoteAddr(), w: w}
 	started := make(chan struct{})
 	sock := addrs

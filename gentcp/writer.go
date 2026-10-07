@@ -20,6 +20,17 @@ type writer struct {
 	packet  Packet
 	timeout time.Duration
 	done    <-chan struct{} // the socket process is dead
+	// vectored tells a connection writing several buffers at once, as a
+	// TCP connection does with writev. Another, such as TLS, gets a
+	// packet in one write, joined in buf, rather than one per buffer.
+	vectored bool
+	buf      []byte
+}
+
+func newWriter(conn net.Conn, opts Options) *writer {
+	_, tcp := conn.(*net.TCPConn)
+	_, unix := conn.(*net.UnixConn)
+	return &writer{conn: conn, packet: opts.Packet, timeout: opts.SendTimeout, vectored: tcp || unix}
 }
 
 // sendFailed tells the socket process that a write failed.
@@ -43,11 +54,18 @@ func (w *writer) write(data []byte) (failed bool, err error) {
 	if w.timeout > 0 {
 		w.conn.SetWriteDeadline(time.Now().Add(w.timeout))
 	}
-	if len(hdr) == 0 {
+	switch {
+	case len(hdr) == 0:
 		_, err = w.conn.Write(data)
-	} else {
+	case w.vectored:
 		bufs := net.Buffers{hdr, data}
 		_, err = bufs.WriteTo(w.conn)
+	default:
+		w.buf = append(append(w.buf[:0], hdr...), data...)
+		_, err = w.conn.Write(w.buf)
+		if cap(w.buf) > 64<<10 {
+			w.buf = nil // keep no large buffer
+		}
 	}
 	switch {
 	case err == nil:

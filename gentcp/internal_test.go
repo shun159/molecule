@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -157,5 +159,42 @@ func TestDirectOrder(t *testing.T) {
 	}()
 	if msg, ok := <-failed; ok {
 		t.Fatal(msg)
+	}
+}
+
+// countConn counts the writes to a connection.
+type countConn struct {
+	net.Conn
+	mu     sync.Mutex
+	writes int
+}
+
+func (c *countConn) Write(b []byte) (int, error) {
+	c.mu.Lock()
+	c.writes++
+	c.mu.Unlock()
+	return c.Conn.Write(b)
+}
+
+// TestOneWritePerPacket sends a framed packet on a connection other than
+// TCP, such as TLS: header and data go in one write.
+func TestOneWritePerPacket(t *testing.T) {
+	n := proc.NewNode("")
+	server, peer := net.Pipe()
+	defer peer.Close()
+	conn := &countConn{Conn: server}
+	owner := n.Spawn(func(s *proc.Self) error {
+		_, err := s.Receive(context.Background())
+		return err
+	})
+	sock := Start(n, conn, owner, Options{Packet: Packet4})
+	go io.Copy(io.Discard, peer)
+	if err := sock.Send(context.Background(), n, []byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+	if conn.writes != 1 {
+		t.Errorf("%d writes", conn.writes)
 	}
 }
