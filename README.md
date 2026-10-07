@@ -27,6 +27,7 @@ functions, without starting a process.
     supervisor      supervisors, static and dynamic
     pg              process groups
     gentcp          TCP sockets owned by processes, like gen_tcp
+    dist            distribution: processes of several nodes, by PID
     gentcpacceptor  TCP acceptor pool and connection behaviour
     gensim          deterministic simulation of behaviours
 
