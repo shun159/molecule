@@ -25,14 +25,15 @@ functions, without starting a process.
     genserver       gen_server
     genstatem       gen_statem
     supervisor      supervisors, static and dynamic
+    pg              process groups
     gentcpacceptor  TCP acceptor pool and connection behaviour
     gensim          deterministic simulation of behaviours
 
 ## Documentation
 
 The package documentation is available through `go doc`. The `examples`
-directory holds small programs: an echo server, a server crashing and being
-restarted, a mailbox under load, and the code lock and push button of the
-gen_statem documentation.
+directory holds small programs: an echo server, a chat server, a server
+crashing and being restarted, a mailbox under load, and the code lock and
+push button of the gen_statem documentation.
 
 molecule requires Go 1.27.
