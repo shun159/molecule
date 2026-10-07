@@ -8,9 +8,11 @@
 package gentcpacceptor
 
 import (
+	"fmt"
 	"slices"
 
 	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule/proc"
 )
 
 // Behaviour handles one connection with state S.
@@ -31,7 +33,8 @@ type Behaviour[S any] interface {
 
 // ClosedHandler is called when the connection is closed, by the peer
 // (err is nil) or by an error. Without it, the handler stops: normally
-// when the peer closed, with err otherwise.
+// when the peer closed, and otherwise with err wrapped in proc.Shutdown,
+// as a connection lost is no failure of the handler to report.
 type ClosedHandler[S any] interface {
 	HandleClosed(state S, sock Socket, err error) (S, []gen.Effect)
 }
@@ -92,7 +95,10 @@ func (a adapter[S]) Handle(c conn[S], msg gen.Msg) (conn[S], []gen.Effect) {
 			c.state, effs = h.HandleClosed(c.state, c.sock, m.err)
 			return c, effs
 		}
-		return c, gen.Do(gen.Stop{Reason: m.err}) // nil: normal
+		if m.err == nil {
+			return c, gen.Do(gen.Stop{})
+		}
+		return c, gen.Do(gen.Stop{Reason: fmt.Errorf("%w: %w", proc.Shutdown, m.err)})
 	}
 	return a.info(c, info.Msg)
 }

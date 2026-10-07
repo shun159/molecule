@@ -11,6 +11,7 @@ import (
 
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/genserver"
+	"github.com/shun159/molecule/internal/testlog"
 	"github.com/shun159/molecule/proc"
 	"github.com/shun159/molecule/supervisor"
 )
@@ -71,6 +72,7 @@ func (worker) Terminate(w worker, reason error) []gen.Effect {
 type world struct {
 	t        *testing.T
 	n        *proc.Node
+	log      *testlog.Recorder
 	observer proc.PID
 	events   chan any
 	kill     []proc.PID
@@ -78,7 +80,8 @@ type world struct {
 
 func inWorld(t *testing.T, f func(w *world)) {
 	synctest.Test(t, func(t *testing.T) {
-		w := &world{t: t, n: proc.NewNode(""), events: make(chan any, 64)}
+		rec, logger := testlog.New()
+		w := &world{t: t, n: proc.NewNode("", proc.WithLogger(logger)), log: rec, events: make(chan any, 64)}
 		w.observer = w.n.Spawn(func(s *proc.Self) error {
 			for {
 				msg, err := s.Receive(context.Background())

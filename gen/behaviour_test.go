@@ -5,11 +5,13 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule/internal/testlog"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -598,4 +600,43 @@ func TestSendAndCastEffects(t *testing.T) {
 			t.Errorf("peer state = %v", v)
 		}
 	})
+}
+
+func TestTerminateReport(t *testing.T) {
+	rec, logger := testlog.New()
+	n := proc.NewNode("", proc.WithLogger(logger))
+	ctx := context.Background()
+
+	pid, err := gen.Start(ctx, n, puppet{}, pargs{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gen.SendCast(n, pid, 5)
+	down, stop := n.Watch(ctx, pid)
+	defer stop()
+	gen.Call(ctx, n, pid, "panic")
+	<-down.Done()
+
+	reports := rec.Records("behaviour terminating")
+	if len(reports) != 1 {
+		t.Fatalf("reports = %+v", rec.Records(""))
+	}
+	r := reports[0].Attrs
+	if !strings.Contains(r["last_message"], "panic") || !strings.Contains(r["state"], "n:5") ||
+		!strings.Contains(r["reason"], "in handle") || !strings.Contains(r["behaviour"], "puppet") {
+		t.Errorf("report = %+v", r)
+	}
+	if len(rec.Records("crash report")) != 1 {
+		t.Errorf("crash reports = %+v", rec.Records("crash report"))
+	}
+
+	// A normal stop is not reported.
+	pid, _ = gen.Start(ctx, n, puppet{}, pargs{})
+	down2, stop2 := n.Watch(ctx, pid)
+	defer stop2()
+	gen.Call(ctx, n, pid, do{gen.Do(gen.Stop{})})
+	<-down2.Done()
+	if len(rec.Records("behaviour terminating")) != 1 {
+		t.Errorf("normal stop reported: %+v", rec.Records(""))
+	}
 }

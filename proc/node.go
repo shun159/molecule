@@ -1,6 +1,7 @@
 package proc
 
 import (
+	"log/slog"
 	"math/rand/v2"
 	"sync"
 	"sync/atomic"
@@ -22,15 +23,21 @@ type Node struct {
 
 	regMu sync.Mutex
 	names map[string]PID // guarded by regMu, as is process.name
+
+	logger *slog.Logger // nil: slog.Default()
 }
 
 // NewNode creates a node. Each node gets a fresh, non-zero creation so
 // PIDs from a previous node with the same name are never mistaken as alive.
-func NewNode(name string) *Node {
+func NewNode(name string, opts ...Option) *Node {
 	if name == "" {
 		name = DefaultNodeName
 	}
-	return &Node{name: name, creation: rand.Uint32() | 1, names: make(map[string]PID)}
+	n := &Node{name: name, creation: rand.Uint32() | 1, names: make(map[string]PID)}
+	for _, opt := range opts {
+		opt(n)
+	}
+	return n
 }
 
 // Name returns the node name.

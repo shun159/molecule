@@ -164,10 +164,12 @@ func (d *dynamic) loop() error {
 				continue
 			}
 			delete(d.running, m.From)
+			reportTerminated(d.self, "", m.From, c.spec.Restart, m.Reason)
 			if !shouldRestart(c.spec.Restart, m.Reason) {
 				continue // forgotten: a child is only known by its PID
 			}
 			if err := d.restart(c); err != nil {
+				reportShutdown(d.self, err)
 				d.terminateAll()
 				return err
 			}
@@ -178,6 +180,7 @@ func (d *dynamic) loop() error {
 			}
 			delete(d.retrying, m.seq)
 			if err := d.restart(c); err != nil {
+				reportShutdown(d.self, err)
 				d.terminateAll()
 				return err
 			}
@@ -225,10 +228,14 @@ func (d *dynamic) call(req any) any {
 func (d *dynamic) start(c *dynamicChild) error {
 	pid, err := c.spec.Start(context.Background(), d.self)
 	if err != nil {
+		if !errors.Is(err, gen.ErrIgnore) {
+			reportStartFailed(d.self, "", err)
+		}
 		return err
 	}
 	c.pid = pid
 	d.running[pid] = c
+	reportStarted(d.self, "", pid)
 	return nil
 }
 

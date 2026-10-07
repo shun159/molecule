@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/gentcpacceptor"
+	"github.com/shun159/molecule/internal/testlog"
 	"github.com/shun159/molecule/proc"
 	"github.com/shun159/molecule/supervisor"
 )
@@ -237,4 +239,35 @@ func TestSocketAddrs(t *testing.T) {
 	if err != nil || strings.TrimSpace(got) != c.conn.LocalAddr().String() {
 		t.Errorf("greeting = %q, %v; want %v", got, err, c.conn.LocalAddr())
 	}
+}
+
+// TestConnectionResetNotReported checks that a peer resetting the
+// connection, which is no failure of the handler, makes no error report.
+func TestConnectionResetNotReported(t *testing.T) {
+	rec, logger := testlog.New()
+	n := proc.NewNode("", proc.WithLogger(logger))
+	l, err := gentcpacceptor.Start(context.Background(), n, gentcpacceptor.Spec{Addr: "127.0.0.1:0"}, lineHandler{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Stop(context.Background(), n)
+
+	c := dial(t, l)
+	c.send("hi")
+	c.conn.(*net.TCPConn).SetLinger(0) // close with a reset
+	c.conn.Close()
+	eventually(t, "the connection process to stop", func() bool { return count(t, n, l) == 0 })
+
+	for _, r := range rec.Records("") {
+		if r.Level >= slog.LevelError {
+			t.Errorf("reported: %s %v", r.Message, r.Attrs)
+		}
+	}
+
+	// A crash, though, is.
+	crash := dial(t, l)
+	crash.send("hi")
+	io.WriteString(crash.conn, "crash\n")
+	crash.closedByServer()
+	eventually(t, "the crash report", func() bool { return len(rec.Records("crash report")) == 1 })
 }

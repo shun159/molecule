@@ -232,6 +232,7 @@ func run(ctx context.Context, self *proc.Self, spec Spec) error {
 	for _, cs := range spec.Children {
 		c := &child{spec: cs}
 		if err := s.start(ctx, c); err != nil {
+			reportStartFailed(self, cs.ID, err)
 			s.terminateAll()
 			err = &StartError{ID: cs.ID, Reason: err}
 			self.InitAck(err)
@@ -259,8 +260,10 @@ func (s *supervisor) loop() error {
 			if c == nil {
 				continue // a child already stopped or replaced
 			}
+			reportTerminated(s.self, c.spec.ID, m.From, c.spec.Restart, m.Reason)
 			c.pid = proc.PID{}
 			if err := s.exited(c, m.Reason); err != nil {
+				reportShutdown(s.self, err)
 				s.terminateAll()
 				return err
 			}
@@ -270,6 +273,7 @@ func (s *supervisor) loop() error {
 				continue
 			}
 			if err := s.restart(c); err != nil {
+				reportShutdown(s.self, err)
 				s.terminateAll()
 				return err
 			}
@@ -314,6 +318,7 @@ func (s *supervisor) restart(c *child) error {
 			continue
 		}
 		if err := s.start(context.Background(), cc); err != nil {
+			reportStartFailed(s.self, cc.spec.ID, err)
 			// The children after it stay down until the retry.
 			s.self.Send(s.self.PID(), retry{id: cc.spec.ID})
 			return nil
@@ -332,6 +337,7 @@ func (s *supervisor) start(ctx context.Context, c *child) error {
 		return err
 	}
 	c.pid = pid
+	reportStarted(s.self, c.spec.ID, pid)
 	return nil
 }
 

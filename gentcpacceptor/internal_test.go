@@ -70,8 +70,10 @@ func TestAdapter(t *testing.T) {
 		t.Errorf("infos = %#v", c.state.infos)
 	}
 	boom := errors.New("boom")
-	if _, effs = a.Handle(c, info(closed{sock: pid, err: boom})); !reflect.DeepEqual(effs, gen.Do(gen.Stop{Reason: boom})) {
-		t.Errorf("on closed with an error: %#v", effs)
+	_, effs = a.Handle(c, info(closed{sock: pid, err: boom}))
+	if stop, ok := effs[0].(gen.Stop); len(effs) != 1 || !ok ||
+		!errors.Is(stop.Reason, proc.Shutdown) || !errors.Is(stop.Reason, boom) {
+		t.Errorf("on closed with an error: %#v, want a stop with a shutdown wrapping it", effs)
 	}
 	if _, effs = a.Handle(c, info(closed{sock: pid})); !reflect.DeepEqual(effs, gen.Do(gen.Stop{})) {
 		t.Errorf("on closed by the peer: %#v", effs)

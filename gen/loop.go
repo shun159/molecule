@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"runtime/debug"
 	"time"
 
@@ -37,6 +38,8 @@ type runtime[S any] struct {
 
 	suspended bool
 	deferred  []any
+
+	last any // the message being handled, for the report on termination
 }
 
 type timer struct {
@@ -103,6 +106,7 @@ func (r *runtime[S]) loop() error {
 			continue
 		}
 		if e, ok := msg.(proc.ExitMsg); ok && e.From == r.self.Parent() && !e.From.IsZero() {
+			r.last = e
 			return r.terminate(r.state, e.Reason)
 		}
 		if r.suspended {
@@ -113,6 +117,7 @@ func (r *runtime[S]) loop() error {
 		if !ok {
 			continue
 		}
+		r.last = in
 		state, effs, err := r.handle(in)
 		if err != nil {
 			return r.terminate(r.state, err)
@@ -190,10 +195,38 @@ func (r *runtime[S]) terminate(state S, reason error) (exit error) {
 			exit = &proc.PanicError{Value: v, Stack: debug.Stack()}
 		}
 	}()
+	if proc.IsAbnormal(reason) {
+		r.report(state, reason)
+	}
 	effs := r.b.Terminate(state, reason)
 	r.stopping = true // Stop has no further effect
 	r.apply(effs)
 	return reason
+}
+
+// report logs that the behaviour terminates abnormally, with the message
+// it was handling and its state, like the report of a terminating
+// gen_server. The crash report of the process follows.
+func (r *runtime[S]) report(state S, reason error) {
+	r.self.Node().Logger().Error("behaviour terminating",
+		slog.String("pid", r.self.PID().String()),
+		slog.String("behaviour", fmt.Sprintf("%T", r.b)),
+		slog.String("last_message", brief(r.last)),
+		slog.String("state", brief(state)),
+		slog.String("reason", reason.Error()),
+	)
+}
+
+// briefLimit bounds the size of values in reports.
+const briefLimit = 1024
+
+// brief formats v for a report, cut short if long.
+func brief(v any) string {
+	s := fmt.Sprintf("%+v", v)
+	if len(s) > briefLimit {
+		return s[:briefLimit] + "..."
+	}
+	return s
 }
 
 func (r *runtime[S]) system(m sysMsg) {

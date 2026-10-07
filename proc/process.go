@@ -64,7 +64,16 @@ func (p *process) run(fn func(*Self) error) {
 	// runtime.Goexit unwinds through invoke without returning, so the exit
 	// must happen in a deferred call.
 	reason := ErrGoexit
-	defer func() { p.die(reason) }()
+	defer func() {
+		// Only a process ending by itself is reported: one that was killed
+		// or died from an exit signal ran no code of its own to fail, as in
+		// Erlang. The report comes before the links and monitors learn of
+		// the death.
+		if p.ctx.Err() == nil && IsAbnormal(reason) {
+			p.crashReport(fn, reason)
+		}
+		p.die(reason)
+	}()
 	reason = invoke(fn, &Self{p: p})
 }
 
