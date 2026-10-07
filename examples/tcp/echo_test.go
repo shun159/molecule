@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule/gentcpacceptor"
 	"github.com/shun159/molecule/proc"
 	"github.com/shun159/molecule/supervisor"
-	"github.com/shun159/molecule/tcp"
 )
 
 func TestEchoApplication(t *testing.T) {
@@ -65,18 +65,14 @@ func TestStatsPure(t *testing.T) {
 
 func TestProtocolPure(t *testing.T) {
 	p := EchoProtocol{stats: statsRef}
-	sock := proc.NewNode("").Spawn(func(*proc.Self) error { return nil }) // any PID will do
+	sock := gentcpacceptor.Socket{PID: proc.NewNode("").Spawn(func(*proc.Self) error { return nil })}
 
-	state, effs := p.HandleInfo(proc.PID{}, tcp.Attached{Sock: sock})
-	if state != sock || !reflect.DeepEqual(effs, gen.Do(tcp.ActiveOnce(sock))) {
-		t.Errorf("on Attached: %v, %#v", state, effs)
-	}
-	_, effs = p.HandleInfo(sock, tcp.Data{Sock: sock, Bytes: []byte("hi")})
-	want := gen.Do(tcp.Write(sock, []byte("hi")), statsRef.CastEffect(echoed{2}), tcp.ActiveOnce(sock))
+	_, effs := p.HandleData(struct{}{}, sock, []byte("hi"))
+	want := gen.Do(sock.Write([]byte("hi")), statsRef.CastEffect(echoed{2}))
 	if !reflect.DeepEqual(effs, want) {
-		t.Errorf("on Data: %#v\nwant %#v", effs, want)
+		t.Errorf("HandleData: %#v\nwant %#v", effs, want)
 	}
-	if _, effs = p.HandleInfo(sock, tcp.Closed{Sock: sock}); !reflect.DeepEqual(effs, gen.Do(gen.Stop{})) {
-		t.Errorf("on Closed: %#v", effs)
+	if _, effs, _ := p.Init(sock); !reflect.DeepEqual(effs, gen.Do(statsRef.CastEffect(connOpened{}))) {
+		t.Errorf("Init: %#v", effs)
 	}
 }

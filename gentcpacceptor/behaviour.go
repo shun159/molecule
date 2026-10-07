@@ -1,0 +1,119 @@
+// Package gentcpacceptor is a behaviour for TCP servers, like a Ranch
+// protocol in Erlang: a pool of acceptor processes hands each connection
+// to a process of its own, started under a dynamic supervisor, which runs
+// the callbacks of a Behaviour.
+//
+// A connection is itself a process, as a port is in Erlang, so callbacks
+// stay pure: data arrives as arguments, and writing is an effect.
+package gentcpacceptor
+
+import (
+	"slices"
+
+	"github.com/shun159/molecule/gen"
+)
+
+// Behaviour handles one connection with state S.
+//
+// The runtime reads on demand: once the effects returned by Init or
+// HandleData have been performed, it asks the socket for the next data, so
+// a slow handler is never flooded.
+//
+// A Behaviour may also implement ClosedHandler, InfoHandler and
+// Terminator.
+type Behaviour[S any] interface {
+	// Init is called when the connection is ready. An error stops it.
+	Init(sock Socket) (S, []gen.Effect, error)
+	// HandleData handles bytes read from the connection, as much as one
+	// read returned: a message may come in pieces, or several at once.
+	HandleData(state S, sock Socket, data []byte) (S, []gen.Effect)
+}
+
+// ClosedHandler is called when the connection is closed, by the peer
+// (err is nil) or by an error. Without it, the handler stops: normally
+// when the peer closed, with err otherwise.
+type ClosedHandler[S any] interface {
+	HandleClosed(state S, sock Socket, err error) (S, []gen.Effect)
+}
+
+// InfoHandler handles any other message sent to the connection process,
+// gen.CallMsg and gen.CastMsg included. Without it, they are dropped.
+type InfoHandler[S any] interface {
+	HandleInfo(state S, sock Socket, msg any) (S, []gen.Effect)
+}
+
+// Terminator is called when the connection process stops, see
+// gen.Behaviour. The connection is closed right after.
+type Terminator[S any] interface {
+	Terminate(state S, reason error) []gen.Effect
+}
+
+// conn is the state of the connection process: the state of the
+// behaviour, once the socket is attached.
+type conn[S any] struct {
+	sock  Socket
+	ready bool
+	state S
+}
+
+// adapter runs a Behaviour as a gen.Behaviour.
+type adapter[S any] struct {
+	b Behaviour[S]
+}
+
+func (adapter[S]) Init(any) (conn[S], []gen.Effect, error) { return conn[S]{}, nil, nil }
+
+func (a adapter[S]) Handle(c conn[S], msg gen.Msg) (conn[S], []gen.Effect) {
+	info, ok := msg.(gen.InfoMsg)
+	if !ok {
+		return a.info(c, msg) // a CallMsg or a CastMsg
+	}
+	switch m := info.Msg.(type) {
+	case attached:
+		state, effs, err := a.b.Init(m.sock)
+		if err != nil {
+			return c, gen.Do(gen.Stop{Reason: err})
+		}
+		return conn[S]{sock: m.sock, ready: true, state: state}, rearm(effs, m.sock)
+	case data:
+		if !c.ready || m.sock != c.sock.PID {
+			return c, nil
+		}
+		var effs []gen.Effect
+		c.state, effs = a.b.HandleData(c.state, c.sock, m.b)
+		return c, rearm(effs, c.sock)
+	case closed:
+		if !c.ready || m.sock != c.sock.PID {
+			return c, nil
+		}
+		if h, ok := a.b.(ClosedHandler[S]); ok {
+			var effs []gen.Effect
+			c.state, effs = h.HandleClosed(c.state, c.sock, m.err)
+			return c, effs
+		}
+		return c, gen.Do(gen.Stop{Reason: m.err}) // nil: normal
+	}
+	return a.info(c, info.Msg)
+}
+
+func (a adapter[S]) info(c conn[S], msg any) (conn[S], []gen.Effect) {
+	h, ok := a.b.(InfoHandler[S])
+	if !ok || !c.ready {
+		return c, nil
+	}
+	var effs []gen.Effect
+	c.state, effs = h.HandleInfo(c.state, c.sock, msg)
+	return c, effs
+}
+
+func (a adapter[S]) Terminate(c conn[S], reason error) []gen.Effect {
+	if t, ok := a.b.(Terminator[S]); ok && c.ready {
+		return t.Terminate(c.state, reason)
+	}
+	return nil
+}
+
+// rearm asks for the next data once effs have been performed.
+func rearm(effs []gen.Effect, sock Socket) []gen.Effect {
+	return append(slices.Clip(effs), sock.activeOnce())
+}

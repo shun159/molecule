@@ -1,38 +1,27 @@
-package tcp_test
+package gentcpacceptor_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"testing"
 
 	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule/gentcpacceptor"
 	"github.com/shun159/molecule/proc"
-	"github.com/shun159/molecule/tcp"
 )
 
-// Echo is a connection handler that writes back what it reads.
+// Echo writes back what it reads.
 type Echo struct{}
 
-func (Echo) Init(any) (proc.PID, []gen.Effect, error) { return proc.PID{}, nil, nil }
-
-func (Echo) Handle(sock proc.PID, msg gen.Msg) (proc.PID, []gen.Effect) {
-	info, ok := msg.(gen.InfoMsg)
-	if !ok {
-		return sock, nil
-	}
-	switch m := info.Msg.(type) {
-	case tcp.Attached:
-		return m.Sock, gen.Do(tcp.ActiveOnce(m.Sock))
-	case tcp.Data:
-		return sock, gen.Do(tcp.Write(sock, m.Bytes), tcp.ActiveOnce(sock))
-	case tcp.Closed:
-		return sock, gen.Do(gen.Stop{})
-	}
-	return sock, nil
+func (Echo) Init(gentcpacceptor.Socket) (struct{}, []gen.Effect, error) {
+	return struct{}{}, nil, nil
 }
 
-func (Echo) Terminate(proc.PID, error) []gen.Effect { return nil }
+func (Echo) HandleData(s struct{}, sock gentcpacceptor.Socket, b []byte) (struct{}, []gen.Effect) {
+	return s, gen.Do(sock.Write(b))
+}
 
 // The baseline is the usual Go echo server: a goroutine per connection.
 func baselineEcho(b *testing.B) string {
@@ -67,10 +56,7 @@ func baselineEcho(b *testing.B) string {
 
 func moleculeEcho(b *testing.B) string {
 	n := proc.NewNode("")
-	l, err := tcp.Start(context.Background(), n, tcp.Spec{
-		Addr:    "127.0.0.1:0",
-		Handler: gen.StartLinkFunc(Echo{}, nil),
-	})
+	l, err := gentcpacceptor.Start(context.Background(), n, gentcpacceptor.Spec{Addr: "127.0.0.1:0"}, Echo{})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -114,6 +100,40 @@ func BenchmarkEcho(b *testing.B) {
 				}
 			})
 		})
+	}
+}
+
+// BenchmarkEchoSize measures round trips of growing payloads over
+// persistent connections, 4 per CPU, to see the fixed cost of each round
+// trip amortized.
+func BenchmarkEchoSize(b *testing.B) {
+	for _, size := range []int{64, 1 << 10, 16 << 10, 256 << 10} {
+		for _, srv := range servers {
+			b.Run(fmt.Sprintf("%dB/%s", size, srv.name), func(b *testing.B) {
+				addr := srv.start(b)
+				b.SetParallelism(4)
+				b.SetBytes(int64(size))
+				b.RunParallel(func(pb *testing.PB) {
+					conn, err := net.Dial("tcp", addr)
+					if err != nil {
+						b.Error(err)
+						return
+					}
+					defer conn.Close()
+					req, rep := make([]byte, size), make([]byte, size)
+					for pb.Next() {
+						if _, err := conn.Write(req); err != nil {
+							b.Error(err)
+							return
+						}
+						if _, err := io.ReadFull(conn, rep); err != nil {
+							b.Error(err)
+							return
+						}
+					}
+				})
+			})
+		}
 	}
 }
 

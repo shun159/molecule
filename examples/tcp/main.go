@@ -2,10 +2,11 @@
 //
 //	echo_sup (rest_for_one)
 //	├── echo_stats     gen_server counting connections and bytes
-//	└── echo_listener  tcp listener; one echo_protocol per connection
+//	└── echo_listener  gen_tcp_acceptor; one echo_protocol per connection
 //
 // Each file holds one "module": main.go is the application, echo_sup.go
-// the supervisor, echo_stats.go and echo_protocol.go the gen_servers.
+// the supervisor, echo_stats.go a gen_server and echo_protocol.go a
+// gen_tcp_acceptor.
 //
 //	go run ./examples/tcp -addr 127.0.0.1:5555
 //	nc 127.0.0.1 5555

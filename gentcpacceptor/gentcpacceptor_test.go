@@ -1,4 +1,4 @@
-package tcp_test
+package gentcpacceptor_test
 
 import (
 	"bufio"
@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule/gentcpacceptor"
 	"github.com/shun159/molecule/proc"
 	"github.com/shun159/molecule/supervisor"
-	"github.com/shun159/molecule/tcp"
 )
 
 // lineHandler answers each line: "crash" panics, "quit" stops normally,
@@ -22,40 +22,25 @@ import (
 // for these small writes on loopback.
 type lineHandler struct{}
 
-func (lineHandler) Init(any) (proc.PID, []gen.Effect, error) { return proc.PID{}, nil, nil }
-
-func (lineHandler) Handle(sock proc.PID, msg gen.Msg) (proc.PID, []gen.Effect) {
-	info, ok := msg.(gen.InfoMsg)
-	if !ok {
-		return sock, nil
-	}
-	switch m := info.Msg.(type) {
-	case tcp.Attached:
-		return m.Sock, gen.Do(tcp.ActiveOnce(m.Sock))
-	case tcp.Data:
-		switch strings.TrimSpace(string(m.Bytes)) {
-		case "crash":
-			panic("crash requested")
-		case "quit":
-			return sock, gen.Do(tcp.Write(sock, []byte("bye\n")), gen.Stop{})
-		}
-		return sock, gen.Do(tcp.Write(sock, m.Bytes), tcp.ActiveOnce(sock))
-	case tcp.Closed:
-		return sock, gen.Do(gen.Stop{})
-	}
-	return sock, nil
+func (lineHandler) Init(gentcpacceptor.Socket) (struct{}, []gen.Effect, error) {
+	return struct{}{}, nil, nil
 }
 
-func (lineHandler) Terminate(proc.PID, error) []gen.Effect { return nil }
+func (lineHandler) HandleData(s struct{}, sock gentcpacceptor.Socket, b []byte) (struct{}, []gen.Effect) {
+	switch strings.TrimSpace(string(b)) {
+	case "crash":
+		panic("crash requested")
+	case "quit":
+		return s, gen.Do(sock.Write([]byte("bye\n")), gen.Stop{})
+	}
+	return s, gen.Do(sock.Write(b))
+}
 
-func start(t *testing.T, spec tcp.Spec) (*proc.Node, *tcp.Listener) {
+func start[S any](t *testing.T, spec gentcpacceptor.Spec, b gentcpacceptor.Behaviour[S]) (*proc.Node, *gentcpacceptor.Listener) {
 	t.Helper()
 	n := proc.NewNode("")
 	spec.Addr = "127.0.0.1:0"
-	if spec.Handler == nil {
-		spec.Handler = gen.StartLinkFunc(lineHandler{}, nil)
-	}
-	l, err := tcp.Start(context.Background(), n, spec)
+	l, err := gentcpacceptor.Start(context.Background(), n, spec, b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +54,7 @@ type client struct {
 	r    *bufio.Reader
 }
 
-func dial(t *testing.T, l *tcp.Listener) *client {
+func dial(t *testing.T, l *gentcpacceptor.Listener) *client {
 	t.Helper()
 	conn, err := net.Dial("tcp", l.Addr().String())
 	if err != nil {
@@ -96,14 +81,11 @@ func (c *client) send(line string) string {
 func (c *client) closedByServer() bool {
 	c.t.Helper()
 	_, err := c.r.ReadByte()
-	return errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) || isReset(err)
+	return errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) ||
+		(err != nil && strings.Contains(err.Error(), "connection reset"))
 }
 
-func isReset(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "connection reset")
-}
-
-func count(t *testing.T, n *proc.Node, l *tcp.Listener) int {
+func count(t *testing.T, n *proc.Node, l *gentcpacceptor.Listener) int {
 	t.Helper()
 	c, err := supervisor.CountChildren(context.Background(), n, l.Conns())
 	if err != nil {
@@ -112,7 +94,7 @@ func count(t *testing.T, n *proc.Node, l *tcp.Listener) int {
 	return c
 }
 
-// eventually polls cond, as the end of a connection reaches the handler
+// eventually polls cond, as the end of a connection reaches its process
 // asynchronously.
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
@@ -126,7 +108,7 @@ func eventually(t *testing.T, what string, cond func() bool) {
 }
 
 func TestEchoConcurrent(t *testing.T) {
-	_, l := start(t, tcp.Spec{Acceptors: 4})
+	_, l := start(t, gentcpacceptor.Spec{Acceptors: 4}, lineHandler{})
 	var wg sync.WaitGroup
 	for i := range 20 {
 		wg.Go(func() {
@@ -144,20 +126,20 @@ func TestEchoConcurrent(t *testing.T) {
 }
 
 func TestClientClose(t *testing.T) {
-	n, l := start(t, tcp.Spec{})
+	n, l := start(t, gentcpacceptor.Spec{}, lineHandler{})
 	c := dial(t, l)
 	c.send("hi")
 	if got := count(t, n, l); got != 1 {
-		t.Fatalf("handlers = %d", got)
+		t.Fatalf("connections = %d", got)
 	}
 	c.conn.Close()
-	eventually(t, "the handler to stop", func() bool { return count(t, n, l) == 0 })
+	eventually(t, "the connection process to stop", func() bool { return count(t, n, l) == 0 })
 }
 
 // TestHandlerExitClosesConnection checks that the connection is closed
-// whatever way its handler ends, a normal exit included.
+// whatever way its process ends, a normal exit included.
 func TestHandlerExitClosesConnection(t *testing.T) {
-	n, l := start(t, tcp.Spec{})
+	n, l := start(t, gentcpacceptor.Spec{}, lineHandler{})
 
 	quit := dial(t, l)
 	if got := quit.send("quit"); got != "bye" {
@@ -173,11 +155,11 @@ func TestHandlerExitClosesConnection(t *testing.T) {
 	if !crash.closedByServer() {
 		t.Error("connection left open after a crash")
 	}
-	eventually(t, "the handlers to be gone", func() bool { return count(t, n, l) == 0 })
+	eventually(t, "the connection processes to be gone", func() bool { return count(t, n, l) == 0 })
 }
 
 func TestMaxConns(t *testing.T) {
-	n, l := start(t, tcp.Spec{MaxConns: 1})
+	n, l := start(t, gentcpacceptor.Spec{MaxConns: 1}, lineHandler{})
 	first := dial(t, l)
 	first.send("hi")
 
@@ -190,7 +172,7 @@ func TestMaxConns(t *testing.T) {
 	}
 
 	first.conn.Close()
-	eventually(t, "the first handler to stop", func() bool { return count(t, n, l) == 0 })
+	eventually(t, "the first connection process to stop", func() bool { return count(t, n, l) == 0 })
 	if got := dial(t, l).send("again"); got != "again" {
 		t.Errorf("after a slot freed up: %q", got)
 	}
@@ -198,7 +180,7 @@ func TestMaxConns(t *testing.T) {
 
 func TestStop(t *testing.T) {
 	n := proc.NewNode("")
-	l, err := tcp.Start(context.Background(), n, tcp.Spec{Addr: "127.0.0.1:0", Handler: gen.StartLinkFunc(lineHandler{}, nil)})
+	l, err := gentcpacceptor.Start(context.Background(), n, gentcpacceptor.Spec{Addr: "127.0.0.1:0"}, lineHandler{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,40 +200,41 @@ func TestStop(t *testing.T) {
 	}
 }
 
-// TestActiveOnce checks that a handler that does not ask for more data
-// gets none: the socket reads only on demand.
-func TestActiveOnce(t *testing.T) {
-	got := make(chan []byte, 16)
-	handler := gen.StartLinkFunc(onceHandler{got}, nil)
-	_, l := start(t, tcp.Spec{Handler: handler})
-	c := dial(t, l)
+// refuser fails Init, which must close the connection.
+type refuser struct{}
 
-	io.WriteString(c.conn, "first")
-	if b := <-got; string(b) != "first" {
-		t.Fatalf("got %q", b)
-	}
-	io.WriteString(c.conn, "second")
-	select {
-	case b := <-got:
-		t.Errorf("data delivered without ActiveOnce: %q", b)
-	case <-time.After(100 * time.Millisecond):
-	}
+func (refuser) Init(gentcpacceptor.Socket) (struct{}, []gen.Effect, error) {
+	return struct{}{}, nil, errors.New("go away")
 }
 
-// onceHandler asks for data once only, and reports what it gets.
-type onceHandler struct{ got chan<- []byte }
-
-func (onceHandler) Init(any) (struct{}, []gen.Effect, error) { return struct{}{}, nil, nil }
-
-func (h onceHandler) Handle(s struct{}, msg gen.Msg) (struct{}, []gen.Effect) {
-	info, _ := msg.(gen.InfoMsg)
-	switch m := info.Msg.(type) {
-	case tcp.Attached:
-		return s, gen.Do(tcp.ActiveOnce(m.Sock))
-	case tcp.Data:
-		h.got <- m.Bytes // a test probe, not something a real handler does
-	}
+func (refuser) HandleData(s struct{}, _ gentcpacceptor.Socket, _ []byte) (struct{}, []gen.Effect) {
 	return s, nil
 }
 
-func (onceHandler) Terminate(struct{}, error) []gen.Effect { return nil }
+func TestInitError(t *testing.T) {
+	n, l := start(t, gentcpacceptor.Spec{}, refuser{})
+	if !dial(t, l).closedByServer() {
+		t.Error("connection left open after Init failed")
+	}
+	eventually(t, "the connection process to stop", func() bool { return count(t, n, l) == 0 })
+}
+
+// greeter tells the peer its own address, which Init gets with the socket.
+type greeter struct{}
+
+func (greeter) Init(sock gentcpacceptor.Socket) (struct{}, []gen.Effect, error) {
+	return struct{}{}, gen.Do(sock.Write([]byte(sock.RemoteAddr.String() + "\n"))), nil
+}
+
+func (greeter) HandleData(s struct{}, _ gentcpacceptor.Socket, _ []byte) (struct{}, []gen.Effect) {
+	return s, nil
+}
+
+func TestSocketAddrs(t *testing.T) {
+	_, l := start(t, gentcpacceptor.Spec{}, greeter{})
+	c := dial(t, l)
+	got, err := c.r.ReadString('\n')
+	if err != nil || strings.TrimSpace(got) != c.conn.LocalAddr().String() {
+		t.Errorf("greeting = %q, %v; want %v", got, err, c.conn.LocalAddr())
+	}
+}

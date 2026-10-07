@@ -1,4 +1,4 @@
-package tcp
+package gentcpacceptor
 
 import (
 	"context"
@@ -24,15 +24,11 @@ type Spec struct {
 	// MaxConns, if positive, caps the connections: those beyond it are
 	// closed as soon as accepted.
 	MaxConns int
-	// Handler starts the process handling one connection, linked to
-	// parent; gen.StartLinkFunc and genserver.StartLinkFunc make one. The
-	// handler then gets Attached, and owns the connection: it is closed
-	// when the handler terminates.
-	Handler supervisor.StartFunc
 }
 
-// Listener is a running listener: a supervisor of the listening socket,
-// the acceptors, and the handlers of the connections.
+// Listener runs a Behaviour on the connections to an address: a
+// supervisor of the listening socket, the acceptors, and the processes of
+// the connections.
 //
 //	listener (RestForOne)
 //	├── socket     the net.Listener, closed when this process dies
@@ -44,8 +40,9 @@ type Spec struct {
 // A Listener runs on its own with Start, or under a supervisor of the
 // application through ChildSpec.
 type Listener struct {
-	spec   Spec
-	shared *shared
+	spec    Spec
+	handler supervisor.StartFunc
+	shared  *shared
 }
 
 // shared is what the children started by one listener supervisor hand to
@@ -64,15 +61,19 @@ func (sh *shared) get() (net.Listener, proc.PID) {
 	return sh.ln, sh.conns
 }
 
-// NewListener returns a listener for spec, not yet started.
-func NewListener(spec Spec) *Listener {
-	return &Listener{spec: spec, shared: &shared{}}
+// NewListener returns a listener running b for spec, not yet started.
+func NewListener[S any](spec Spec, b Behaviour[S]) *Listener {
+	return &Listener{
+		spec:    spec,
+		handler: gen.StartLinkFunc(adapter[S]{b}, nil),
+		shared:  &shared{},
+	}
 }
 
-// Start starts a listener on its own.
-func Start(ctx context.Context, n *proc.Node, spec Spec) (*Listener, error) {
-	l := NewListener(spec)
-	sup, err := supervisor.Start(ctx, n, listenerSpec(spec, l.shared))
+// Start starts a listener running b on its own.
+func Start[S any](ctx context.Context, n *proc.Node, spec Spec, b Behaviour[S]) (*Listener, error) {
+	l := NewListener(spec, b)
+	sup, err := supervisor.Start(ctx, n, l.supervisorSpec())
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +84,7 @@ func Start(ctx context.Context, n *proc.Node, spec Spec) (*Listener, error) {
 // StartLink starts the listener linked to parent. It is a
 // supervisor.StartFunc, as used by ChildSpec.
 func (l *Listener) StartLink(ctx context.Context, parent *proc.Self) (proc.PID, error) {
-	sup, err := supervisor.StartLink(ctx, parent, listenerSpec(l.spec, l.shared))
+	sup, err := supervisor.StartLink(ctx, parent, l.supervisorSpec())
 	if err == nil {
 		l.setPID(sup)
 	}
@@ -129,7 +130,8 @@ func (l *Listener) Stop(ctx context.Context, caller gen.Caller) error {
 	return supervisor.Stop(ctx, caller, l.PID())
 }
 
-func listenerSpec(spec Spec, sh *shared) supervisor.Spec {
+func (l *Listener) supervisorSpec() supervisor.Spec {
+	spec, sh := l.spec, l.shared
 	acceptors := spec.Acceptors
 	if acceptors <= 0 {
 		acceptors = DefaultAcceptors
@@ -141,7 +143,7 @@ func listenerSpec(spec Spec, sh *shared) supervisor.Spec {
 			Start: func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
 				return parent.StartLink(ctx, func(s *proc.Self) error {
 					s.InitAck(nil)
-					return accept(s, sh, spec.Handler)
+					return accept(s, sh, l.handler)
 				})
 			},
 		})
