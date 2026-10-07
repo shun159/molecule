@@ -34,7 +34,7 @@ func (n *Node) Register(name string, pid PID) error {
 	defer n.regMu.Unlock()
 	p := n.lookup(pid)
 	switch {
-	case p == nil || p.ctx.Err() != nil:
+	case p == nil || p.dead.Load():
 		return NoProc
 	case n.names[name] == pid:
 		return nil

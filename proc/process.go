@@ -11,11 +11,18 @@ import (
 type process struct {
 	node *Node
 	pid  PID
-	mbox *mailbox
-	// ctx is cancelled with the exit reason as its cause once the process
-	// is dead. Whether it is dead is decided by ctx alone, not by whether
-	// the goroutine has returned: a killed process is dead at once, while
-	// its goroutine only notices on its next Receive.
+	mbox mailbox
+	self Self // handed to the function of the process
+	// A process is dead once dead is set, whether or not its goroutine
+	// has returned: a killed process is dead at once, while its goroutine
+	// only notices on its next Receive. reason is written before dead is
+	// set, then the context cancelled, then done closed; all under mu.
+	dead   atomic.Bool
+	reason error
+	done   chan struct{}
+
+	// ctx is made when Self.Context is first called, and cancelled with
+	// the exit reason on death. Guarded by mu.
 	ctx    context.Context
 	cancel context.CancelCauseFunc
 
@@ -43,18 +50,26 @@ type process struct {
 }
 
 func newProcess(n *Node, pid PID) *process {
-	ctx, cancel := context.WithCancelCause(context.Background())
-	return &process{
-		node:   n,
-		pid:    pid,
-		mbox:   newMailbox(),
-		ctx:    ctx,
-		cancel: cancel,
+	p := &process{
+		node: n,
+		pid:  pid,
+		mbox: mailbox{notify: make(chan struct{}, 1)},
+		done: make(chan struct{}),
 	}
+	p.self.p = p
+	return p
+}
+
+// exitReason returns the exit reason of p, nil while it is alive.
+func (p *process) exitReason() error {
+	if !p.dead.Load() {
+		return nil
+	}
+	return p.reason
 }
 
 func (p *process) run(fn func(*Self) error) {
-	if p.ctx.Err() != nil {
+	if p.dead.Load() {
 		return // killed before it started
 	}
 	// runtime.Goexit unwinds through invoke without returning, so the exit
@@ -65,12 +80,12 @@ func (p *process) run(fn func(*Self) error) {
 		// or died from an exit signal ran no code of its own to fail, as in
 		// Erlang. The report comes before the links and monitors learn of
 		// the death.
-		if p.ctx.Err() == nil && IsAbnormal(reason) {
+		if !p.dead.Load() && IsAbnormal(reason) {
 			p.crashReport(fn, reason)
 		}
 		p.die(reason)
 	}()
-	reason = invoke(fn, &Self{p: p})
+	reason = invoke(fn, &p.self)
 }
 
 // invoke runs fn and converts the way it ended into an exit reason.
@@ -90,16 +105,21 @@ func invoke(fn func(*Self) error, self *Self) (reason error) {
 // notifies the monitoring ones. Only the first call has an effect.
 func (p *process) die(reason error) {
 	p.mu.Lock()
-	if p.ctx.Err() != nil {
+	if p.dead.Load() {
 		p.mu.Unlock()
 		return
 	}
-	p.cancel(reason)
+	p.reason = reason
+	p.dead.Store(true)
+	if p.cancel != nil {
+		p.cancel(reason)
+	}
+	close(p.done) // last: once it is closed, the context is cancelled too
 	links, monitors, monitoring := p.links, p.monitors, p.monitoring
 	p.links, p.monitors, p.monitoring = nil, nil, nil
 	p.mu.Unlock()
 
-	p.node.procs.Delete(p.pid.id)
+	p.node.procs.del(p.pid.id)
 	// The name goes before anyone is told, so a supervisor reacting to the
 	// death can register a replacement under the same name at once.
 	p.node.unregisterDead(p)
@@ -204,7 +224,26 @@ func (s *Self) Node() *Node { return s.p.node }
 // Context returns a context that is cancelled when the process dies, with
 // the exit reason as its cause. Pass it to blocking I/O done on behalf of
 // the process.
-func (s *Self) Context() context.Context { return s.p.ctx }
+func (s *Self) Context() context.Context {
+	p := s.p
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.ctx == nil {
+		p.ctx, p.cancel = context.WithCancelCause(context.Background())
+		if p.dead.Load() {
+			p.cancel(p.reason)
+		}
+	}
+	return p.ctx
+}
+
+// Done returns a channel closed when the process dies. It is lighter
+// than Context, for code that only waits on the death.
+func (s *Self) Done() <-chan struct{} { return s.p.done }
+
+// ExitReason returns the exit reason of the process once it is dead, nil
+// while it is alive.
+func (s *Self) ExitReason() error { return s.p.exitReason() }
 
 // Parent returns the process that spawned this one, or the zero PID for a
 // process started from outside any process.
@@ -234,13 +273,13 @@ func (s *Self) newLinked() *process {
 	child.link(parent.pid)
 
 	parent.mu.Lock()
-	alive := parent.ctx.Err() == nil
+	alive := !parent.dead.Load()
 	if alive {
 		parent.link(child.pid)
 	}
 	parent.mu.Unlock()
 	if !alive {
-		child.signalExit(parent.pid, context.Cause(parent.ctx), true)
+		child.signalExit(parent.pid, parent.exitReason(), true)
 	}
 	return child
 }
@@ -268,9 +307,9 @@ func (s *Self) Link(to PID) {
 
 	unlock := lockPair(p, t)
 	switch {
-	case p.ctx.Err() != nil:
+	case p.dead.Load():
 		unlock()
-	case t.ctx.Err() != nil:
+	case t.dead.Load():
 		unlock()
 		p.signalExit(to, NoProc, false)
 	default:
@@ -314,8 +353,8 @@ func (s *Self) Exit(to PID, reason error) {
 func (s *Self) Receive(ctx context.Context) (any, error) {
 	p := s.p
 	for {
-		if p.ctx.Err() != nil {
-			return nil, context.Cause(p.ctx)
+		if p.dead.Load() {
+			return nil, p.reason
 		}
 		if msg, ok := p.mbox.pop(); ok {
 			return msg, nil
@@ -324,7 +363,7 @@ func (s *Self) Receive(ctx context.Context) (any, error) {
 		case <-p.mbox.notify:
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-p.ctx.Done():
+		case <-p.done:
 		}
 	}
 }

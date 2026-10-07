@@ -15,8 +15,8 @@ import (
 func exitReason(t *testing.T, p *process) error {
 	t.Helper()
 	select {
-	case <-p.ctx.Done():
-		return context.Cause(p.ctx)
+	case <-p.done:
+		return p.exitReason()
 	case <-time.After(5 * time.Second):
 		t.Fatalf("%v did not exit", p.pid)
 		return nil
@@ -63,7 +63,7 @@ func TestDeadProcess(t *testing.T) {
 	if n.IsAlive(p.pid) {
 		t.Error("dead process reported alive")
 	}
-	if _, ok := n.procs.Load(p.pid.id); ok {
+	if n.procs.get(p.pid.id) != nil {
 		t.Error("dead process left in the process table")
 	}
 	n.Send(p.pid, "dropped") // must not panic or block
@@ -224,8 +224,8 @@ func TestReceiveTimeout(t *testing.T) {
 			_, err := s.Receive(ctx)
 			return err
 		})
-		<-p.ctx.Done()
-		if r := context.Cause(p.ctx); !errors.Is(r, context.DeadlineExceeded) {
+		<-p.done
+		if r := p.exitReason(); !errors.Is(r, context.DeadlineExceeded) {
 			t.Errorf("exit reason = %v", r)
 		}
 		if d := time.Since(start); d != time.Second {

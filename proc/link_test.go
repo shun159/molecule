@@ -41,7 +41,7 @@ func actor(n *Node, setup func(*Self)) (*process, <-chan any) {
 
 // do runs fn in a short-lived process and waits for it to finish.
 func do(n *Node, fn func(*Self)) {
-	<-n.spawn(func(s *Self) error { fn(s); return nil }).ctx.Done()
+	<-n.spawn(func(s *Self) error { fn(s); return nil }).done
 }
 
 // bubble runs f in a synctest bubble and kills every process left on the
@@ -50,16 +50,15 @@ func bubble(t *testing.T, f func(t *testing.T, n *Node)) {
 	synctest.Test(t, func(t *testing.T) {
 		n := NewNode("")
 		f(t, n)
-		n.procs.Range(func(_, v any) bool {
-			v.(*process).die(Killed)
-			return true
-		})
+		for _, p := range n.procs.all() {
+			p.die(Killed)
+		}
 	})
 }
 
-func alive(p *process) bool { return p.ctx.Err() == nil }
+func alive(p *process) bool { return !p.dead.Load() }
 
-func reasonOf(p *process) error { return context.Cause(p.ctx) }
+func reasonOf(p *process) error { return p.exitReason() }
 
 func linkCount(p *process) int {
 	p.mu.Lock()

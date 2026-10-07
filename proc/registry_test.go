@@ -166,7 +166,7 @@ func TestStaleDeathKeepsNewOwner(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		n.procs.Delete(a.pid.id) // a is on its way out, as in die
+		n.procs.del(a.pid.id) // a is on its way out, as in die
 		n.Unregister("x")
 		if err := n.Register("x", b.pid); err != nil {
 			t.Fatal(err)

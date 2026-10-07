@@ -53,7 +53,7 @@ type procEnv struct {
 	self *proc.Self
 }
 
-func (e procEnv) dead() bool { return e.self.Context().Err() != nil }
+func (e procEnv) dead() bool { return e.self.ExitReason() != nil }
 
 func (e procEnv) Self() proc.PID   { return e.self.PID() }
 func (e procEnv) Parent() proc.PID { return e.self.Parent() }
@@ -85,7 +85,7 @@ func (e procEnv) SendAfter(d time.Duration, msg any) func() {
 }
 
 func (e procEnv) Request(pid proc.PID, reply func(proc.Ref, proc.AliasMsg) any) (proc.Ref, func()) {
-	n, self, alive := e.self.Node(), e.self.PID(), e.self.Context()
+	n, self, dead := e.self.Node(), e.self.PID(), e.self.Done()
 	a := n.MonitorAlias(pid)
 	released := make(chan struct{})
 	go func() {
@@ -94,7 +94,7 @@ func (e procEnv) Request(pid proc.PID, reply func(proc.Ref, proc.AliasMsg) any) 
 		case m := <-a.C:
 			n.Send(self, reply(a.Ref, m))
 		case <-released:
-		case <-alive.Done():
+		case <-dead:
 		}
 	}()
 	return a.Ref, sync.OnceFunc(func() { close(released) })

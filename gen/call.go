@@ -75,20 +75,27 @@ func call(ctx context.Context, caller Caller, to Dest, wrap func(From) any) (any
 			return nil, ErrCallingSelf
 		}
 	}
-	callerCtx := context.Background()
-	if c, ok := caller.(interface{ Context() context.Context }); ok {
-		callerCtx = c.Context()
-	}
+	d, _ := caller.(dying)
 
 	a := n.MonitorAlias(pid)
 	defer a.Release()
 	n.Send(pid, wrap(From{PID: self, Tag: a.Ref}))
-	return awaitReply(ctx, callerCtx, to, a.C)
+	return awaitReply(ctx, d, to, a.C)
+}
+
+// dying is a caller that may die while it waits: a process.
+type dying interface {
+	Done() <-chan struct{}
+	ExitReason() error
 }
 
 // awaitReply waits for the reply or the death of the server, both arriving
 // on c, for ctx, or for the death of the caller, whichever comes first.
-func awaitReply(ctx, callerCtx context.Context, to Dest, c <-chan proc.AliasMsg) (any, error) {
+func awaitReply(ctx context.Context, caller dying, to Dest, c <-chan proc.AliasMsg) (any, error) {
+	var callerDone <-chan struct{}
+	if caller != nil {
+		callerDone = caller.Done()
+	}
 	select {
 	case m := <-c:
 		if m.Down {
@@ -97,8 +104,8 @@ func awaitReply(ctx, callerCtx context.Context, to Dest, c <-chan proc.AliasMsg)
 		return m.Msg, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	case <-callerCtx.Done():
-		return nil, context.Cause(callerCtx)
+	case <-callerDone:
+		return nil, caller.ExitReason()
 	}
 }
 

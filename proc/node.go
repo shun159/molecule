@@ -18,7 +18,7 @@ type Node struct {
 	creation uint32
 	nextID   atomic.Uint64
 	nextRef  atomic.Uint64
-	procs    sync.Map // uint64 -> *process
+	procs    procTable
 	aliases  aliasTable
 
 	regMu sync.Mutex
@@ -77,7 +77,7 @@ func (n *Node) MakeRef() Ref {
 // returns false for remote PIDs.
 func (n *Node) IsAlive(pid PID) bool {
 	p := n.lookup(pid)
-	return p != nil && p.ctx.Err() == nil
+	return p != nil && !p.dead.Load()
 }
 
 func (n *Node) isLocal(pid PID) bool {
@@ -88,11 +88,7 @@ func (n *Node) lookup(pid PID) *process {
 	if !n.isLocal(pid) {
 		return nil
 	}
-	v, ok := n.procs.Load(pid.id)
-	if !ok {
-		return nil
-	}
-	return v.(*process)
+	return n.procs.get(pid.id)
 }
 
 func (n *Node) spawn(fn func(*Self) error) *process {
@@ -105,7 +101,7 @@ func (n *Node) spawn(fn func(*Self) error) *process {
 // starting it, so links can be set up before it runs.
 func (n *Node) register() *process {
 	p := newProcess(n, PID{node: n.name, creation: n.creation, id: n.nextID.Add(1)})
-	n.procs.Store(p.pid.id, p)
+	n.procs.put(p.pid.id, p)
 	return p
 }
 

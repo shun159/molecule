@@ -24,12 +24,12 @@ func TestCrashReport(t *testing.T) {
 			}
 			return errBoom
 		})
-		<-n.lookup(child).ctx.Done()
+		<-n.lookup(child).done
 		return nil
 	})
 	parentPID := <-parent
 	// The parent waits for the child, so once it is gone, all is logged.
-	<-n.lookup(parentPID).ctx.Done()
+	<-n.lookup(parentPID).done
 
 	reports := crashReports(rec)
 	if len(reports) != 1 {

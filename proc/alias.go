@@ -63,7 +63,7 @@ func (n *Node) MonitorAlias(pid PID) Alias {
 
 	n.aliases.put(ref.id, ch)
 	t.mu.Lock()
-	if t.ctx.Err() != nil {
+	if t.dead.Load() {
 		t.mu.Unlock()
 		n.aliasDown(ref, NoProc)
 		return a

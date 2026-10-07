@@ -71,8 +71,8 @@ func (s *Self) Monitor(target PID) Ref {
 	unlock := lockPair(p, t)
 	defer unlock()
 	switch {
-	case p.ctx.Err() != nil:
-	case t.ctx.Err() != nil:
+	case p.dead.Load():
+	case t.dead.Load():
 		p.mbox.push(DownMsg{Ref: ref, PID: target, Reason: NoProc})
 	default:
 		p.watch(ref, target)
@@ -139,7 +139,7 @@ func (n *Node) Watch(parent context.Context, pid PID) (context.Context, context.
 
 	ref := n.MakeRef()
 	t.mu.Lock()
-	if t.ctx.Err() != nil {
+	if t.dead.Load() {
 		t.mu.Unlock()
 		cancel(NoProc)
 		return ctx, stop

@@ -221,13 +221,13 @@ func accept(s *proc.Self, sh *shared, handler supervisor.StartFunc) error {
 	ln, conns := sh.get()
 	for {
 		conn, err := ln.Accept()
-		if ctx := s.Context(); ctx.Err() != nil {
+		if reason := s.ExitReason(); reason != nil {
 			// Killed while blocked in Accept, which only the closing of
 			// the socket ends.
 			if conn != nil {
 				conn.Close()
 			}
-			return context.Cause(ctx)
+			return reason
 		}
 		if errors.Is(err, net.ErrClosed) {
 			// The socket is gone, and with it the listener supervisor

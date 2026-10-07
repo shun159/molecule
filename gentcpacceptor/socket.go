@@ -100,7 +100,7 @@ func runSocket(s *proc.Self, c net.Conn, owner proc.PID) error {
 		for {
 			select {
 			case <-permits:
-			case <-s.Context().Done():
+			case <-s.Done():
 				return
 			}
 			k, err := c.Read(buf)

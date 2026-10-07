@@ -52,7 +52,7 @@ func (n *Node) start(ctx context.Context, caller *Self, child *process, fn func(
 func awaitStart(ctx context.Context, caller *Self, child *process, c <-chan AliasMsg) (PID, error) {
 	var callerDone <-chan struct{}
 	if caller != nil {
-		callerDone = caller.p.ctx.Done()
+		callerDone = caller.p.done
 	}
 
 	select {
@@ -73,7 +73,7 @@ func awaitStart(ctx context.Context, caller *Self, child *process, c <-chan Alia
 		caller.flushExit(child.pid)
 		return PID{}, ctx.Err()
 	case <-callerDone:
-		return PID{}, context.Cause(caller.p.ctx)
+		return PID{}, caller.p.exitReason()
 	}
 }
 

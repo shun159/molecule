@@ -75,7 +75,7 @@ func TestMonitorAliasDown(t *testing.T) {
 func TestMonitorAliasNoProc(t *testing.T) {
 	n := NewNode("a@host")
 	dead := n.spawn(func(*Self) error { return nil })
-	<-dead.ctx.Done()
+	<-dead.done
 	remote := dead.pid
 	remote.node = "b@host"
 
@@ -108,7 +108,7 @@ func TestMonitorAliasReplyThenDeath(t *testing.T) {
 		})
 		a := n.MonitorAlias(p.pid)
 		ack <- a.Ref
-		<-p.ctx.Done()
+		<-p.done
 		if m := <-a.C; m.Down || m.Msg != "reply" {
 			t.Fatalf("got %+v, want the reply", m)
 		}
@@ -126,7 +126,7 @@ func TestMonitorAliasRelease(t *testing.T) {
 		t.Error("target still tracks a released alias")
 	}
 	n.Send(p.pid, exitWith{errBoom})
-	<-p.ctx.Done()
+	<-p.done
 	time.Sleep(time.Millisecond)
 	noMsg(t, a)
 }

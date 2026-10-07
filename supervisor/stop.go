@@ -49,7 +49,7 @@ func stopAll(self *proc.Self, cs []*child) {
 			case <-st.down.Done():
 				t.Stop()
 				continue
-			case <-self.Context().Done():
+			case <-self.Done():
 				t.Stop()
 				return
 			case <-t.C:
@@ -58,7 +58,7 @@ func stopAll(self *proc.Self, cs []*child) {
 		}
 		select {
 		case <-st.down.Done():
-		case <-self.Context().Done():
+		case <-self.Done():
 			return
 		}
 	}
