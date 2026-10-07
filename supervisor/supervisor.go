@@ -309,44 +309,9 @@ func (s *supervisor) start(ctx context.Context, c *child) error {
 	return nil
 }
 
-// shutdown stops c, asking first and killing once its Shutdown has
-// passed, and waits until it is dead.
+// shutdown stops c and waits until it is dead. See stopAll.
 func (s *supervisor) shutdown(c *child) {
-	pid := c.pid
-	if pid.IsZero() {
-		return
-	}
-	c.pid = proc.PID{}
-
-	down, stop := s.self.Node().Watch(context.Background(), pid)
-	defer stop()
-	wait := func() {
-		select {
-		case <-down.Done():
-		case <-s.self.Context().Done():
-		}
-	}
-
-	d := c.spec.shutdown()
-	if d == Brutal {
-		s.self.Exit(pid, proc.Kill)
-		wait()
-		return
-	}
-	s.self.Exit(pid, proc.Shutdown)
-	if d == Infinity {
-		wait()
-		return
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-down.Done():
-	case <-s.self.Context().Done():
-	case <-t.C:
-		s.self.Exit(pid, proc.Kill)
-		wait()
-	}
+	stopAll(s.self, []*child{c})
 }
 
 // terminateAll stops the children in reverse start order.
