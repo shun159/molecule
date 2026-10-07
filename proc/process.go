@@ -34,6 +34,12 @@ type process struct {
 
 	// name is the registered name, guarded by node.regMu.
 	name string
+
+	// parent is the process that spawned p, if any. ack, when set, is
+	// where InitAck reports to a waiting Start or StartLink. Both are set
+	// before p runs; ack is then only touched by p's own goroutine.
+	parent PID
+	ack    chan<- error
 }
 
 func newProcess(n *Node, pid PID) *process {
@@ -168,14 +174,31 @@ func (s *Self) Node() *Node { return s.p.node }
 // the process.
 func (s *Self) Context() context.Context { return s.p.ctx }
 
+// Parent returns the process that spawned this one, or the zero PID for a
+// process started from outside any process.
+func (s *Self) Parent() PID { return s.p.parent }
+
 // Spawn starts fn in a new process on the same node.
-func (s *Self) Spawn(fn func(*Self) error) PID { return s.p.node.Spawn(fn) }
+func (s *Self) Spawn(fn func(*Self) error) PID {
+	child := s.p.node.register()
+	child.parent = s.p.pid
+	go child.run(fn)
+	return child.pid
+}
 
 // SpawnLink starts fn in a new process linked to the caller. The link is
 // in place before fn runs, so even an immediate crash is propagated.
 func (s *Self) SpawnLink(fn func(*Self) error) PID {
+	child := s.newLinked()
+	go child.run(fn)
+	return child.pid
+}
+
+// newLinked registers a child of s linked to it, without starting it.
+func (s *Self) newLinked() *process {
 	parent := s.p
 	child := parent.node.register()
+	child.parent = parent.pid
 	child.links[parent.pid] = struct{}{}
 
 	parent.mu.Lock()
@@ -187,9 +210,7 @@ func (s *Self) SpawnLink(fn func(*Self) error) PID {
 	if !alive {
 		child.signalExit(parent.pid, context.Cause(parent.ctx), true)
 	}
-
-	go child.run(fn)
-	return child.pid
+	return child
 }
 
 // Send delivers msg to to. See Node.Send.
