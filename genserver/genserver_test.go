@@ -313,15 +313,43 @@ func (cold) HandleCast(n int, _ struct{}) (int, []gen.Effect)                   
 
 func TestNoHandleContinue(t *testing.T) {
 	n := proc.NewNode("")
+	reasons := make(chan error, 1)
+	// The server stops right after starting: learn of it through the link
+	// of a parent trapping exits, which cannot miss it.
+	n.Spawn(func(s *proc.Self) error {
+		s.TrapExit(true)
+		if _, err := genserver.StartLink(context.Background(), s, cold{}); err != nil {
+			return err
+		}
+		msg, err := s.Receive(context.Background())
+		if err != nil {
+			return err
+		}
+		reasons <- msg.(proc.ExitMsg).Reason
+		return nil
+	})
+	if r := <-reasons; r != genserver.ErrNoHandleContinue {
+		t.Errorf("exit reason = %v", r)
+	}
+}
+
+func TestRefStop(t *testing.T) {
+	rec := make(chan any, 1)
+	n := proc.NewNode("")
 	ctx := context.Background()
-	c, err := genserver.Start(ctx, n, cold{})
+	observer := n.Spawn(func(s *proc.Self) error {
+		msg, err := s.Receive(ctx)
+		rec <- msg
+		return err
+	})
+	e, err := genserver.Start(ctx, n, echo{observer})
 	if err != nil {
 		t.Fatal(err)
 	}
-	down, stop := n.Watch(ctx, c.Dest().(proc.PID))
-	defer stop()
-	<-down.Done()
-	if r := context.Cause(down); r != genserver.ErrNoHandleContinue {
-		t.Errorf("exit reason = %v", r)
+	if err := e.Stop(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-rec; got != (stopped{proc.Normal}) {
+		t.Errorf("Terminate got %#v", got)
 	}
 }

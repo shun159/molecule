@@ -108,6 +108,12 @@ func (r Ref[Req, Rep, Cast]) Cast(caller gen.Caller, msg Cast) {
 	gen.SendCast(caller, r.dest, msg)
 }
 
+// Stop stops the server normally, like gen_server:stop: its Terminate
+// callback runs, and Stop returns once it is dead.
+func (r Ref[Req, Rep, Cast]) Stop(ctx context.Context, caller gen.Caller) error {
+	return gen.Terminate(ctx, caller, r.dest, nil)
+}
+
 // CallEffect is the effect for a server to call this one without waiting,
 // the outcome arriving as a gen.Response with tag.
 func (r Ref[Req, Rep, Cast]) CallEffect(req Req, tag any) gen.Effect {

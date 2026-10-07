@@ -115,6 +115,10 @@ func (r *runtime[S]) loop() error {
 			return err // killed: no Terminate, as in Erlang
 		}
 		if m, ok := msg.(sysMsg); ok {
+			if m.Req == sysTerminate {
+				r.last = m
+				return r.terminate(r.state, m.Reason)
+			}
 			r.system(m)
 			continue
 		}

@@ -726,3 +726,44 @@ func TestExtensionEffectRefused(t *testing.T) {
 		}
 	})
 }
+
+func TestTerminate(t *testing.T) {
+	for _, reason := range []error{nil, errBoom} {
+		inWorld(t, func(w *world) {
+			pid := w.start()
+			gen.SendCast(w.n, pid, 3)
+			if err := gen.Terminate(context.Background(), w.n, pid, reason); err != nil {
+				t.Fatalf("Terminate(%v) = %v", reason, err)
+			}
+			want := reason
+			if want == nil {
+				want = proc.Normal
+			}
+			if e := <-w.events; e != (terminated{3, want}) {
+				t.Errorf("Terminate callback got %#v", e)
+			}
+			if w.n.IsAlive(pid) {
+				t.Error("alive after Terminate returned")
+			}
+		})
+	}
+}
+
+func TestTerminateSuspended(t *testing.T) {
+	inWorld(t, func(w *world) {
+		pid := w.start()
+		ctx := context.Background()
+		gen.Suspend(ctx, w.n, pid)
+		if err := gen.Terminate(ctx, w.n, pid, nil); err != nil {
+			t.Fatal(err)
+		}
+		<-w.events
+	})
+}
+
+func TestTerminateNoProc(t *testing.T) {
+	n := proc.NewNode("")
+	if err := gen.Terminate(context.Background(), n, gen.Local("nobody"), nil); !errors.Is(err, proc.NoProc) {
+		t.Errorf("Terminate = %v", err)
+	}
+}
