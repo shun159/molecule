@@ -35,11 +35,12 @@
 // text of another: errors.Is(reason, proc.Shutdown) holds across nodes for
 // a reason wrapping it.
 //
+// A connection silent for Config.TickTime is taken for lost, like
+// net_ticktime: an idle connection sends ticks to show it lives.
+//
 // # What there is not yet
 //
-// A connection to a node that hangs without closing is not noticed:
-// there is no tick, as net_ticktime in Erlang. A node restarted under the
-// same name is refused until the connection to its previous incarnation
+// A node restarted under the same name is refused until the connection to its previous incarnation
 // is noticed lost. Names of other nodes are reached with
 // proc.Node.SendName; gen does not call them yet.
 package dist

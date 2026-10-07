@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/shun159/molecule/gentcp"
 	"github.com/shun159/molecule/proc"
@@ -16,6 +17,8 @@ type (
 	wake struct{}
 	// waitUp asks to be told on ref once connected.
 	waitUp struct{ ref proc.Ref }
+	// tick is the time to check the connection lives.
+	tick struct{}
 	// stop drops the connection.
 	stop struct{}
 )
@@ -63,8 +66,13 @@ func (d *Dist) runPeer(self *proc.Self, p *peer) error {
 		}
 	}
 
-	sock := gentcp.Start(d.n, conn, self.PID(), gentcp.Options{Packet: gentcp.Packet4, Active: gentcp.Always})
+	sock := gentcp.Start(d.n, conn, self.PID(), gentcp.Options{
+		Packet:      gentcp.Packet4,
+		Active:      gentcp.Always,
+		SendTimeout: d.cfg.TickTime,
+	})
 	c := &connection{d: d, self: self, p: p, sock: sock, enc: d.cfg.Codec.NewEncoder(), dec: d.cfg.Codec.NewDecoder()}
+	go ticker(d.n, self.PID(), self.Done(), d.cfg.TickTime/ticksPerTime)
 	for _, ref := range waiters {
 		d.n.SendAlias(ref, nil)
 	}
@@ -84,7 +92,13 @@ func (d *Dist) runPeer(self *proc.Self, p *peer) error {
 				return c.close()
 			}
 		case gentcp.DataMsg:
+			c.heard = true
 			c.receive(m.Bytes)
+		case tick:
+			if !c.tick() {
+				d.n.Logger().Warn("dist: connection silent, dropped", "node", p.node)
+				return c.close()
+			}
 		case gentcp.ClosedMsg:
 			return c.close()
 		case waitUp:
@@ -123,6 +137,44 @@ type connection struct {
 	enc  Encoder
 	dec  Decoder
 	buf  []byte
+
+	said, heard bool // since the last tick
+	silent      int  // ticks without hearing from the node
+}
+
+// A connection checks it lives ticksPerTime times per TickTime.
+const ticksPerTime = 4
+
+func ticker(n *proc.Node, pid proc.PID, done <-chan struct{}, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+			n.Send(pid, tick{})
+		case <-done:
+			return
+		}
+	}
+}
+
+// tick sends a tick if nothing was sent since the last, and reports
+// whether the node was heard from within TickTime.
+func (c *connection) tick() bool {
+	if c.heard {
+		c.silent = 0
+	} else if c.silent++; c.silent >= ticksPerTime {
+		return false
+	}
+	c.heard = false
+	if !c.said {
+		c.buf = appendFrame(c.buf[:0], frame{op: opTick})
+		if c.sock.Send(context.Background(), c.self, c.buf) != nil {
+			return false
+		}
+	}
+	c.said = false
+	return true
 }
 
 // send sends f, and reports whether the connection is still up. A message
@@ -138,6 +190,7 @@ func (c *connection) send(f frame) bool {
 		f.payload = b
 	}
 	c.buf = appendFrame(c.buf[:0], f)
+	c.said = true
 	return c.sock.Send(context.Background(), c.self, c.buf) == nil
 }
 

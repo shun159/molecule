@@ -23,6 +23,7 @@ const (
 	opMonitor
 	opDemonitor
 	opDown
+	opTick // nothing, but that the connection lives
 )
 
 // frame is an operation to or from another node.
@@ -87,6 +88,7 @@ func parseFrame(b []byte) (f frame, err error) {
 		r.id(&f.ref)
 		r.id(&f.to)
 		f.reason = r.reason()
+	case opTick:
 	default:
 		return f, errFrame
 	}

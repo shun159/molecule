@@ -24,7 +24,15 @@ type Config struct {
 	Resolve func(node string) (addr string, ok bool)
 	// Codec encodes the messages; Gob if nil.
 	Codec Codec
+	// TickTime is how long a connection may stay silent before it is
+	// taken for lost, like net_ticktime: a connection idle sends a tick
+	// four times as often. A send blocked as long fails it too. Zero
+	// means DefaultTickTime.
+	TickTime time.Duration
 }
+
+// DefaultTickTime is Config.TickTime when zero.
+const DefaultTickTime = 60 * time.Second
 
 // Dist is the distribution of a node, the counterpart of net_kernel: it
 // connects the node to the others it sends to, and accepts their
@@ -62,6 +70,9 @@ func Start(n *proc.Node, cfg Config) (*Dist, error) {
 	}
 	if cfg.Codec == nil {
 		cfg.Codec = Gob
+	}
+	if cfg.TickTime <= 0 {
+		cfg.TickTime = DefaultTickTime
 	}
 	d := &Dist{n: n, cfg: cfg, peers: make(map[string]*peer)}
 	if cfg.Listen != "" {
