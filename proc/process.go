@@ -35,11 +35,11 @@ type process struct {
 	// name is the registered name, guarded by node.regMu.
 	name string
 
-	// parent is the process that spawned p, if any. ack, when set, is
-	// where InitAck reports to a waiting Start or StartLink. Both are set
-	// before p runs; ack is then only touched by p's own goroutine.
+	// parent is the process that spawned p, if any. ack, when set, is the
+	// alias InitAck reports to for a waiting Start or StartLink. Both are
+	// set before p runs; ack is then only touched by p's own goroutine.
 	parent PID
-	ack    chan<- error
+	ack    Ref
 }
 
 func newProcess(n *Node, pid PID) *process {

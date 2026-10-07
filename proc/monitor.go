@@ -10,16 +10,22 @@ type DownMsg struct {
 	Reason error
 }
 
-// watcher is who is told when a monitored process dies: either a process,
-// through a DownMsg, or a Watch context, by cancelling it.
+// watcher is who is told when a monitored process dies: a process,
+// through a DownMsg; a Watch context, by cancelling it; or a MonitorAlias,
+// through its channel.
 type watcher struct {
 	pid    PID
 	cancel context.CancelCauseFunc
+	alias  bool
 }
 
 func (w watcher) notify(n *Node, ref Ref, target PID, reason error) {
-	if w.cancel != nil {
+	switch {
+	case w.cancel != nil:
 		w.cancel(reason)
+		return
+	case w.alias:
+		n.aliasDown(ref, reason)
 		return
 	}
 	if p := n.lookup(w.pid); p != nil {

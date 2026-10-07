@@ -1,63 +1,170 @@
 package proc
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
-func aliasCount(n *Node) int {
-	c := 0
-	n.aliases.Range(func(any, any) bool { c++; return true })
-	return c
+func noMsg(t *testing.T, a Alias) {
+	t.Helper()
+	select {
+	case m := <-a.C:
+		t.Errorf("unexpected %+v", m)
+	default:
+	}
 }
 
 func TestAlias(t *testing.T) {
 	n := NewNode("")
-	ref, msgs, unalias := n.Alias()
-	defer unalias()
+	a := n.Alias()
+	defer a.Release()
 
-	n.SendAlias(ref, "first")
-	if m := <-msgs; m != "first" {
-		t.Errorf("got %v", m)
+	n.SendAlias(a.Ref, "first")
+	if m := <-a.C; m.Msg != "first" || m.Down {
+		t.Errorf("got %+v", m)
 	}
-	n.SendAlias(ref, "second") // the alias is gone after the first
-	select {
-	case m := <-msgs:
-		t.Errorf("one-shot alias delivered %v", m)
-	default:
-	}
-	if aliasCount(n) != 0 {
+	n.SendAlias(a.Ref, "second") // the alias is gone after the first
+	noMsg(t, a)
+	if n.aliases.len() != 0 {
 		t.Error("alias still active after delivery")
 	}
 }
 
-func TestUnalias(t *testing.T) {
+func TestAliasRelease(t *testing.T) {
 	n := NewNode("")
-	ref, msgs, unalias := n.Alias()
-	unalias()
-	n.SendAlias(ref, "late")
-	select {
-	case m := <-msgs:
-		t.Errorf("inactive alias delivered %v", m)
-	default:
-	}
-	if aliasCount(n) != 0 {
+	a := n.Alias()
+	a.Release()
+	n.SendAlias(a.Ref, "late")
+	noMsg(t, a)
+	if n.aliases.len() != 0 {
 		t.Error("alias not released")
 	}
-	unalias() // idempotent
+	a.Release() // idempotent
 }
 
 func TestAliasForeign(t *testing.T) {
 	n := NewNode("a@host")
 	other := NewNode("b@host")
-	ref, msgs, unalias := other.Alias()
-	defer unalias()
+	a := other.Alias()
+	defer a.Release()
 
-	n.SendAlias(ref, "remote") // TODO(dist): dropped for now
-	stale := ref
+	n.SendAlias(a.Ref, "remote") // TODO(dist): dropped for now
+	stale := a.Ref
 	stale.creation++
 	other.SendAlias(stale, "stale")
-	select {
-	case m := <-msgs:
-		t.Errorf("delivered %v", m)
-	default:
+	noMsg(t, a)
+}
+
+func TestMonitorAliasDown(t *testing.T) {
+	n := NewNode("")
+	p, _ := actor(n, nil)
+	a := n.MonitorAlias(p.pid)
+	defer a.Release()
+
+	n.Send(p.pid, exitWith{errBoom})
+	if m := <-a.C; !m.Down || m.Reason != errBoom || m.Msg != nil {
+		t.Errorf("got %+v", m)
+	}
+	n.SendAlias(a.Ref, "after death")
+	noMsg(t, a)
+	if n.aliases.len() != 0 {
+		t.Error("alias still active after the death")
+	}
+}
+
+func TestMonitorAliasNoProc(t *testing.T) {
+	n := NewNode("a@host")
+	dead := n.spawn(func(*Self) error { return nil })
+	<-dead.ctx.Done()
+	remote := dead.pid
+	remote.node = "b@host"
+
+	for pid, want := range map[PID]error{dead.pid: NoProc, remote: NoConnection} {
+		a := n.MonitorAlias(pid)
+		select {
+		case m := <-a.C:
+			if !m.Down || m.Reason != want {
+				t.Errorf("MonitorAlias(%v): got %+v, want down with %v", pid, m, want)
+			}
+		default:
+			t.Errorf("MonitorAlias(%v): no immediate down", pid)
+		}
+		a.Release()
+	}
+	if n.aliases.len() != 0 {
+		t.Error("aliases left behind")
+	}
+}
+
+// TestMonitorAliasReplyThenDeath checks that a reply sent before dying is
+// what arrives, and only it.
+func TestMonitorAliasReplyThenDeath(t *testing.T) {
+	n := NewNode("")
+	for range 200 {
+		ack := make(chan Ref, 1)
+		p := n.spawn(func(s *Self) error {
+			s.Node().SendAlias(<-ack, "reply")
+			return errBoom
+		})
+		a := n.MonitorAlias(p.pid)
+		ack <- a.Ref
+		<-p.ctx.Done()
+		if m := <-a.C; m.Down || m.Msg != "reply" {
+			t.Fatalf("got %+v, want the reply", m)
+		}
+		noMsg(t, a)
+		a.Release()
+	}
+}
+
+func TestMonitorAliasRelease(t *testing.T) {
+	n := NewNode("")
+	p, _ := actor(n, nil)
+	a := n.MonitorAlias(p.pid)
+	a.Release()
+	if monitors, _ := monitorCounts(p); monitors != 0 {
+		t.Error("target still tracks a released alias")
+	}
+	n.Send(p.pid, exitWith{errBoom})
+	<-p.ctx.Done()
+	time.Sleep(time.Millisecond)
+	noMsg(t, a)
+}
+
+// TestMonitorAliasRace monitors processes that die concurrently. Each alias
+// must get exactly one message: the death, with the real reason or NoProc.
+func TestMonitorAliasRace(t *testing.T) {
+	const rounds, watchers = 50, 50
+	n := NewNode("")
+	for round := range rounds {
+		target, _ := actor(n, nil)
+		aliases := make(chan Alias, watchers)
+		start := make(chan struct{})
+		for range watchers {
+			go func() {
+				<-start
+				aliases <- n.MonitorAlias(target.pid)
+			}()
+		}
+		close(start)
+		n.Send(target.pid, exitWith{errBoom})
+
+		timeout := time.After(5 * time.Second)
+		for i := range watchers {
+			a := <-aliases
+			select {
+			case m := <-a.C:
+				if !m.Down || (m.Reason != errBoom && m.Reason != NoProc) {
+					t.Fatalf("round %d, alias %d: got %+v", round, i, m)
+				}
+			case <-timeout:
+				t.Fatalf("round %d, alias %d: no message", round, i)
+			}
+			a.Release()
+		}
+	}
+	if l := n.aliases.len(); l != 0 {
+		t.Errorf("%d aliases left behind", l)
 	}
 }
 

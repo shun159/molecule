@@ -306,11 +306,12 @@ func (r *runtime[S]) sendRequest(e SendRequest) {
 	if e.Timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, e.Timeout)
 	}
-	req := request(ctx, n, self, pid, e.To, func(f From) any { return CallMsg{From: f, Req: e.Req} })
+	a := n.MonitorAlias(pid)
+	n.Send(pid, CallMsg{From: From{PID: self, Tag: a.Ref}, Req: e.Req})
 	callerCtx := r.self.Context()
 	go func() {
 		defer cancel()
-		defer req.release()
-		respond(awaitReply(ctx, callerCtx, e.To, req.replies, req.down))
+		defer a.Release()
+		respond(awaitReply(ctx, callerCtx, e.To, a.C))
 	}()
 }

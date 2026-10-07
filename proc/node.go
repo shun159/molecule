@@ -18,7 +18,7 @@ type Node struct {
 	nextID   atomic.Uint64
 	nextRef  atomic.Uint64
 	procs    sync.Map // uint64 -> *process
-	aliases  sync.Map // uint64 -> chan any
+	aliases  aliasTable
 
 	regMu sync.Mutex
 	names map[string]PID // guarded by regMu, as is process.name

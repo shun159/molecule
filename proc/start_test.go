@@ -292,22 +292,6 @@ func TestSpawnParent(t *testing.T) {
 	})
 }
 
-// TestAwaitStartAckWins hands awaitStart a child that has both acknowledged
-// and died, as when the waiter is slow to be scheduled. The ack must win.
-func TestAwaitStartAckWins(t *testing.T) {
-	n := NewNode("")
-	child := n.register()
-	for range 100 {
-		ack := make(chan error, 1)
-		ack <- nil
-		down, cancel := context.WithCancelCause(context.Background())
-		cancel(errBoom)
-		if pid, err := awaitStart(context.Background(), nil, child, ack, down); err != nil || pid != child.pid {
-			t.Fatalf("awaitStart = %v, %v; want success", pid, err)
-		}
-	}
-}
-
 // TestStartLinkImmediateDeath starts children that fail at once, so they
 // may die before StartLink would otherwise get to watch them. The real
 // reason must still be reported, never NoProc.

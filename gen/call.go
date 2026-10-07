@@ -80,44 +80,23 @@ func call(ctx context.Context, caller Caller, to Dest, wrap func(From) any) (any
 		callerCtx = c.Context()
 	}
 
-	r := request(ctx, n, self, pid, to, wrap)
-	defer r.release()
-	return awaitReply(ctx, callerCtx, to, r.replies, r.down)
+	a := n.MonitorAlias(pid)
+	defer a.Release()
+	n.Send(pid, wrap(From{PID: self, Tag: a.Ref}))
+	return awaitReply(ctx, callerCtx, to, a.C)
 }
 
-// pending is a request sent and waiting for its reply.
-type pending struct {
-	down    context.Context
-	replies <-chan any
-	release func()
-}
-
-// request sends wrap(From) to pid, the resolved to, and returns what to
-// wait on for the reply. release must be called once done waiting.
-func request(ctx context.Context, n *proc.Node, self, pid proc.PID, to Dest, wrap func(From) any) pending {
-	// Watch first: if the server is already gone, the reply never comes.
-	down, stop := n.Watch(ctx, pid)
-	tag, replies, unalias := n.Alias()
-	n.Send(pid, wrap(From{PID: self, Tag: tag}))
-	return pending{down: down, replies: replies, release: func() { unalias(); stop() }}
-}
-
-// awaitReply waits for the reply, the server's death, ctx, or the caller's
-// death, whichever comes first.
-func awaitReply(ctx, callerCtx context.Context, to Dest, replies <-chan any, down context.Context) (any, error) {
+// awaitReply waits for the reply or the death of the server, both arriving
+// on c, for ctx, or for the death of the caller, whichever comes first.
+func awaitReply(ctx, callerCtx context.Context, to Dest, c <-chan proc.AliasMsg) (any, error) {
 	select {
-	case v := <-replies:
-		return v, nil
-	case <-down.Done():
-		select {
-		case v := <-replies:
-			return v, nil
-		default:
+	case m := <-c:
+		if m.Down {
+			return nil, &ExitError{To: to, Reason: m.Reason}
 		}
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		return nil, &ExitError{To: to, Reason: context.Cause(down)}
+		return m.Msg, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	case <-callerCtx.Done():
 		return nil, context.Cause(callerCtx)
 	}

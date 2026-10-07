@@ -28,49 +28,43 @@ func (n *Node) Start(ctx context.Context, fn func(*Self) error) (PID, error) {
 // exit. Only the first call has an effect, and none for a process that was
 // not started by Start or StartLink.
 func (s *Self) InitAck(err error) {
-	if s.p.ack != nil {
-		select {
-		case s.p.ack <- err:
-		default: // never blocks: the channel has room for the one ack
-		}
-		s.p.ack = nil
+	if !s.p.ack.IsZero() {
+		s.p.node.SendAlias(s.p.ack, err)
+		s.p.ack = Ref{}
 	}
 }
 
 // start runs the registered, not yet started child and waits for its
 // acknowledgement. caller is nil when called from outside a process.
 func (n *Node) start(ctx context.Context, caller *Self, child *process, fn func(*Self) error) (PID, error) {
-	ack := make(chan error, 1)
-	child.ack = ack
-	// Watch before the child runs, so an immediate death reports its real
-	// reason rather than NoProc.
-	down, stop := n.Watch(context.Background(), child.pid)
-	defer stop()
+	// The ack and the death of the child arrive through one alias, set up
+	// before the child runs: an immediate death reports its real reason,
+	// and an ack sent before dying comes first, as in Erlang.
+	a := n.MonitorAlias(child.pid)
+	defer a.Release()
+	child.ack = a.Ref
 	go child.run(fn)
-	return awaitStart(ctx, caller, child, ack, down)
+	return awaitStart(ctx, caller, child, a.C)
 }
 
-// awaitStart waits for the child to acknowledge, die, run out of time, or
-// for the caller to die.
-func awaitStart(ctx context.Context, caller *Self, child *process, ack <-chan error, down context.Context) (PID, error) {
+// awaitStart waits for the child to acknowledge or die, for ctx, or for
+// the caller to die.
+func awaitStart(ctx context.Context, caller *Self, child *process, c <-chan AliasMsg) (PID, error) {
 	var callerDone <-chan struct{}
 	if caller != nil {
 		callerDone = caller.p.ctx.Done()
 	}
 
 	select {
-	case err := <-ack:
-		return acked(child.pid, err)
-	case <-down.Done():
-		// An acknowledgement sent before dying wins, as it would arrive
-		// first in Erlang.
-		select {
-		case err := <-ack:
-			return acked(child.pid, err)
-		default:
+	case m := <-c:
+		if m.Down {
+			caller.flushExit(child.pid)
+			return PID{}, m.Reason
 		}
-		caller.flushExit(child.pid)
-		return PID{}, context.Cause(down)
+		if err, _ := m.Msg.(error); err != nil {
+			return PID{}, err
+		}
+		return child.pid, nil
 	case <-ctx.Done():
 		if caller != nil {
 			caller.Unlink(child.pid)
@@ -83,16 +77,9 @@ func awaitStart(ctx context.Context, caller *Self, child *process, ack <-chan er
 	}
 }
 
-func acked(pid PID, err error) (PID, error) {
-	if err != nil {
-		return PID{}, err
-	}
-	return pid, nil
-}
-
 // flushExit removes the ExitMsg from pid, if any. The link notification
 // that queues it happens before the monitors, so it is in the mailbox by
-// the time a Watch on pid fires. A nil s is allowed.
+// the time a monitor of pid fires. A nil s is allowed.
 func (s *Self) flushExit(pid PID) {
 	if s == nil {
 		return
