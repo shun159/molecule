@@ -576,3 +576,33 @@ func TestName(t *testing.T) {
 		}
 	})
 }
+
+// TestTemporaryNotRestartedWithSiblings checks that a temporary child
+// stopped because a sibling is restarted is forgotten, not restarted.
+func TestTemporaryNotRestartedWithSiblings(t *testing.T) {
+	for _, strategy := range []supervisor.Strategy{supervisor.OneForAll, supervisor.RestForOne} {
+		t.Run(strategy.String(), func(t *testing.T) {
+			inWorld(t, func(w *world) {
+				sup := w.start(supervisor.Spec{
+					Strategy: strategy,
+					Children: []supervisor.ChildSpec{
+						w.worker("a", supervisor.Permanent),
+						w.worker("t", supervisor.Temporary),
+						w.worker("b", supervisor.Permanent),
+					},
+				})
+				w.expect(started{"a"}, started{"t"}, started{"b"})
+
+				// a is first: both strategies stop b, then t, and restart all
+				// but t.
+				w.call(sup, "a", crash{})
+				w.expect(stopped{"a", errBoom}, stopped{"b", proc.Shutdown}, stopped{"t", proc.Shutdown},
+					started{"a"}, started{"b"})
+				ids := w.children(sup)
+				if _, ok := ids["t"]; ok || len(ids) != 2 {
+					t.Errorf("children = %v; want the temporary child forgotten", ids)
+				}
+			})
+		})
+	}
+}

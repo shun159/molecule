@@ -1,10 +1,3 @@
-// Package supervisor starts, watches and restarts child processes, like
-// Erlang's supervisor.
-//
-// Unlike gen behaviours, a supervisor runs no user callbacks: what it does
-// is given as data, a Spec. Its decisions (whether to restart, whether the
-// restart intensity is exceeded, which children to stop and start) are
-// pure functions; this package runs them against the processes.
 package supervisor
 
 import (
@@ -309,11 +302,20 @@ func (s *supervisor) restart(c *child) error {
 		return ErrMaxIntensity
 	}
 	stop, start := plan(s.strategy, s.index(c), len(s.children))
+	starting := make([]*child, len(start))
+	for j, i := range start {
+		starting[j] = s.children[i]
+	}
 	for _, i := range stop {
 		s.shutdown(s.children[i])
 	}
-	for _, i := range start {
-		cc := s.children[i]
+	for _, cc := range starting {
+		// A temporary child stopped along with a sibling is not restarted
+		// but forgotten, as in OTP.
+		if cc.spec.Restart == Temporary {
+			s.remove(cc)
+			continue
+		}
 		if !cc.pid.IsZero() {
 			continue
 		}
