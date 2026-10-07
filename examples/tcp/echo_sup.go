@@ -19,7 +19,7 @@ type echo struct {
 // server comes first: the connections report to it, and with rest_for_one
 // they are restarted along with it should it fail.
 func startEcho(ctx context.Context, n *proc.Node, addr string) (*echo, error) {
-	listener := gentcpacceptor.NewListener(gentcpacceptor.Spec{Addr: addr}, EchoProtocol{stats: statsRef})
+	listener := gentcpacceptor.NewRawListener(gentcpacceptor.Spec{Addr: addr}, echoProtocol(statsRef))
 	sup, err := supervisor.Start(ctx, n, supervisor.Spec{
 		Strategy:  supervisor.RestForOne,
 		Intensity: 5,

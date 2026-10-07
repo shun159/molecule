@@ -5,12 +5,9 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"reflect"
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule/gen"
-	"github.com/shun159/molecule/gentcpacceptor"
 	"github.com/shun159/molecule/proc"
 	"github.com/shun159/molecule/supervisor"
 )
@@ -60,19 +57,5 @@ func TestStatsPure(t *testing.T) {
 	}
 	if want := (Stats{Open: 1, Total: 2, Bytes: 8}); s != want {
 		t.Errorf("stats = %+v, want %+v", s, want)
-	}
-}
-
-func TestProtocolPure(t *testing.T) {
-	p := EchoProtocol{stats: statsRef}
-	sock := gentcpacceptor.Socket{PID: proc.NewNode("").Spawn(func(*proc.Self) error { return nil })}
-
-	_, effs := p.HandleData(struct{}{}, sock, []byte("hi"))
-	want := gen.Do(sock.Write([]byte("hi")), statsRef.CastEffect(echoed{2}))
-	if !reflect.DeepEqual(effs, want) {
-		t.Errorf("HandleData: %#v\nwant %#v", effs, want)
-	}
-	if _, effs, _ := p.Init(proc.PID{}, sock); !reflect.DeepEqual(effs, gen.Do(statsRef.CastEffect(connOpened{}))) {
-		t.Errorf("Init: %#v", effs)
 	}
 }

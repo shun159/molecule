@@ -5,8 +5,8 @@
 //	└── echo_listener  gen_tcp_acceptor; one echo_protocol per connection
 //
 // Each file holds one "module": main.go is the application, echo_sup.go
-// the supervisor, echo_stats.go a gen_server and echo_protocol.go a
-// gen_tcp_acceptor.
+// the supervisor, echo_stats.go a gen_server and echo_protocol.go the
+// handler of a connection, plain Go reading and writing its socket.
 //
 //	go run ./examples/tcp -addr 127.0.0.1:5555
 //	nc 127.0.0.1 5555
