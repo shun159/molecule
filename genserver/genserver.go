@@ -118,6 +118,14 @@ func StartLink[S, Req, Rep, Cast any](ctx context.Context, parent *proc.Self, b 
 	return NewRef[Req, Rep, Cast](pid), err
 }
 
+// StartLinkFunc returns a function that starts b linked to its parent,
+// to use as the Start of a supervisor.ChildSpec.
+func StartLinkFunc[S, Req, Rep, Cast any](b Behaviour[S, Req, Rep, Cast], opts ...gen.Option) func(context.Context, *proc.Self) (proc.PID, error) {
+	return func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
+		return gen.StartLink(ctx, parent, adapter[S, Req, Rep, Cast]{b}, nil, opts...)
+	}
+}
+
 // adapter turns a Behaviour into a gen.Behaviour.
 type adapter[S, Req, Rep, Cast any] struct {
 	b Behaviour[S, Req, Rep, Cast]
