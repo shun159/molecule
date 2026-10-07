@@ -16,6 +16,7 @@ type Node struct {
 	name     string
 	creation uint32
 	nextID   atomic.Uint64
+	nextRef  atomic.Uint64
 	procs    sync.Map // uint64 -> *process
 }
 
@@ -44,6 +45,11 @@ func (n *Node) Send(to PID, msg any) {
 		return
 	}
 	// TODO(dist): route messages for remote nodes.
+}
+
+// MakeRef returns a new unique reference.
+func (n *Node) MakeRef() Ref {
+	return Ref{node: n.name, creation: n.creation, id: n.nextRef.Add(1)}
 }
 
 // IsAlive reports whether the local process pid is alive. It always

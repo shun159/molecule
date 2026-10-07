@@ -51,6 +51,21 @@ func (m *mailbox) pop() (any, bool) {
 	return msg, true
 }
 
+// remove deletes the queued messages for which match returns true, keeping
+// the order of the others.
+func (m *mailbox) remove(match func(any) bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kept := m.q[:m.head]
+	for _, msg := range m.q[m.head:] {
+		if !match(msg) {
+			kept = append(kept, msg)
+		}
+	}
+	clear(m.q[len(kept):])
+	m.q = kept
+}
+
 func (m *mailbox) len() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()

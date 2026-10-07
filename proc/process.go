@@ -21,10 +21,16 @@ type process struct {
 
 	trapExit atomic.Bool
 
-	// mu guards links and the transition to dead, so a link is either
-	// established with a live process or reported as NoProc, never lost.
+	// mu guards links, monitors and the transition to dead, so a link or
+	// a monitor is either established with a live process or reported as
+	// NoProc, never lost.
 	mu    sync.Mutex
 	links map[PID]struct{}
+	// monitors are the processes watching p; monitoring are the processes
+	// p watches. A DOWN message is only queued while its Ref is still in
+	// the watcher's monitoring, checked under the watcher's lock.
+	monitors   map[Ref]PID
+	monitoring map[Ref]PID
 }
 
 func newProcess(n *Node, pid PID) *process {
@@ -36,6 +42,9 @@ func newProcess(n *Node, pid PID) *process {
 		ctx:    ctx,
 		cancel: cancel,
 		links:  make(map[PID]struct{}),
+
+		monitors:   make(map[Ref]PID),
+		monitoring: make(map[Ref]PID),
 	}
 }
 
@@ -63,8 +72,8 @@ func invoke(fn func(*Self) error, self *Self) (reason error) {
 	return Normal
 }
 
-// die makes p dead with reason and propagates it to the linked processes.
-// Only the first call has an effect.
+// die makes p dead with reason, propagates it to the linked processes and
+// notifies the monitoring ones. Only the first call has an effect.
 func (p *process) die(reason error) {
 	p.mu.Lock()
 	if p.ctx.Err() != nil {
@@ -72,13 +81,26 @@ func (p *process) die(reason error) {
 		return
 	}
 	p.cancel(reason)
-	links := p.links
-	p.links = nil
+	links, monitors, monitoring := p.links, p.monitors, p.monitoring
+	p.links, p.monitors, p.monitoring = nil, nil, nil
 	p.mu.Unlock()
 
 	p.node.procs.Delete(p.pid.id)
 	for to := range links {
 		p.node.sendExit(p.pid, to, reason, true)
+	}
+	for ref, watcher := range monitors {
+		if w := p.node.lookup(watcher); w != nil {
+			w.down(ref, p.pid, reason)
+		}
+		// TODO(dist): notify remote watchers.
+	}
+	for ref, target := range monitoring {
+		if t := p.node.lookup(target); t != nil {
+			t.mu.Lock()
+			delete(t.monitors, ref)
+			t.mu.Unlock()
+		}
 	}
 }
 
