@@ -40,6 +40,8 @@ type runtime[S any] struct {
 	deferred  []any
 
 	last any // the message being handled, for the report on termination
+
+	continues []any // Msgs of Continue effects, handled before the mailbox
 }
 
 type timer struct {
@@ -91,11 +93,22 @@ func (r *runtime[S]) init(args any) (state S, effs []Effect, err error) {
 			err = &proc.PanicError{Value: v, Stack: debug.Stack()}
 		}
 	}()
-	return r.b.Init(args)
+	return r.b.Init(r.self.PID(), args)
 }
 
 func (r *runtime[S]) loop() error {
 	for {
+		if len(r.continues) > 0 {
+			// Still within the work of the last callback: no system
+			// message or suspension comes in between.
+			c := r.continues[0]
+			r.continues[0] = nil
+			r.continues = r.continues[1:]
+			if err := r.step(ContinueMsg{Msg: c}); err != nil {
+				return err
+			}
+			continue
+		}
 		msg, err := r.next()
 		if err != nil {
 			r.stopTimers()
@@ -117,17 +130,26 @@ func (r *runtime[S]) loop() error {
 		if !ok {
 			continue
 		}
-		r.last = in
-		state, effs, err := r.handle(in)
-		if err != nil {
-			return r.terminate(r.state, err)
-		}
-		r.state = state
-		r.apply(effs)
-		if r.stopping {
-			return r.terminate(r.state, r.stopReason)
+		if err := r.step(in); err != nil {
+			return err
 		}
 	}
+}
+
+// step handles one message and performs the effects. It returns the exit
+// reason once the behaviour has terminated.
+func (r *runtime[S]) step(in Msg) error {
+	r.last = in
+	state, effs, err := r.handle(in)
+	if err != nil {
+		return r.terminate(r.state, err)
+	}
+	r.state = state
+	r.apply(effs)
+	if r.stopping {
+		return r.terminate(r.state, r.stopReason)
+	}
+	return nil
 }
 
 // next returns the next message: a deferred one once resumed, or one from
@@ -245,6 +267,8 @@ func (r *runtime[S]) system(m sysMsg) {
 func (r *runtime[S]) apply(effs []Effect) {
 	for _, e := range effs {
 		switch e := e.(type) {
+		case Continue:
+			r.continues = append(r.continues, e.Msg)
 		case Reply:
 			SendReply(r.self, e.To, e.Value)
 		case Send:

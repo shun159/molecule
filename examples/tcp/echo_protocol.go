@@ -4,6 +4,7 @@ import (
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/genserver"
 	"github.com/shun159/molecule/gentcpacceptor"
+	"github.com/shun159/molecule/proc"
 )
 
 // EchoProtocol handles one connection, like a Ranch protocol: a
@@ -13,7 +14,7 @@ type EchoProtocol struct {
 	stats genserver.Ref[GetStats, Stats, StatsEvent]
 }
 
-func (p EchoProtocol) Init(gentcpacceptor.Socket) (struct{}, []gen.Effect, error) {
+func (p EchoProtocol) Init(proc.PID, gentcpacceptor.Socket) (struct{}, []gen.Effect, error) {
 	return struct{}{}, gen.Do(p.stats.CastEffect(connOpened{})), nil
 }
 

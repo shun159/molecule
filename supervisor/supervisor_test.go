@@ -44,7 +44,7 @@ type (
 	stopNormal struct{}
 )
 
-func (w worker) Init() (worker, []gen.Effect, error) {
+func (w worker) Init(proc.PID) (worker, []gen.Effect, error) {
 	if w.failInit != nil && w.failInit.Add(-1) >= 0 {
 		return w, nil, errInit
 	}

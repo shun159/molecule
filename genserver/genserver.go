@@ -5,6 +5,7 @@ package genserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/shun159/molecule/gen"
@@ -15,9 +16,11 @@ import (
 // replies of type Rep, and takes casts of type Cast. Configuration belongs
 // in the fields of the implementing type, which Init reads.
 //
-// A Behaviour may also implement InfoHandler and Terminator.
+// A Behaviour may also implement InfoHandler, ContinueHandler and
+// Terminator.
 type Behaviour[S, Req, Rep, Cast any] interface {
-	Init() (S, []gen.Effect, error)
+	// Init returns the initial state. self is the PID of the server.
+	Init(self proc.PID) (S, []gen.Effect, error)
 	// HandleCall handles a call. The reply is an effect made with
 	// from.Reply, now or, keeping from in the state, later.
 	HandleCall(state S, req Req, from From[Rep]) (S, []gen.Effect)
@@ -29,6 +32,18 @@ type Behaviour[S, Req, Rep, Cast any] interface {
 type InfoHandler[S any] interface {
 	HandleInfo(state S, msg any) (S, []gen.Effect)
 }
+
+// ContinueHandler handles the Msg of a gen.Continue effect, right after
+// the callback that returned it, like handle_continue in OTP. A server
+// returning gen.Continue must implement it, or stops with
+// ErrNoHandleContinue.
+type ContinueHandler[S any] interface {
+	HandleContinue(state S, msg any) (S, []gen.Effect)
+}
+
+// ErrNoHandleContinue is the exit reason of a server returning gen.Continue
+// without implementing ContinueHandler.
+var ErrNoHandleContinue = errors.New("genserver: gen.Continue without HandleContinue")
 
 // Terminator is called when the server stops, see gen.Behaviour.
 type Terminator[S any] interface {
@@ -131,8 +146,8 @@ type adapter[S, Req, Rep, Cast any] struct {
 	b Behaviour[S, Req, Rep, Cast]
 }
 
-func (a adapter[S, Req, Rep, Cast]) Init(any) (S, []gen.Effect, error) {
-	return a.b.Init()
+func (a adapter[S, Req, Rep, Cast]) Init(self proc.PID, _ any) (S, []gen.Effect, error) {
+	return a.b.Init(self)
 }
 
 func (a adapter[S, Req, Rep, Cast]) Handle(s S, msg gen.Msg) (S, []gen.Effect) {
@@ -153,6 +168,11 @@ func (a adapter[S, Req, Rep, Cast]) Handle(s S, msg gen.Msg) (S, []gen.Effect) {
 		if h, ok := a.b.(InfoHandler[S]); ok {
 			return h.HandleInfo(s, m.Msg)
 		}
+	case gen.ContinueMsg:
+		if h, ok := a.b.(ContinueHandler[S]); ok {
+			return h.HandleContinue(s, m.Msg)
+		}
+		return s, gen.Do(gen.Stop{Reason: ErrNoHandleContinue})
 	}
 	return s, nil
 }

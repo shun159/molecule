@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/genserver"
+	"github.com/shun159/molecule/proc"
 )
 
 // Receiver is the gen_server every mailer sends to: it counts the Pong
@@ -22,7 +23,7 @@ type receiverState struct {
 	waiting []genserver.From[int] // Wait calls, answered when all are in
 }
 
-func (Receiver) Init() (receiverState, []gen.Effect, error) {
+func (Receiver) Init(proc.PID) (receiverState, []gen.Effect, error) {
 	return receiverState{}, nil, nil
 }
 

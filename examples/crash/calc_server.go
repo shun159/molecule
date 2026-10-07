@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/genserver"
+	"github.com/shun159/molecule/proc"
 )
 
 // CalcServer is a gen_server holding a number. It has a bug, of the kind
@@ -30,7 +31,7 @@ var (
 	calcRef  = genserver.RefFor(CalcServer{}, calcName)
 )
 
-func (CalcServer) Init() (int, []gen.Effect, error) { return 0, nil, nil }
+func (CalcServer) Init(proc.PID) (int, []gen.Effect, error) { return 0, nil, nil }
 
 func (CalcServer) HandleCall(n int, req CalcReq, from genserver.From[int]) (int, []gen.Effect) {
 	switch r := req.(type) {

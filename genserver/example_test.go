@@ -28,7 +28,7 @@ func (Reset) counterReq() {}
 // Add is the only cast.
 type Add struct{ N int }
 
-func (c Counter) Init() (int, []gen.Effect, error) { return c.Initial, nil, nil }
+func (c Counter) Init(proc.PID) (int, []gen.Effect, error) { return c.Initial, nil, nil }
 
 func (Counter) HandleCall(n int, req CounterReq, from genserver.From[int]) (int, []gen.Effect) {
 	switch req.(type) {
@@ -78,7 +78,7 @@ type Barrier struct {
 
 type Wait struct{}
 
-func (Barrier) Init() ([]genserver.From[string], []gen.Effect, error) { return nil, nil, nil }
+func (Barrier) Init(proc.PID) ([]genserver.From[string], []gen.Effect, error) { return nil, nil, nil }
 
 func (b Barrier) HandleCall(waiting []genserver.From[string], _ Wait, from genserver.From[string]) ([]genserver.From[string], []gen.Effect) {
 	waiting = append(waiting[:len(waiting):len(waiting)], from)

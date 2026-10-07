@@ -24,8 +24,9 @@ import (
 // A Behaviour may also implement ClosedHandler, InfoHandler and
 // Terminator.
 type Behaviour[S any] interface {
-	// Init is called when the connection is ready. An error stops it.
-	Init(sock Socket) (S, []gen.Effect, error)
+	// Init is called when the connection is ready. self is the PID of the
+	// connection process. An error stops it.
+	Init(self proc.PID, sock Socket) (S, []gen.Effect, error)
 	// HandleData handles bytes read from the connection, as much as one
 	// read returned: a message may come in pieces, or several at once.
 	HandleData(state S, sock Socket, data []byte) (S, []gen.Effect)
@@ -40,7 +41,8 @@ type ClosedHandler[S any] interface {
 }
 
 // InfoHandler handles any other message sent to the connection process,
-// gen.CallMsg and gen.CastMsg included. Without it, they are dropped.
+// gen.CallMsg, gen.CastMsg and gen.ContinueMsg included. Without it, they
+// are dropped.
 type InfoHandler[S any] interface {
 	HandleInfo(state S, sock Socket, msg any) (S, []gen.Effect)
 }
@@ -54,6 +56,7 @@ type Terminator[S any] interface {
 // conn is the state of the connection process: the state of the
 // behaviour, once the socket is attached.
 type conn[S any] struct {
+	self  proc.PID
 	sock  Socket
 	ready bool
 	state S
@@ -65,7 +68,9 @@ type adapter[S any] struct {
 	activeN int
 }
 
-func (adapter[S]) Init(any) (conn[S], []gen.Effect, error) { return conn[S]{}, nil, nil }
+func (adapter[S]) Init(self proc.PID, _ any) (conn[S], []gen.Effect, error) {
+	return conn[S]{self: self}, nil, nil
+}
 
 func (a adapter[S]) Handle(c conn[S], msg gen.Msg) (conn[S], []gen.Effect) {
 	info, ok := msg.(gen.InfoMsg)
@@ -74,11 +79,11 @@ func (a adapter[S]) Handle(c conn[S], msg gen.Msg) (conn[S], []gen.Effect) {
 	}
 	switch m := info.Msg.(type) {
 	case attached:
-		state, effs, err := a.b.Init(m.sock)
+		state, effs, err := a.b.Init(c.self, m.sock)
 		if err != nil {
 			return c, gen.Do(gen.Stop{Reason: err})
 		}
-		return conn[S]{sock: m.sock, ready: true, state: state}, then(effs, m.sock.active(a.activeN))
+		return conn[S]{self: c.self, sock: m.sock, ready: true, state: state}, then(effs, m.sock.active(a.activeN))
 	case data:
 		if !c.ready || m.sock != c.sock.PID {
 			return c, nil

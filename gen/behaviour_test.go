@@ -3,6 +3,7 @@ package gen_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -25,7 +26,7 @@ type (
 	reset struct{}
 )
 
-func (counter) Init(args any) (int, []gen.Effect, error) { return args.(int), nil, nil }
+func (counter) Init(_ proc.PID, args any) (int, []gen.Effect, error) { return args.(int), nil, nil }
 
 func (counter) Handle(n int, msg gen.Msg) (int, []gen.Effect) {
 	switch m := msg.(type) {
@@ -101,7 +102,11 @@ type pstate struct {
 	n        int
 	log      []any
 	observer proc.PID
+	self     proc.PID
 }
+
+// continued is how the puppet logs a ContinueMsg.
+type continued struct{ msg any }
 
 type pargs struct {
 	observer proc.PID
@@ -118,12 +123,12 @@ type terminated struct {
 	reason error
 }
 
-func (puppet) Init(args any) (pstate, []gen.Effect, error) {
+func (puppet) Init(self proc.PID, args any) (pstate, []gen.Effect, error) {
 	a := args.(pargs)
 	if a.panic {
 		panic("in init")
 	}
-	return pstate{observer: a.observer}, a.effs, a.err
+	return pstate{observer: a.observer, self: self}, a.effs, a.err
 }
 
 func (puppet) Handle(s pstate, msg gen.Msg) (pstate, []gen.Effect) {
@@ -148,6 +153,11 @@ func (puppet) Handle(s pstate, msg gen.Msg) (pstate, []gen.Effect) {
 		}
 	case gen.InfoMsg:
 		s.log = append(slices.Clip(s.log), m.Msg)
+	case gen.ContinueMsg:
+		s.log = append(slices.Clip(s.log), continued{m.Msg})
+		if d, ok := m.Msg.(do); ok {
+			return s, d.effs
+		}
 	}
 	return s, nil
 }
@@ -639,4 +649,80 @@ func TestTerminateReport(t *testing.T) {
 	if len(rec.Records("behaviour terminating")) != 1 {
 		t.Errorf("normal stop reported: %+v", rec.Records(""))
 	}
+}
+
+func TestInitSelf(t *testing.T) {
+	inWorld(t, func(w *world) {
+		pid := w.start()
+		if self := w.state(pid).self; self != pid {
+			t.Errorf("Init got self %v, want %v", self, pid)
+		}
+	})
+}
+
+// TestContinueOrder checks that continues come before the messages already
+// in the mailbox, in the order returned, those returned while handling a
+// continue included.
+func TestContinueOrder(t *testing.T) {
+	inWorld(t, func(w *world) {
+		pid := w.start()
+		ctx := context.Background()
+		if err := gen.Suspend(ctx, w.n, pid); err != nil {
+			t.Fatal(err)
+		}
+		nested := do{gen.Do(gen.Continue{Msg: "c3"})}
+		gen.SendCast(w.n, pid, do{gen.Do(
+			gen.Continue{Msg: "c1"},
+			gen.Continue{Msg: nested},
+			gen.Continue{Msg: "c2"},
+		)})
+		w.n.Send(pid, "mailbox")
+		if err := gen.Resume(ctx, w.n, pid); err != nil {
+			t.Fatal(err)
+		}
+		want := []any{continued{"c1"}, continued{nested}, continued{"c2"}, continued{"c3"}, "mailbox"}
+		if got := w.log(pid); !reflect.DeepEqual(got, want) {
+			t.Errorf("log = %#v\nwant %#v", got, want)
+		}
+	})
+}
+
+func TestContinueFromInit(t *testing.T) {
+	inWorld(t, func(w *world) {
+		pid := w.start(gen.Continue{Msg: "boot"})
+		w.n.Send(pid, "first")
+		if got := w.log(pid); !reflect.DeepEqual(got, []any{continued{"boot"}, "first"}) {
+			t.Errorf("log = %#v", got)
+		}
+	})
+}
+
+func TestStopDropsContinue(t *testing.T) {
+	inWorld(t, func(w *world) {
+		pid := w.start()
+		leak := do{gen.Do(gen.Send{To: w.observer, Msg: "continued after stop"})}
+		w.do(pid, gen.Continue{Msg: leak}, gen.Stop{})
+		if e := <-w.events; e != (terminated{0, proc.Normal}) {
+			t.Errorf("event %#v", e)
+		}
+		w.noEvent()
+	})
+}
+
+// widget implements Extension effects as an unknown behaviour's would;
+// the runtime must refuse them.
+type widget struct{ gen.Extension }
+
+func TestExtensionEffectRefused(t *testing.T) {
+	inWorld(t, func(w *world) {
+		pid := w.start()
+		down, stop := w.n.Watch(context.Background(), pid)
+		defer stop()
+		gen.SendCast(w.n, pid, do{gen.Do(widget{})})
+		<-down.Done()
+		var pe *proc.PanicError
+		if !errors.As(context.Cause(down), &pe) || !strings.Contains(fmt.Sprint(pe.Value), "widget") {
+			t.Errorf("exit reason = %v", context.Cause(down))
+		}
+	})
 }

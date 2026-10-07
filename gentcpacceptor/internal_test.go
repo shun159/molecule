@@ -22,7 +22,7 @@ type rstate struct {
 	infos  []any
 }
 
-func (recorder) Init(Socket) (rstate, []gen.Effect, error) { return rstate{}, nil, nil }
+func (recorder) Init(proc.PID, Socket) (rstate, []gen.Effect, error) { return rstate{}, nil, nil }
 
 func (recorder) HandleData(s rstate, sock Socket, b []byte) (rstate, []gen.Effect) {
 	s.data = append(s.data[:len(s.data):len(s.data)], string(b))
@@ -37,7 +37,7 @@ func (recorder) HandleInfo(s rstate, _ Socket, msg any) (rstate, []gen.Effect) {
 // minimal implements only the required callbacks.
 type minimal struct{}
 
-func (minimal) Init(Socket) (int, []gen.Effect, error)                   { return 0, nil, nil }
+func (minimal) Init(proc.PID, Socket) (int, []gen.Effect, error)         { return 0, nil, nil }
 func (minimal) HandleData(n int, _ Socket, _ []byte) (int, []gen.Effect) { return n + 1, nil }
 
 func info(m any) gen.Msg { return gen.InfoMsg{Msg: m} }

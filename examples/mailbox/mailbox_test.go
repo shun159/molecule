@@ -10,6 +10,7 @@ import (
 
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/genserver"
+	"github.com/shun159/molecule/proc"
 )
 
 func TestRun(t *testing.T) {
@@ -38,7 +39,7 @@ func TestUsage(t *testing.T) {
 func TestReceiverPure(t *testing.T) {
 	r := Receiver{Expect: 2}
 	var from genserver.From[int]
-	s, _, _ := r.Init()
+	s, _, _ := r.Init(proc.PID{})
 
 	s, effs := r.HandleCall(s, Wait{}, from)
 	if effs != nil || len(s.waiting) != 1 {

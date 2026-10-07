@@ -35,6 +35,14 @@ type Cast struct {
 	Req any
 }
 
+// Continue makes Msg the next message handled, as a ContinueMsg, before
+// any other in the mailbox, like {continue, Msg} in OTP. It splits work
+// in steps, such as initialization to finish once Start has returned.
+// Several are handled in the order returned. A Stop drops them.
+type Continue struct {
+	Msg any
+}
+
 // Stop terminates the behaviour once the remaining effects have run:
 // Terminate is called, then the process exits with Reason (Normal if nil).
 type Stop struct {
@@ -95,6 +103,15 @@ type TrapExit struct {
 	On bool
 }
 
+// Extension is embedded in the effects of behaviours built on gen, such as
+// genstatem: an effect type embedding it is an Effect, for the behaviour's
+// adapter to handle before returning the rest to the runtime. The runtime
+// panics on any it is given.
+type Extension struct{}
+
+func (Extension) effect() {}
+
+func (Continue) effect()    {}
 func (Reply) effect()       {}
 func (Send) effect()        {}
 func (Cast) effect()        {}

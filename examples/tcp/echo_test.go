@@ -72,7 +72,7 @@ func TestProtocolPure(t *testing.T) {
 	if !reflect.DeepEqual(effs, want) {
 		t.Errorf("HandleData: %#v\nwant %#v", effs, want)
 	}
-	if _, effs, _ := p.Init(sock); !reflect.DeepEqual(effs, gen.Do(statsRef.CastEffect(connOpened{}))) {
+	if _, effs, _ := p.Init(proc.PID{}, sock); !reflect.DeepEqual(effs, gen.Do(statsRef.CastEffect(connOpened{}))) {
 		t.Errorf("Init: %#v", effs)
 	}
 }

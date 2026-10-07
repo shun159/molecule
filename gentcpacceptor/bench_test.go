@@ -17,7 +17,7 @@ import (
 // Echo writes back what it reads.
 type Echo struct{}
 
-func (Echo) Init(gentcpacceptor.Socket) (struct{}, []gen.Effect, error) {
+func (Echo) Init(proc.PID, gentcpacceptor.Socket) (struct{}, []gen.Effect, error) {
 	return struct{}{}, nil, nil
 }
 
@@ -151,7 +151,9 @@ type sum struct {
 	crc    uint32
 }
 
-func (summer) Init(gentcpacceptor.Socket) (sum, []gen.Effect, error) { return sum{}, nil, nil }
+func (summer) Init(proc.PID, gentcpacceptor.Socket) (sum, []gen.Effect, error) {
+	return sum{}, nil, nil
+}
 
 func (summer) HandleData(s sum, sock gentcpacceptor.Socket, b []byte) (sum, []gen.Effect) {
 	if len(s.header) < 8 {

@@ -2,12 +2,20 @@ package gen
 
 import "github.com/shun159/molecule/proc"
 
-// Msg is what a Behaviour handles: a CallMsg, a CastMsg or an InfoMsg.
+// Msg is what a Behaviour handles: a CallMsg, a CastMsg, an InfoMsg, or a
+// ContinueMsg.
 type Msg interface{ msg() }
 
-func (CallMsg) msg() {}
-func (CastMsg) msg() {}
-func (InfoMsg) msg() {}
+func (CallMsg) msg()     {}
+func (CastMsg) msg()     {}
+func (InfoMsg) msg()     {}
+func (ContinueMsg) msg() {}
+
+// ContinueMsg carries the Msg of a Continue effect. It is handled right
+// after the callback that returned the effect, before any other message.
+type ContinueMsg struct {
+	Msg any
+}
 
 // InfoMsg carries any other message: plain messages sent to the process,
 // Down for a Monitor effect, Response for a SendRequest effect, the Msg of

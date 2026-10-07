@@ -13,10 +13,11 @@ import (
 // runtime started by Start or StartLink owns the process, receives the
 // messages and performs the effects.
 type Behaviour[S any] interface {
-	// Init returns the initial state. An error fails the start: Start
-	// returns it and the process exits with it, except ErrIgnore, which
-	// makes the process exit normally.
-	Init(args any) (S, []Effect, error)
+	// Init returns the initial state. self is the PID of the process, for
+	// a behaviour to hand to others or keep in its state. An error fails
+	// the start: Start returns it and the process exits with it, except
+	// ErrIgnore, which makes the process exit normally.
+	Init(self proc.PID, args any) (S, []Effect, error)
 	// Handle handles one message. A panic terminates the behaviour with
 	// a proc.PanicError, Terminate getting the state before the message.
 	Handle(state S, msg Msg) (S, []Effect)

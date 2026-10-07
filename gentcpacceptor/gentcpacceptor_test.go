@@ -24,7 +24,7 @@ import (
 // for these small writes on loopback.
 type lineHandler struct{}
 
-func (lineHandler) Init(gentcpacceptor.Socket) (struct{}, []gen.Effect, error) {
+func (lineHandler) Init(proc.PID, gentcpacceptor.Socket) (struct{}, []gen.Effect, error) {
 	return struct{}{}, nil, nil
 }
 
@@ -205,7 +205,7 @@ func TestStop(t *testing.T) {
 // refuser fails Init, which must close the connection.
 type refuser struct{}
 
-func (refuser) Init(gentcpacceptor.Socket) (struct{}, []gen.Effect, error) {
+func (refuser) Init(proc.PID, gentcpacceptor.Socket) (struct{}, []gen.Effect, error) {
 	return struct{}{}, nil, errors.New("go away")
 }
 
@@ -224,7 +224,7 @@ func TestInitError(t *testing.T) {
 // greeter tells the peer its own address, which Init gets with the socket.
 type greeter struct{}
 
-func (greeter) Init(sock gentcpacceptor.Socket) (struct{}, []gen.Effect, error) {
+func (greeter) Init(_ proc.PID, sock gentcpacceptor.Socket) (struct{}, []gen.Effect, error) {
 	return struct{}{}, gen.Do(sock.Write([]byte(sock.RemoteAddr.String() + "\n"))), nil
 }
 

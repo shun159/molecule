@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/genserver"
+	"github.com/shun159/molecule/proc"
 	"github.com/shun159/molecule/supervisor"
 )
 
@@ -46,7 +47,7 @@ func statsChildSpec(id string) supervisor.ChildSpec {
 	}
 }
 
-func (EchoStats) Init() (Stats, []gen.Effect, error) { return Stats{}, nil, nil }
+func (EchoStats) Init(proc.PID) (Stats, []gen.Effect, error) { return Stats{}, nil, nil }
 
 func (EchoStats) HandleCall(s Stats, _ GetStats, from genserver.From[Stats]) (Stats, []gen.Effect) {
 	return s, gen.Do(from.Reply(s))

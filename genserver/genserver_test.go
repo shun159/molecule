@@ -38,7 +38,7 @@ type echoState struct {
 
 type stopped struct{ reason error }
 
-func (e echo) Init() (echoState, []gen.Effect, error) {
+func (e echo) Init(proc.PID) (echoState, []gen.Effect, error) {
 	return echoState{observer: e.observer}, nil, nil
 }
 
@@ -180,7 +180,7 @@ type relayState struct {
 	next    int
 }
 
-func (relay) Init() (relayState, []gen.Effect, error) {
+func (relay) Init(proc.PID) (relayState, []gen.Effect, error) {
 	return relayState{pending: map[int]genserver.From[int]{}}, nil, nil
 }
 
@@ -241,7 +241,7 @@ func TestStartLink(t *testing.T) {
 // validator replies nil errors, which arrive as untyped nil.
 type validator struct{}
 
-func (validator) Init() (struct{}, []gen.Effect, error) { return struct{}{}, nil, nil }
+func (validator) Init(proc.PID) (struct{}, []gen.Effect, error) { return struct{}{}, nil, nil }
 
 func (validator) HandleCall(s struct{}, n int, from genserver.From[error]) (struct{}, []gen.Effect) {
 	if n < 0 {
@@ -261,5 +261,67 @@ func TestNilReply(t *testing.T) {
 	}
 	if rep, err := v.Call(ctx, n, -1); rep != errBoom || err != nil {
 		t.Errorf("Call(-1) = %v, %v", rep, err)
+	}
+}
+
+// warmer finishes its initialization in HandleContinue, after Start has
+// returned, and knows its own PID.
+type warmer struct{}
+
+type warmState struct {
+	self   proc.PID
+	warmed bool
+}
+
+func (warmer) Init(self proc.PID) (warmState, []gen.Effect, error) {
+	return warmState{self: self}, gen.Do(gen.Continue{Msg: "warm up"}), nil
+}
+
+func (warmer) HandleContinue(s warmState, msg any) (warmState, []gen.Effect) {
+	s.warmed = msg == "warm up"
+	return s, nil
+}
+
+func (warmer) HandleCall(s warmState, _ struct{}, from genserver.From[warmState]) (warmState, []gen.Effect) {
+	return s, gen.Do(from.Reply(s))
+}
+
+func (warmer) HandleCast(s warmState, _ struct{}) (warmState, []gen.Effect) { return s, nil }
+
+func TestHandleContinue(t *testing.T) {
+	n := proc.NewNode("")
+	ctx := context.Background()
+	w, err := genserver.Start(ctx, n, warmer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := w.Call(ctx, n, struct{}{})
+	if err != nil || !s.warmed || s.self != w.Dest() {
+		t.Errorf("state = %+v, %v; want warmed, with self %v", s, err, w.Dest())
+	}
+}
+
+// cold returns gen.Continue without a HandleContinue.
+type cold struct{}
+
+func (cold) Init(proc.PID) (int, []gen.Effect, error) {
+	return 0, gen.Do(gen.Continue{Msg: "oops"}), nil
+}
+
+func (cold) HandleCall(n int, _ struct{}, _ genserver.From[int]) (int, []gen.Effect) { return n, nil }
+func (cold) HandleCast(n int, _ struct{}) (int, []gen.Effect)                        { return n, nil }
+
+func TestNoHandleContinue(t *testing.T) {
+	n := proc.NewNode("")
+	ctx := context.Background()
+	c, err := genserver.Start(ctx, n, cold{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	down, stop := n.Watch(ctx, c.Dest().(proc.PID))
+	defer stop()
+	<-down.Done()
+	if r := context.Cause(down); r != genserver.ErrNoHandleContinue {
+		t.Errorf("exit reason = %v", r)
 	}
 }
