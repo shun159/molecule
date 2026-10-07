@@ -194,14 +194,23 @@ func listen(s *proc.Self, addr string, sh *shared) error {
 		s.InitAck(err)
 		return err
 	}
+	// Asked to stop, the process closes the socket before it exits, so
+	// that once it is seen dead, no connection is accepted anymore. Killed,
+	// it runs no code: the socket is closed a little after, by AfterFunc.
+	defer ln.Close()
 	context.AfterFunc(s.Context(), func() { ln.Close() })
+	s.TrapExit(true)
 	sh.mu.Lock()
 	sh.ln = ln
 	sh.mu.Unlock()
 	s.InitAck(nil)
 	for {
-		if _, err := s.Receive(context.Background()); err != nil {
+		msg, err := s.Receive(context.Background())
+		if err != nil {
 			return err
+		}
+		if e, ok := msg.(proc.ExitMsg); ok {
+			return e.Reason
 		}
 	}
 }
