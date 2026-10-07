@@ -2,11 +2,9 @@ package gen
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
-	"time"
 
 	"github.com/shun159/molecule/proc"
 )
@@ -17,14 +15,21 @@ type (
 		key any
 		gen uint64
 	}
-	responseMsg struct{ Response }
 	downMsg     struct{ Down }
+	responseMsg struct{ Response }
+	// answer is the reply to a SendRequest, or the exit of its server.
+	answer struct {
+		ref proc.Ref
+		m   proc.AliasMsg
+	}
+	// requestTimeout ends a SendRequest still waiting.
+	requestTimeout struct{ ref proc.Ref }
 )
 
-// runtime runs a Behaviour in the current process and performs its
-// effects. It is the only impure part of a behaviour.
+// runtime runs a Behaviour and performs its effects through an Env. It
+// holds the meaning of the effects; the Env, what they act on.
 type runtime[S any] struct {
-	self  *proc.Self
+	env   Env
 	b     Behaviour[S]
 	state S
 
@@ -32,6 +37,7 @@ type runtime[S any] struct {
 	tags     map[proc.Ref]any // ref -> tag
 	timers   map[any]timer    // key -> timer
 	timerGen uint64
+	requests map[proc.Ref]request
 
 	stopping   bool
 	stopReason error
@@ -45,46 +51,42 @@ type runtime[S any] struct {
 }
 
 type timer struct {
-	t   *time.Timer
-	gen uint64
-	msg any
+	cancel func()
+	gen    uint64
+	msg    any
 }
 
-func run[S any](self *proc.Self, b Behaviour[S], args any, o options) error {
-	if o.name != nil {
-		if err := o.name.Register(self.Node(), self.PID()); err != nil {
-			if pid, ok := o.name.WhereIs(self.Node()); ok && pid != self.PID() {
-				err = &AlreadyStartedError{PID: pid}
-			}
-			self.InitAck(err)
-			return nil
-		}
-	}
+// request is a SendRequest waiting for its answer.
+type request struct {
+	tag     any
+	to      Dest
+	release func()
+	cancel  func() // of its timeout, if any
+}
 
-	r := &runtime[S]{
-		self:     self,
+func newRuntime[S any](b Behaviour[S], env Env) *runtime[S] {
+	return &runtime[S]{
+		env:      env,
 		b:        b,
 		monitors: make(map[any]proc.Ref),
 		tags:     make(map[proc.Ref]any),
 		timers:   make(map[any]timer),
+		requests: make(map[proc.Ref]request),
 	}
+}
+
+func (r *runtime[S]) Init(args any) error {
 	state, effs, err := r.init(args)
 	if err != nil {
-		self.InitAck(err)
-		if errors.Is(err, ErrIgnore) {
-			return nil
-		}
 		return err
 	}
 	r.state = state
 	r.apply(effs)
 	if r.stopping {
-		r.stopTimers()
-		self.InitAck(r.stopReason)
+		r.Abort()
 		return r.stopReason
 	}
-	self.InitAck(nil)
-	return r.loop()
+	return nil
 }
 
 func (r *runtime[S]) init(args any) (state S, effs []Effect, err error) {
@@ -93,82 +95,82 @@ func (r *runtime[S]) init(args any) (state S, effs []Effect, err error) {
 			err = &proc.PanicError{Value: v, Stack: debug.Stack()}
 		}
 	}()
-	return r.b.Init(r.self.PID(), args)
+	return r.b.Init(r.env.Self(), args)
 }
 
-func (r *runtime[S]) loop() error {
+func (r *runtime[S]) State() any { return r.state }
+
+func (r *runtime[S]) Deliver(msg any) (bool, error) {
+	if done, reason := r.receive(msg); done {
+		return true, reason
+	}
+	return r.Flush()
+}
+
+func (r *runtime[S]) Flush() (bool, error) {
 	for {
-		if len(r.continues) > 0 {
+		switch {
+		case len(r.continues) > 0:
 			// Still within the work of the last callback: no system
 			// message or suspension comes in between.
 			c := r.continues[0]
 			r.continues[0] = nil
 			r.continues = r.continues[1:]
-			if err := r.step(ContinueMsg{Msg: c}); err != nil {
-				return err
+			if done, reason := r.step(ContinueMsg{Msg: c}); done {
+				return true, reason
 			}
-			continue
-		}
-		msg, err := r.next()
-		if err != nil {
-			r.stopTimers()
-			return err // killed: no Terminate, as in Erlang
-		}
-		if m, ok := msg.(sysMsg); ok {
-			if m.Req == sysTerminate {
-				r.last = m
-				return r.terminate(r.state, m.Reason)
+		case !r.suspended && len(r.deferred) > 0:
+			msg := r.deferred[0]
+			r.deferred[0] = nil
+			r.deferred = r.deferred[1:]
+			if done, reason := r.receive(msg); done {
+				return true, reason
 			}
-			r.system(m)
-			continue
-		}
-		if e, ok := msg.(proc.ExitMsg); ok && e.From == r.self.Parent() && !e.From.IsZero() {
-			r.last = e
-			return r.terminate(r.state, e.Reason)
-		}
-		if r.suspended {
-			r.deferred = append(r.deferred, msg)
-			continue
-		}
-		in, ok := r.translate(msg)
-		if !ok {
-			continue
-		}
-		if err := r.step(in); err != nil {
-			return err
+		default:
+			return false, nil
 		}
 	}
 }
 
-// step handles one message and performs the effects. It returns the exit
-// reason once the behaviour has terminated.
-func (r *runtime[S]) step(in Msg) error {
+// receive handles a message from the mailbox.
+func (r *runtime[S]) receive(msg any) (bool, error) {
+	if m, ok := msg.(sysMsg); ok {
+		if m.Req == sysTerminate {
+			r.last = m
+			return true, r.terminate(r.state, m.Reason)
+		}
+		r.system(m)
+		return false, nil
+	}
+	if e, ok := msg.(proc.ExitMsg); ok && e.From == r.env.Parent() && !e.From.IsZero() {
+		r.last = e
+		return true, r.terminate(r.state, e.Reason)
+	}
+	if r.suspended {
+		r.deferred = append(r.deferred, msg)
+		return false, nil
+	}
+	in, ok := r.translate(msg)
+	if !ok {
+		return false, nil
+	}
+	return r.step(in)
+}
+
+// step handles one message and performs the effects. It reports whether
+// the behaviour has terminated, and its exit reason if so.
+func (r *runtime[S]) step(in Msg) (bool, error) {
 	r.last = in
 	state, effs, err := r.handle(in)
 	if err != nil {
-		return r.terminate(r.state, err)
+		return true, r.terminate(r.state, err)
 	}
 	r.state = state
 	r.apply(effs)
 	if r.stopping {
-		return r.terminate(r.state, r.stopReason)
+		return true, r.terminate(r.state, r.stopReason)
 	}
-	return nil
-}
-
-// next returns the next message: a deferred one once resumed, or one from
-// the mailbox.
-func (r *runtime[S]) next() (any, error) {
-	if !r.suspended && len(r.deferred) > 0 {
-		if ctx := r.self.Context(); ctx.Err() != nil {
-			return nil, context.Cause(ctx)
-		}
-		msg := r.deferred[0]
-		r.deferred[0] = nil
-		r.deferred = r.deferred[1:]
-		return msg, nil
-	}
-	return r.self.Receive(context.Background())
+	return false, nil
 }
 
 func (r *runtime[S]) handle(in Msg) (state S, effs []Effect, err error) {
@@ -197,6 +199,24 @@ func (r *runtime[S]) translate(msg any) (Msg, bool) {
 		}
 		delete(r.timers, m.key)
 		return InfoMsg{Msg: t.msg}, true
+	case answer:
+		req, ok := r.requests[m.ref]
+		if !ok {
+			return nil, false // timed out already
+		}
+		r.endRequest(m.ref, req)
+		resp := Response{Tag: req.tag, Value: m.m.Msg}
+		if m.m.Down {
+			resp = Response{Tag: req.tag, Err: &ExitError{To: req.to, Reason: m.m.Reason}}
+		}
+		return InfoMsg{Msg: resp}, true
+	case requestTimeout:
+		req, ok := r.requests[m.ref]
+		if !ok {
+			return nil, false // answered already
+		}
+		r.endRequest(m.ref, req)
+		return InfoMsg{Msg: Response{Tag: req.tag, Err: context.DeadlineExceeded}}, true
 	case responseMsg:
 		return InfoMsg{Msg: m.Response}, true
 	case downMsg:
@@ -215,7 +235,7 @@ func (r *runtime[S]) translate(msg any) (Msg, bool) {
 
 // terminate runs Terminate and returns the reason to exit with.
 func (r *runtime[S]) terminate(state S, reason error) (exit error) {
-	defer r.stopTimers()
+	defer r.Abort()
 	defer func() {
 		if v := recover(); v != nil {
 			exit = &proc.PanicError{Value: v, Stack: debug.Stack()}
@@ -230,12 +250,21 @@ func (r *runtime[S]) terminate(state S, reason error) (exit error) {
 	return reason
 }
 
+func (r *runtime[S]) Abort() {
+	for key := range r.timers {
+		r.cancelTimer(key)
+	}
+	for ref, req := range r.requests {
+		r.endRequest(ref, req)
+	}
+}
+
 // report logs that the behaviour terminates abnormally, with the message
 // it was handling and its state, like the report of a terminating
 // gen_server. The crash report of the process follows.
 func (r *runtime[S]) report(state S, reason error) {
-	r.self.Node().Logger().Error("behaviour terminating",
-		slog.String("pid", r.self.PID().String()),
+	r.env.Logger().Error("behaviour terminating",
+		slog.String("pid", r.env.Self().String()),
 		slog.String("behaviour", fmt.Sprintf("%T", r.b)),
 		slog.String("last_message", brief(r.last)),
 		slog.String("state", brief(state)),
@@ -265,7 +294,7 @@ func (r *runtime[S]) system(m sysMsg) {
 	case sysResume:
 		r.suspended = false
 	}
-	SendReply(r.self, m.From, reply)
+	r.env.SendAlias(m.From.Tag, reply)
 }
 
 func (r *runtime[S]) apply(effs []Effect) {
@@ -274,13 +303,15 @@ func (r *runtime[S]) apply(effs []Effect) {
 		case Continue:
 			r.continues = append(r.continues, e.Msg)
 		case Reply:
-			SendReply(r.self, e.To, e.Value)
+			r.env.SendAlias(e.To.Tag, e.Value)
 		case Send:
-			if pid, ok := e.To.WhereIs(r.self.Node()); ok {
-				r.self.Send(pid, e.Msg)
+			if pid, ok := r.env.Resolve(e.To); ok {
+				r.env.Send(pid, e.Msg)
 			}
 		case Cast:
-			SendCast(r.self, e.To, e.Req)
+			if pid, ok := r.env.Resolve(e.To); ok {
+				r.env.Send(pid, CastMsg{Req: e.Req})
+			}
 		case Stop:
 			if !r.stopping {
 				r.stopping = true
@@ -300,11 +331,11 @@ func (r *runtime[S]) apply(effs []Effect) {
 		case SendRequest:
 			r.sendRequest(e)
 		case Link:
-			r.self.Link(e.PID)
+			r.env.Link(e.PID)
 		case Unlink:
-			r.self.Unlink(e.PID)
+			r.env.Unlink(e.PID)
 		case TrapExit:
-			r.self.TrapExit(e.On)
+			r.env.TrapExit(e.On)
 		default:
 			panic(fmt.Sprintf("gen: unknown effect %T", e))
 		}
@@ -313,19 +344,19 @@ func (r *runtime[S]) apply(effs []Effect) {
 
 func (r *runtime[S]) monitor(e Monitor) {
 	r.demonitor(e.Tag)
-	pid, ok := e.Target.WhereIs(r.self.Node())
+	pid, ok := r.env.Resolve(e.Target)
 	if !ok {
-		r.self.Send(r.self.PID(), downMsg{Down{Tag: e.Tag, Reason: proc.NoProc}})
+		r.env.Send(r.env.Self(), downMsg{Down{Tag: e.Tag, Reason: proc.NoProc}})
 		return
 	}
-	ref := r.self.Monitor(pid)
+	ref := r.env.Monitor(pid)
 	r.monitors[e.Tag] = ref
 	r.tags[ref] = e.Tag
 }
 
 func (r *runtime[S]) demonitor(tag any) {
 	if ref, ok := r.monitors[tag]; ok {
-		r.self.Demonitor(ref)
+		r.env.Demonitor(ref)
 		delete(r.monitors, tag)
 		delete(r.tags, ref)
 	}
@@ -334,45 +365,38 @@ func (r *runtime[S]) demonitor(tag any) {
 func (r *runtime[S]) startTimer(e StartTimer) {
 	r.cancelTimer(e.Key)
 	r.timerGen++
-	g, n, self := r.timerGen, r.self.Node(), r.self.PID()
-	t := time.AfterFunc(e.After, func() { n.Send(self, timeout{key: e.Key, gen: g}) })
-	r.timers[e.Key] = timer{t: t, gen: g, msg: e.Msg}
+	cancel := r.env.SendAfter(e.After, timeout{key: e.Key, gen: r.timerGen})
+	r.timers[e.Key] = timer{cancel: cancel, gen: r.timerGen, msg: e.Msg}
 }
 
 func (r *runtime[S]) cancelTimer(key any) {
 	if t, ok := r.timers[key]; ok {
-		t.t.Stop()
+		t.cancel()
 		delete(r.timers, key)
 	}
 }
 
-func (r *runtime[S]) stopTimers() {
-	for key := range r.timers {
-		r.cancelTimer(key)
-	}
-}
-
 func (r *runtime[S]) sendRequest(e SendRequest) {
-	n, self := r.self.Node(), r.self.PID()
-	respond := func(v any, err error) {
-		n.Send(self, responseMsg{Response{Tag: e.Tag, Value: v, Err: err}})
-	}
-	pid, ok := e.To.WhereIs(n)
+	pid, ok := r.env.Resolve(e.To)
 	if !ok {
-		respond(nil, &ExitError{To: e.To, Reason: proc.NoProc})
+		r.env.Send(r.env.Self(), responseMsg{Response{Tag: e.Tag, Err: &ExitError{To: e.To, Reason: proc.NoProc}}})
 		return
 	}
-
-	ctx, cancel := context.Background(), context.CancelFunc(func() {})
+	ref, release := r.env.Request(pid, func(ref proc.Ref, m proc.AliasMsg) any {
+		return answer{ref: ref, m: m}
+	})
+	req := request{tag: e.Tag, to: e.To, release: release}
 	if e.Timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, e.Timeout)
+		req.cancel = r.env.SendAfter(e.Timeout, requestTimeout{ref: ref})
 	}
-	a := n.MonitorAlias(pid)
-	n.Send(pid, CallMsg{From: From{PID: self, Tag: a.Ref}, Req: e.Req})
-	callerCtx := r.self.Context()
-	go func() {
-		defer cancel()
-		defer a.Release()
-		respond(awaitReply(ctx, callerCtx, e.To, a.C))
-	}()
+	r.requests[ref] = req
+	r.env.Send(pid, CallMsg{From: From{PID: r.env.Self(), Tag: ref}, Req: e.Req})
+}
+
+func (r *runtime[S]) endRequest(ref proc.Ref, req request) {
+	delete(r.requests, ref)
+	req.release()
+	if req.cancel != nil {
+		req.cancel()
+	}
 }
