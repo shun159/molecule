@@ -188,10 +188,10 @@ func (r *runtime[S]) handle(in Msg) (state S, effs []Effect, err error) {
 // timer that has since been cancelled.
 func (r *runtime[S]) translate(msg any) (Msg, bool) {
 	switch m := msg.(type) {
-	case CallMsg:
-		return m, true
-	case CastMsg:
-		return m, true
+	case CallMsg, CastMsg:
+		// Already boxed in msg: asserting reuses it, where converting m
+		// would box it again.
+		return msg.(Msg), true
 	case timeout:
 		t, ok := r.timers[m.key]
 		if !ok || t.gen != m.gen {

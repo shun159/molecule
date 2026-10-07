@@ -50,10 +50,6 @@ func newProcess(n *Node, pid PID) *process {
 		mbox:   newMailbox(),
 		ctx:    ctx,
 		cancel: cancel,
-		links:  make(map[PID]struct{}),
-
-		monitors:   make(map[Ref]watcher),
-		monitoring: make(map[Ref]PID),
 	}
 }
 
@@ -152,6 +148,33 @@ func (p *process) signalExit(from PID, reason error, viaLink bool) {
 	}
 }
 
+// The tables of a process are made when first needed: most processes link
+// and monitor little, if at all. They are guarded by mu, and are not
+// written once the process is dead.
+
+func (p *process) link(pid PID) {
+	if p.links == nil {
+		p.links = make(map[PID]struct{})
+	}
+	p.links[pid] = struct{}{}
+}
+
+// watchedBy records w as a watcher of p.
+func (p *process) watchedBy(ref Ref, w watcher) {
+	if p.monitors == nil {
+		p.monitors = make(map[Ref]watcher)
+	}
+	p.monitors[ref] = w
+}
+
+// watch records that p monitors target.
+func (p *process) watch(ref Ref, target PID) {
+	if p.monitoring == nil {
+		p.monitoring = make(map[Ref]PID)
+	}
+	p.monitoring[ref] = target
+}
+
 // lockPair locks two distinct processes in a fixed order to avoid
 // deadlocks between concurrent Link calls.
 func lockPair(a, b *process) (unlock func()) {
@@ -208,12 +231,12 @@ func (s *Self) newLinked() *process {
 	parent := s.p
 	child := parent.node.register()
 	child.parent = parent.pid
-	child.links[parent.pid] = struct{}{}
+	child.link(parent.pid)
 
 	parent.mu.Lock()
 	alive := parent.ctx.Err() == nil
 	if alive {
-		parent.links[child.pid] = struct{}{}
+		parent.link(child.pid)
 	}
 	parent.mu.Unlock()
 	if !alive {
@@ -251,8 +274,8 @@ func (s *Self) Link(to PID) {
 		unlock()
 		p.signalExit(to, NoProc, false)
 	default:
-		p.links[to] = struct{}{}
-		t.links[p.pid] = struct{}{}
+		p.link(to)
+		t.link(p.pid)
 		unlock()
 	}
 }

@@ -124,7 +124,7 @@ func TestNameFreedBeforeDown(t *testing.T) {
 func onDown(p *process, f func(reason error)) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.monitors[p.node.MakeRef()] = watcher{cancel: f}
+	p.watchedBy(p.node.MakeRef(), watcher{cancel: f})
 }
 
 // TestNameFreedBeforeNotify checks, at the very moment links and monitors

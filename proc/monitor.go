@@ -75,8 +75,8 @@ func (s *Self) Monitor(target PID) Ref {
 	case t.ctx.Err() != nil:
 		p.mbox.push(DownMsg{Ref: ref, PID: target, Reason: NoProc})
 	default:
-		p.monitoring[ref] = target
-		t.monitors[ref] = watcher{pid: p.pid}
+		p.watch(ref, target)
+		t.watchedBy(ref, watcher{pid: p.pid})
 	}
 	return ref
 }
@@ -144,7 +144,7 @@ func (n *Node) Watch(parent context.Context, pid PID) (context.Context, context.
 		cancel(NoProc)
 		return ctx, stop
 	}
-	t.monitors[ref] = watcher{cancel: cancel}
+	t.watchedBy(ref, watcher{cancel: cancel})
 	t.mu.Unlock()
 
 	return ctx, func() {

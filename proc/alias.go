@@ -68,7 +68,7 @@ func (n *Node) MonitorAlias(pid PID) Alias {
 		n.aliasDown(ref, NoProc)
 		return a
 	}
-	t.monitors[ref] = watcher{alias: true}
+	t.watchedBy(ref, watcher{alias: true})
 	t.mu.Unlock()
 	a.target = t
 	return a

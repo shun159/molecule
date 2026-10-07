@@ -106,3 +106,46 @@ func BenchmarkSpawn(b *testing.B) {
 		wg.Wait()
 	})
 }
+
+// BenchmarkSendContended has all CPUs send to one process at once.
+func BenchmarkSendContended(b *testing.B) {
+	b.Run("proc", func(b *testing.B) {
+		n := NewNode("")
+		done := make(chan struct{})
+		count := b.N
+		sink := n.Spawn(func(s *Self) error {
+			for range count {
+				if _, err := s.Receive(context.Background()); err != nil {
+					return err
+				}
+			}
+			close(done)
+			return nil
+		})
+		b.ResetTimer()
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				n.Send(sink, 1)
+			}
+		})
+		<-done
+	})
+	b.Run("baseline", func(b *testing.B) {
+		ch := make(chan any, 1024)
+		done := make(chan struct{})
+		count := b.N
+		go func() {
+			for range count {
+				<-ch
+			}
+			close(done)
+		}()
+		b.ResetTimer()
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				ch <- 1
+			}
+		})
+		<-done
+	})
+}
