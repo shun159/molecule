@@ -1,11 +1,31 @@
 package proc
 
+import "context"
+
 // DownMsg is delivered to a watcher when the monitored process dies, like
 // {'DOWN', Ref, process, PID, Reason} in Erlang.
 type DownMsg struct {
 	Ref    Ref
 	PID    PID
 	Reason error
+}
+
+// watcher is who is told when a monitored process dies: either a process,
+// through a DownMsg, or a Watch context, by cancelling it.
+type watcher struct {
+	pid    PID
+	cancel context.CancelCauseFunc
+}
+
+func (w watcher) notify(n *Node, ref Ref, target PID, reason error) {
+	if w.cancel != nil {
+		w.cancel(reason)
+		return
+	}
+	if p := n.lookup(w.pid); p != nil {
+		p.down(ref, target, reason)
+	}
+	// TODO(dist): notify remote watchers.
 }
 
 // down queues a DownMsg to p, the watcher, unless the monitor has been
@@ -50,7 +70,7 @@ func (s *Self) Monitor(target PID) Ref {
 		p.mbox.push(DownMsg{Ref: ref, PID: target, Reason: NoProc})
 	default:
 		p.monitoring[ref] = target
-		t.monitors[ref] = p.pid
+		t.monitors[ref] = watcher{pid: p.pid}
 	}
 	return ref
 }
@@ -79,4 +99,52 @@ func (s *Self) Demonitor(ref Ref) bool {
 		return ok && d.Ref == ref
 	})
 	return false
+}
+
+// Watch returns a context that is cancelled when pid dies, with its exit
+// reason as the cause. It is how code that is not a process, or a process
+// that must wait on something besides its mailbox, observes a death:
+//
+//	ctx, stop := n.Watch(parent, pid)
+//	defer stop()
+//	select {
+//	case r := <-reply:
+//	case <-ctx.Done():
+//		return context.Cause(ctx) // exit reason, or parent's cause
+//	}
+//
+// The context is also cancelled when parent is. If pid does not exist the
+// context is already cancelled with NoProc. As with context.WithCancel,
+// stop must be called to release the watch once it is no longer needed;
+// after stop, the cause is context.Canceled unless pid had died first.
+func (n *Node) Watch(parent context.Context, pid PID) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancelCause(parent)
+	stop := func() { cancel(context.Canceled) }
+
+	t := n.lookup(pid)
+	if t == nil {
+		reason := NoProc
+		if !n.isLocal(pid) {
+			reason = NoConnection // TODO(dist): watch remote processes.
+		}
+		cancel(reason)
+		return ctx, stop
+	}
+
+	ref := n.MakeRef()
+	t.mu.Lock()
+	if t.ctx.Err() != nil {
+		t.mu.Unlock()
+		cancel(NoProc)
+		return ctx, stop
+	}
+	t.monitors[ref] = watcher{cancel: cancel}
+	t.mu.Unlock()
+
+	return ctx, func() {
+		t.mu.Lock()
+		delete(t.monitors, ref)
+		t.mu.Unlock()
+		stop()
+	}
 }

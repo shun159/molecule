@@ -26,10 +26,10 @@ type process struct {
 	// NoProc, never lost.
 	mu    sync.Mutex
 	links map[PID]struct{}
-	// monitors are the processes watching p; monitoring are the processes
-	// p watches. A DOWN message is only queued while its Ref is still in
+	// monitors are the watchers of p; monitoring are the processes p
+	// watches. A DOWN message is only queued while its Ref is still in
 	// the watcher's monitoring, checked under the watcher's lock.
-	monitors   map[Ref]PID
+	monitors   map[Ref]watcher
 	monitoring map[Ref]PID
 }
 
@@ -43,7 +43,7 @@ func newProcess(n *Node, pid PID) *process {
 		cancel: cancel,
 		links:  make(map[PID]struct{}),
 
-		monitors:   make(map[Ref]PID),
+		monitors:   make(map[Ref]watcher),
 		monitoring: make(map[Ref]PID),
 	}
 }
@@ -89,11 +89,8 @@ func (p *process) die(reason error) {
 	for to := range links {
 		p.node.sendExit(p.pid, to, reason, true)
 	}
-	for ref, watcher := range monitors {
-		if w := p.node.lookup(watcher); w != nil {
-			w.down(ref, p.pid, reason)
-		}
-		// TODO(dist): notify remote watchers.
+	for ref, w := range monitors {
+		w.notify(p.node, ref, p.pid, reason)
 	}
 	for ref, target := range monitoring {
 		if t := p.node.lookup(target); t != nil {
