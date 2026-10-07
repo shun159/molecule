@@ -1,0 +1,28 @@
+package main
+
+import (
+	"context"
+	"time"
+
+	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule/genserver"
+	"github.com/shun159/molecule/proc"
+	"github.com/shun159/molecule/supervisor"
+)
+
+// startCrashSup starts the supervisor of the calc server. It restarts the
+// server at most 3 times within 5 seconds; a 4th crash in that time means
+// restarting does not help, and the supervisor gives up.
+func startCrashSup(ctx context.Context, n *proc.Node) (proc.PID, error) {
+	return supervisor.Start(ctx, n, supervisor.Spec{
+		Name:      gen.Local("crash_sup"),
+		Strategy:  supervisor.OneForOne,
+		Intensity: 3,
+		Period:    5 * time.Second,
+		Children: []supervisor.ChildSpec{{
+			ID:      "calc",
+			Start:   genserver.StartLinkFunc(CalcServer{}, gen.WithName(calcName)),
+			Restart: supervisor.Permanent,
+		}},
+	})
+}
