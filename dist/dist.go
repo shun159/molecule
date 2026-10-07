@@ -2,6 +2,7 @@ package dist
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net"
 	"slices"
@@ -24,6 +25,13 @@ type Config struct {
 	Resolve func(node string) (addr string, ok bool)
 	// Codec encodes the messages; Gob if nil.
 	Codec Codec
+	// TLS, if set, secures the connections, as inet_tls_dist does: the
+	// node is a TLS client when it dials, and a server when it accepts,
+	// with this configuration either way. The cookie is still checked
+	// within. With ClientAuth set to tls.RequireAndVerifyClientCert, each
+	// node proves itself by its certificate too. Dialing, an empty
+	// ServerName is the host of the address dialed.
+	TLS *tls.Config
 	// TickTime is how long a connection may stay silent before it is
 	// taken for lost, like net_ticktime: a connection idle sends a tick
 	// four times as often. A send blocked as long fails it too. Zero
@@ -229,6 +237,9 @@ func (d *Dist) acceptLoop() {
 // accept runs the handshake of a connection from another node, and hands
 // it to the process of the connection to that node.
 func (d *Dist) accept(conn net.Conn) {
+	if d.cfg.TLS != nil {
+		conn = tls.Server(conn, d.cfg.TLS)
+	}
 	var chosen *peer
 	_, err := acceptHandshake(conn, d.hello(), d.cfg.Cookie, func(info peerInfo) string {
 		d.mu.Lock()
@@ -321,6 +332,16 @@ func (d *Dist) dialNode(node string) (net.Conn, peerInfo, error) {
 	conn, err := net.DialTimeout("tcp", addr, handshakeTimeout)
 	if err != nil {
 		return nil, peerInfo{}, err
+	}
+	if d.cfg.TLS != nil {
+		// The TLS handshake runs on the first write, within the deadline of
+		// ours.
+		cfg := d.cfg.TLS
+		if cfg.ServerName == "" {
+			cfg = cfg.Clone()
+			cfg.ServerName, _, _ = net.SplitHostPort(addr)
+		}
+		conn = tls.Client(conn, cfg)
 	}
 	info, err := dialHandshake(conn, d.hello(), d.cfg.Cookie)
 	if err == nil && info.name != node {

@@ -253,7 +253,7 @@ func TestStopNode(t *testing.T) {
 }
 
 func TestBadCookie(t *testing.T) {
-	nodes, dists := clusterWith(t, map[string]string{"a@test": "one", "b@test": "two"})
+	nodes, dists := clusterWith(t, map[string]dist.Config{"a@test": {Cookie: "one"}, "b@test": {Cookie: "two"}})
 	if err := dists[0].Connect(context.Background(), "b@test"); !errors.Is(err, proc.NoConnection) {
 		t.Errorf("Connect: %v", err)
 	}
@@ -265,8 +265,9 @@ func TestBadCookie(t *testing.T) {
 	}
 }
 
-// clusterWith starts nodes with cookies of their own.
-func clusterWith(t *testing.T, cookies map[string]string) ([]*proc.Node, []*dist.Dist) {
+// clusterWith starts the nodes a@test and b@test on loopback, configured
+// each as given; Listen and Resolve are filled in.
+func clusterWith(t *testing.T, cfgs map[string]dist.Config) ([]*proc.Node, []*dist.Dist) {
 	t.Helper()
 	var mu sync.Mutex
 	addrs := map[string]string{}
@@ -280,7 +281,9 @@ func clusterWith(t *testing.T, cookies map[string]string) ([]*proc.Node, []*dist
 	var dists []*dist.Dist
 	for _, name := range []string{"a@test", "b@test"} {
 		n := proc.NewNode(name)
-		d, err := dist.Start(n, dist.Config{Listen: "127.0.0.1:0", Cookie: cookies[name], Resolve: resolve})
+		cfg := cfgs[name]
+		cfg.Listen, cfg.Resolve = "127.0.0.1:0", resolve
+		d, err := dist.Start(n, cfg)
 		if err != nil {
 			t.Fatal(err)
 		}

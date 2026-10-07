@@ -19,6 +19,9 @@
 // shows it has it without sending it. Two nodes connecting to each other
 // at once end with one connection.
 //
+// With Config.TLS, connections are secured by TLS, and nodes may prove
+// themselves by certificates, as with inet_tls_dist.
+//
 // What a process sends to another arrives in order, messages and exit
 // signals together. When a connection is lost, or cannot be made, the
 // links through it fail with proc.NoConnection, as do the monitors, and
