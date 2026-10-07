@@ -110,9 +110,10 @@
 // terminated by an exit signal, is dead at once to the others: its links
 // and monitors are told, its name is freed, and messages to it are dropped.
 // Its goroutine runs on until it next calls [Self.Receive], which returns
-// the exit reason. A blocking call a process makes, such as a read from a
-// connection, does not return because the process was killed; it must be
-// tied to [Self.Context], which is cancelled when the process dies.
+// the exit reason; meanwhile, what it sends reaches no one. A blocking call
+// a process makes, such as a read from a connection, does not return
+// because the process was killed; it must be tied to [Self.Context] or
+// [Self.Done], which end when the process dies.
 //
 // # Reports
 //

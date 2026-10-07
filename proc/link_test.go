@@ -312,3 +312,31 @@ func TestLinkRace(t *testing.T) {
 		}
 	}
 }
+
+// TestZombieSendsNothing kills a process while its goroutine is blocked
+// outside Receive: once it runs again, what it sends must reach no one.
+func TestZombieSendsNothing(t *testing.T) {
+	bubble(t, func(t *testing.T, n *Node) {
+		watcher, inbox := actor(n, func(s *Self) { s.TrapExit(true) })
+		started, release := make(chan struct{}), make(chan struct{})
+		zombie := n.spawn(func(s *Self) error {
+			close(started)
+			<-release // not in Receive: killing does not stop it here
+			s.Send(watcher.pid, "from a dead process")
+			s.Exit(watcher.pid, errBoom)
+			return nil
+		})
+		<-started // running, so that the kill finds it under way
+		do(n, func(s *Self) { s.Exit(zombie.pid, Kill) })
+		close(release)
+		synctest.Wait()
+		select {
+		case m := <-inbox:
+			t.Errorf("watcher got %#v from a dead process", m)
+		default:
+		}
+		if !alive(watcher) {
+			t.Error("watcher died")
+		}
+	})
+}

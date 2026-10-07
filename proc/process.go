@@ -285,7 +285,14 @@ func (s *Self) newLinked() *process {
 }
 
 // Send delivers msg to to. See Node.Send.
-func (s *Self) Send(to PID, msg any) { s.p.node.Send(to, msg) }
+//
+// A dead process sends nothing: once killed, the code its goroutine still
+// runs reaches no one.
+func (s *Self) Send(to PID, msg any) {
+	if !s.p.dead.Load() {
+		s.p.node.Send(to, msg)
+	}
+}
 
 // Link creates a bidirectional link with to: when either process dies, the
 // other gets an exit signal. Linking to a process that does not exist
@@ -343,8 +350,12 @@ func (s *Self) TrapExit(on bool) bool { return s.p.trapExit.Swap(on) }
 // Exit sends an exit signal with reason to to. Kill terminates to even if
 // it traps exits. Normal is ignored by a process that does not trap exits,
 // unless it is the caller itself.
+//
+// A dead process sends no exit signal.
 func (s *Self) Exit(to PID, reason error) {
-	s.p.node.sendExit(s.p.pid, to, reason, false)
+	if !s.p.dead.Load() {
+		s.p.node.sendExit(s.p.pid, to, reason, false)
+	}
 }
 
 // Receive returns the next message in the mailbox, blocking until one
