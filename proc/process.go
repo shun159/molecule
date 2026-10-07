@@ -31,6 +31,9 @@ type process struct {
 	// the watcher's monitoring, checked under the watcher's lock.
 	monitors   map[Ref]watcher
 	monitoring map[Ref]PID
+
+	// name is the registered name, guarded by node.regMu.
+	name string
 }
 
 func newProcess(n *Node, pid PID) *process {
@@ -86,6 +89,9 @@ func (p *process) die(reason error) {
 	p.mu.Unlock()
 
 	p.node.procs.Delete(p.pid.id)
+	// The name goes before anyone is told, so a supervisor reacting to the
+	// death can register a replacement under the same name at once.
+	p.node.unregisterDead(p)
 	for to := range links {
 		p.node.sendExit(p.pid, to, reason, true)
 	}

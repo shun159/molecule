@@ -18,6 +18,9 @@ type Node struct {
 	nextID   atomic.Uint64
 	nextRef  atomic.Uint64
 	procs    sync.Map // uint64 -> *process
+
+	regMu sync.Mutex
+	names map[string]PID // guarded by regMu, as is process.name
 }
 
 // NewNode creates a node. Each node gets a fresh, non-zero creation so
@@ -26,7 +29,7 @@ func NewNode(name string) *Node {
 	if name == "" {
 		name = DefaultNodeName
 	}
-	return &Node{name: name, creation: rand.Uint32() | 1}
+	return &Node{name: name, creation: rand.Uint32() | 1, names: make(map[string]PID)}
 }
 
 // Name returns the node name.
