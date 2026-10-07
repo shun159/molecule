@@ -131,7 +131,28 @@ func StartLinkFunc(spec Spec) StartFunc {
 	}
 }
 
-type whichChildren struct{}
+type (
+	whichChildren struct{}
+	stopReq       struct{}
+)
+
+// Stop stops the supervisor at sup, static or dynamic, as its parent
+// exiting would: its children are stopped, then it exits with
+// proc.Shutdown. It returns once the supervisor is dead.
+func Stop(ctx context.Context, caller gen.Caller, sup gen.Dest) error {
+	n := caller.Node()
+	pid, ok := sup.WhereIs(n)
+	if !ok {
+		return &gen.ExitError{To: sup, Reason: proc.NoProc}
+	}
+	down, release := n.Watch(ctx, pid)
+	defer release()
+	if _, err := gen.Call(ctx, caller, pid, stopReq{}); err != nil {
+		return err
+	}
+	<-down.Done()
+	return ctx.Err()
+}
 
 // WhichChildren returns the children of the supervisor at sup, in start
 // order.
@@ -253,8 +274,13 @@ func (s *supervisor) loop() error {
 				return err
 			}
 		case gen.CallMsg:
-			if _, ok := m.Req.(whichChildren); ok {
+			switch m.Req.(type) {
+			case whichChildren:
 				gen.SendReply(s.self, m.From, s.which())
+			case stopReq:
+				s.terminateAll()
+				gen.SendReply(s.self, m.From, nil)
+				return proc.Shutdown
 			}
 		}
 	}

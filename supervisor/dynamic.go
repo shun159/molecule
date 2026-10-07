@@ -182,6 +182,11 @@ func (d *dynamic) loop() error {
 				return err
 			}
 		case gen.CallMsg:
+			if _, ok := m.Req.(stopReq); ok {
+				d.terminateAll()
+				gen.SendReply(d.self, m.From, nil)
+				return proc.Shutdown
+			}
 			gen.SendReply(d.self, m.From, d.call(m.Req))
 		}
 	}

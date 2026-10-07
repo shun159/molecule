@@ -67,6 +67,14 @@ func Start[S any](ctx context.Context, n *proc.Node, b Behaviour[S], args any, o
 	return n.Start(ctx, func(s *proc.Self) error { return run(s, b, args, o) })
 }
 
+// StartLinkFunc returns a function that starts b linked to its parent, to
+// use as the Start of a supervisor.ChildSpec.
+func StartLinkFunc[S any](b Behaviour[S], args any, opts ...Option) func(context.Context, *proc.Self) (proc.PID, error) {
+	return func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
+		return StartLink(ctx, parent, b, args, opts...)
+	}
+}
+
 func newOptions(opts []Option) options {
 	var o options
 	for _, opt := range opts {

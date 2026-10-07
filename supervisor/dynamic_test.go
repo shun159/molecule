@@ -256,3 +256,34 @@ func TestDynamicName(t *testing.T) {
 		}
 	})
 }
+
+func TestStop(t *testing.T) {
+	inWorld(t, func(w *world) {
+		static := w.start(supervisor.Spec{Children: []supervisor.ChildSpec{
+			w.worker("a", supervisor.Permanent),
+			w.worker("b", supervisor.Permanent),
+		}})
+		w.expect(started{"a"}, started{"b"})
+		if err := supervisor.Stop(context.Background(), w.n, static); err != nil {
+			t.Fatal(err)
+		}
+		w.expect(stopped{"b", proc.Shutdown}, stopped{"a", proc.Shutdown})
+		if w.n.IsAlive(static) {
+			t.Error("static supervisor alive after Stop")
+		}
+
+		dynamic := w.startDynamic(supervisor.DynamicSpec{})
+		w.startChild(dynamic, w.worker("c", supervisor.Permanent))
+		w.expect(started{"c"})
+		if err := supervisor.Stop(context.Background(), w.n, dynamic); err != nil {
+			t.Fatal(err)
+		}
+		w.expect(stopped{"c", proc.Shutdown})
+		if w.n.IsAlive(dynamic) {
+			t.Error("dynamic supervisor alive after Stop")
+		}
+		if err := supervisor.Stop(context.Background(), w.n, dynamic); !errors.Is(err, proc.NoProc) {
+			t.Errorf("Stop of a stopped supervisor = %v", err)
+		}
+	})
+}
