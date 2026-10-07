@@ -69,8 +69,23 @@ func (n *Node) lookup(pid PID) *process {
 }
 
 func (n *Node) spawn(fn func(*Self) error) *process {
-	p := newProcess(n, PID{node: n.name, creation: n.creation, id: n.nextID.Add(1)})
-	n.procs.Store(p.pid.id, p)
+	p := n.register()
 	go p.run(fn)
 	return p
+}
+
+// register creates a process and makes it reachable by PID without
+// starting it, so links can be set up before it runs.
+func (n *Node) register() *process {
+	p := newProcess(n, PID{node: n.name, creation: n.creation, id: n.nextID.Add(1)})
+	n.procs.Store(p.pid.id, p)
+	return p
+}
+
+// sendExit delivers an exit signal from from to to.
+func (n *Node) sendExit(from, to PID, reason error, viaLink bool) {
+	if p := n.lookup(to); p != nil {
+		p.signalExit(from, reason, viaLink)
+	}
+	// TODO(dist): deliver exit signals to remote processes.
 }

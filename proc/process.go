@@ -2,7 +2,10 @@ package proc
 
 import (
 	"context"
+	"errors"
 	"runtime/debug"
+	"sync"
+	"sync/atomic"
 )
 
 type process struct {
@@ -11,21 +14,39 @@ type process struct {
 	mbox *mailbox
 	// ctx is cancelled with the exit reason as its cause once the process
 	// is dead. Whether it is dead is decided by ctx alone, not by whether
-	// the goroutine has returned.
+	// the goroutine has returned: a killed process is dead at once, while
+	// its goroutine only notices on its next Receive.
 	ctx    context.Context
 	cancel context.CancelCauseFunc
+
+	trapExit atomic.Bool
+
+	// mu guards links and the transition to dead, so a link is either
+	// established with a live process or reported as NoProc, never lost.
+	mu    sync.Mutex
+	links map[PID]struct{}
 }
 
 func newProcess(n *Node, pid PID) *process {
 	ctx, cancel := context.WithCancelCause(context.Background())
-	return &process{node: n, pid: pid, mbox: newMailbox(), ctx: ctx, cancel: cancel}
+	return &process{
+		node:   n,
+		pid:    pid,
+		mbox:   newMailbox(),
+		ctx:    ctx,
+		cancel: cancel,
+		links:  make(map[PID]struct{}),
+	}
 }
 
 func (p *process) run(fn func(*Self) error) {
+	if p.ctx.Err() != nil {
+		return // killed before it started
+	}
 	// runtime.Goexit unwinds through invoke without returning, so the exit
 	// must happen in a deferred call.
 	reason := ErrGoexit
-	defer func() { p.exit(reason) }()
+	defer func() { p.die(reason) }()
 	reason = invoke(fn, &Self{p: p})
 }
 
@@ -42,9 +63,67 @@ func invoke(fn func(*Self) error, self *Self) (reason error) {
 	return Normal
 }
 
-func (p *process) exit(reason error) {
-	p.node.procs.Delete(p.pid.id)
+// die makes p dead with reason and propagates it to the linked processes.
+// Only the first call has an effect.
+func (p *process) die(reason error) {
+	p.mu.Lock()
+	if p.ctx.Err() != nil {
+		p.mu.Unlock()
+		return
+	}
 	p.cancel(reason)
+	links := p.links
+	p.links = nil
+	p.mu.Unlock()
+
+	p.node.procs.Delete(p.pid.id)
+	for to := range links {
+		p.node.sendExit(p.pid, to, reason, true)
+	}
+}
+
+// signalExit handles an exit signal sent to p by from. Signals that kill p
+// take effect immediately; the rest become ExitMsg in the mailbox, so they
+// stay ordered with the messages from the same sender.
+func (p *process) signalExit(from PID, reason error, viaLink bool) {
+	if reason == nil {
+		reason = Normal
+	}
+	if viaLink {
+		p.mu.Lock()
+		_, linked := p.links[from]
+		delete(p.links, from)
+		p.mu.Unlock()
+		if !linked {
+			return // unlinked in the meantime
+		}
+	}
+	switch {
+	case !viaLink && errors.Is(reason, Kill):
+		p.die(Killed)
+	case p.trapExit.Load():
+		p.mbox.push(ExitMsg{From: from, Reason: reason})
+	case errors.Is(reason, Normal):
+		if from == p.pid {
+			p.die(Normal)
+		}
+	default:
+		p.die(reason)
+	}
+}
+
+// lockPair locks two distinct processes in a fixed order to avoid
+// deadlocks between concurrent Link calls.
+func lockPair(a, b *process) (unlock func()) {
+	if a.pid.id > b.pid.id {
+		a, b = b, a
+	}
+	a.mu.Lock()
+	b.mu.Lock()
+	return func() {
+		b.mu.Unlock()
+		a.mu.Unlock()
+	}
 }
 
 // Self is the handle a process has on itself. It must only be used by the
@@ -67,8 +146,89 @@ func (s *Self) Context() context.Context { return s.p.ctx }
 // Spawn starts fn in a new process on the same node.
 func (s *Self) Spawn(fn func(*Self) error) PID { return s.p.node.Spawn(fn) }
 
+// SpawnLink starts fn in a new process linked to the caller. The link is
+// in place before fn runs, so even an immediate crash is propagated.
+func (s *Self) SpawnLink(fn func(*Self) error) PID {
+	parent := s.p
+	child := parent.node.register()
+	child.links[parent.pid] = struct{}{}
+
+	parent.mu.Lock()
+	alive := parent.ctx.Err() == nil
+	if alive {
+		parent.links[child.pid] = struct{}{}
+	}
+	parent.mu.Unlock()
+	if !alive {
+		child.signalExit(parent.pid, context.Cause(parent.ctx), true)
+	}
+
+	go child.run(fn)
+	return child.pid
+}
+
 // Send delivers msg to to. See Node.Send.
 func (s *Self) Send(to PID, msg any) { s.p.node.Send(to, msg) }
+
+// Link creates a bidirectional link with to: when either process dies, the
+// other gets an exit signal. Linking to a process that does not exist
+// delivers an exit signal with reason NoProc to the caller.
+func (s *Self) Link(to PID) {
+	p := s.p
+	if to == p.pid {
+		return
+	}
+	t := p.node.lookup(to)
+	if t == nil {
+		reason := NoProc
+		if !p.node.isLocal(to) {
+			reason = NoConnection // TODO(dist): link to remote processes.
+		}
+		p.signalExit(to, reason, false)
+		return
+	}
+
+	unlock := lockPair(p, t)
+	switch {
+	case p.ctx.Err() != nil:
+		unlock()
+	case t.ctx.Err() != nil:
+		unlock()
+		p.signalExit(to, NoProc, false)
+	default:
+		p.links[to] = struct{}{}
+		t.links[p.pid] = struct{}{}
+		unlock()
+	}
+}
+
+// Unlink removes the link with to, if any. No exit signal from that link is
+// delivered afterwards, though an ExitMsg already in the mailbox stays there.
+func (s *Self) Unlink(to PID) {
+	p := s.p
+	t := p.node.lookup(to)
+	if t == nil || t == p {
+		p.mu.Lock()
+		delete(p.links, to)
+		p.mu.Unlock()
+		return
+	}
+	unlock := lockPair(p, t)
+	delete(p.links, to)
+	delete(t.links, p.pid)
+	unlock()
+}
+
+// TrapExit sets whether exit signals are turned into ExitMsg instead of
+// terminating the process, and returns the previous setting.
+func (s *Self) TrapExit(on bool) bool { return s.p.trapExit.Swap(on) }
+
+// Exit sends an exit signal with reason to to. Kill terminates to even if
+// it traps exits. Normal is ignored by a process that does not trap exits,
+// unless it is the caller itself.
+func (s *Self) Exit(to PID, reason error) {
+	s.p.node.sendExit(s.p.pid, to, reason, false)
+}
 
 // Receive returns the next message in the mailbox, blocking until one
 // arrives. It returns ctx.Err() if ctx is done first, and the exit reason
