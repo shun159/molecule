@@ -48,10 +48,14 @@ const DefaultActiveN = 4
 // A Listener runs on its own with Start, or under a supervisor of the
 // application through ChildSpec.
 type Listener struct {
-	spec    Spec
-	handler supervisor.StartFunc
-	shared  *shared
+	spec      Spec
+	startConn startConn
+	shared    *shared
 }
+
+// startConn starts the process of a connection, linked to parent, and
+// gives it conn.
+type startConn func(ctx context.Context, parent *proc.Self, conn net.Conn) (proc.PID, error)
 
 // shared is what the children started by one listener supervisor hand to
 // the later ones: the socket to the acceptors, the conns supervisor to the
@@ -71,11 +75,18 @@ func (sh *shared) get() (net.Listener, proc.PID) {
 
 // NewListener returns a listener running b for spec, not yet started.
 func NewListener[S any](spec Spec, b Behaviour[S]) *Listener {
-	return &Listener{
-		spec:    spec,
-		handler: gen.StartLinkFunc(adapter[S]{b: b, activeN: activeN(spec)}, nil),
-		shared:  &shared{},
-	}
+	start := gen.StartLinkFunc(adapter[S]{b: b, activeN: activeN(spec)}, nil)
+	return newListener(spec, func(ctx context.Context, parent *proc.Self, conn net.Conn) (proc.PID, error) {
+		pid, err := start(ctx, parent)
+		if err == nil {
+			attach(parent, conn, pid)
+		}
+		return pid, err
+	})
+}
+
+func newListener(spec Spec, start startConn) *Listener {
+	return &Listener{spec: spec, startConn: start, shared: &shared{}}
 }
 
 func activeN(spec Spec) int {
@@ -90,7 +101,10 @@ func activeN(spec Spec) int {
 
 // Start starts a listener running b on its own.
 func Start[S any](ctx context.Context, n *proc.Node, spec Spec, b Behaviour[S]) (*Listener, error) {
-	l := NewListener(spec, b)
+	return start(ctx, n, NewListener(spec, b))
+}
+
+func start(ctx context.Context, n *proc.Node, l *Listener) (*Listener, error) {
 	sup, err := supervisor.Start(ctx, n, l.supervisorSpec())
 	if err != nil {
 		return nil, err
@@ -161,7 +175,7 @@ func (l *Listener) supervisorSpec() supervisor.Spec {
 			Start: func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
 				return parent.StartLink(ctx, func(s *proc.Self) error {
 					s.InitAck(nil)
-					return accept(s, sh, l.handler)
+					return accept(s, sh, l.startConn)
 				})
 			},
 		})
@@ -217,7 +231,7 @@ func listen(s *proc.Self, addr string, sh *shared) error {
 
 // accept accepts connections and starts a handler for each under the conns
 // supervisor.
-func accept(s *proc.Self, sh *shared, handler supervisor.StartFunc) error {
+func accept(s *proc.Self, sh *shared, startConn startConn) error {
 	ln, conns := sh.get()
 	for {
 		conn, err := ln.Accept()
@@ -242,13 +256,11 @@ func accept(s *proc.Self, sh *shared, handler supervisor.StartFunc) error {
 		_, err = supervisor.StartChild(context.Background(), s, conns, supervisor.ChildSpec{
 			Restart: supervisor.Temporary,
 			Start: func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
-				pid, err := handler(ctx, parent)
+				pid, err := startConn(ctx, parent, conn)
 				if err != nil {
 					conn.Close()
-					return pid, err
 				}
-				attach(parent, conn, pid)
-				return pid, nil
+				return pid, err
 			},
 		})
 		if err != nil {

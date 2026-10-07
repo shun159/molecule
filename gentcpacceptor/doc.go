@@ -6,6 +6,10 @@
 // it arrives as arguments of the callbacks, and writing to it is an effect,
 // so the callbacks stay pure.
 //
+// A connection may instead be handled by a [Handler], plain Go code
+// reading and writing the connection itself, as a Ranch protocol does with
+// its transport; see Raw handlers.
+//
 // # Listeners
 //
 // A [Listener] serves one address. It is a supervision tree:
@@ -60,7 +64,21 @@
 // the handler. HandleClosed replaces this. Whichever way the handler
 // process ends, the connection is closed.
 //
+// # Raw handlers
+//
+// [StartRaw] and [NewRawListener] run a [Handler] on each connection: a
+// function owning the net.Conn, in the process of the connection. The
+// listener, the acceptors, MaxConns, supervision, reports and Stop are the
+// same; the data goes from the connection to the handler with nothing in
+// between, at the speed of plain Go. A Behaviour costs three messages a
+// round trip, but is pure, tested by calling its functions, and reads on
+// demand; a Handler suits connections whose data needs little handling,
+// such as proxies and streams.
+//
+// # Half-closed connections
+//
 // A connection closed for reading by the peer is closed for writing too,
 // like gen_tcp with {exit_on_close, true}: half-closed connections are not
-// supported.
+// supported by Behaviours. A Handler, owning the connection, does as it
+// likes.
 package gentcpacceptor

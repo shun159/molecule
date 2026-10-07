@@ -68,11 +68,26 @@ func moleculeEcho(b *testing.B) string {
 	return l.Addr().String()
 }
 
+func moleculeRawEcho(b *testing.B) string {
+	n := proc.NewNode("")
+	l, err := gentcpacceptor.StartRaw(context.Background(), n, gentcpacceptor.Spec{Addr: "127.0.0.1:0"},
+		func(_ *proc.Self, conn net.Conn) error {
+			_, err := io.Copy(conn, conn)
+			return err
+		})
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { l.Stop(context.Background(), n) })
+	return l.Addr().String()
+}
+
 var servers = []struct {
 	name  string
 	start func(*testing.B) string
 }{
 	{"molecule", moleculeEcho},
+	{"molecule-raw", moleculeRawEcho},
 	{"baseline", baselineEcho},
 }
 
