@@ -21,6 +21,9 @@ type Node struct {
 	procs    procTable
 	aliases  aliasTable
 
+	dist       atomic.Pointer[Distribution] // nil until Distribute
+	remoteMons remoteMonTable
+
 	regMu sync.Mutex
 	names map[string]PID // guarded by regMu, as is process.name
 
@@ -59,7 +62,9 @@ func (n *Node) Send(to PID, msg any) {
 		p.mbox.push(msg)
 		return
 	}
-	// TODO(dist): route messages for remote nodes.
+	if d := n.remote(to); d != nil {
+		d.Send(to, msg)
+	}
 }
 
 // NewPID returns a new PID of n for a process n does not run, such as one
@@ -109,6 +114,9 @@ func (n *Node) register() *process {
 func (n *Node) sendExit(from, to PID, reason error, viaLink bool) {
 	if p := n.lookup(to); p != nil {
 		p.signalExit(from, reason, viaLink)
+		return
 	}
-	// TODO(dist): deliver exit signals to remote processes.
+	if d := n.remote(to); d != nil {
+		d.Exit(from, to, reason, viaLink)
+	}
 }

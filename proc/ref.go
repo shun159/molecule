@@ -10,6 +10,9 @@ type Ref struct {
 	id       uint64
 }
 
+// Node returns the name of the node that made r.
+func (r Ref) Node() string { return r.node }
+
 // IsZero reports whether r is the zero Ref.
 func (r Ref) IsZero() bool { return r == Ref{} }
 

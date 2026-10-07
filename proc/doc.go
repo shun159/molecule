@@ -6,8 +6,9 @@
 // # Nodes and processes
 //
 // A [Node] owns a set of processes, as an Erlang node does. Several nodes
-// may live in one program. Processes reach only the processes of their own
-// node for now; distribution is not implemented.
+// may live in one program. A node reaches the processes of other nodes
+// once distributed, see [Node.Distribute] and the package dist: sending,
+// links, monitors and aliases then work across nodes as within one.
 //
 // A process runs a function in a goroutine of its own:
 //

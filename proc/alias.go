@@ -28,6 +28,7 @@ type Alias struct {
 
 	n      *Node
 	target *process // watched by a MonitorAlias, if any
+	remote PID      // or watched there, of another node
 }
 
 // Alias creates an alias.
@@ -52,10 +53,16 @@ func (n *Node) MonitorAlias(pid PID) Alias {
 	a := Alias{Ref: ref, C: ch, n: n}
 
 	t := n.lookup(pid)
+	if t == nil && n.remote(pid) != nil {
+		n.aliases.put(ref.id, ch)
+		n.monitorRemote(ref, pid, watcher{alias: true})
+		a.remote = pid
+		return a
+	}
 	if t == nil {
 		reason := NoProc
 		if !n.isLocal(pid) {
-			reason = NoConnection // TODO(dist): monitor remote processes.
+			reason = NoConnection
 		}
 		ch <- AliasMsg{Down: true, Reason: reason}
 		return a
@@ -83,13 +90,22 @@ func (a Alias) Release() {
 		delete(t.monitors, a.Ref)
 		t.mu.Unlock()
 	}
+	if !a.remote.IsZero() {
+		a.n.demonitorRemote(a.Ref, a.remote)
+	}
 }
 
 // SendAlias delivers msg to the alias ref. Like Send it never fails:
 // messages to inactive, stale or unreachable aliases are dropped.
 func (n *Node) SendAlias(ref Ref, msg any) {
-	if ref.node != n.name || ref.creation != n.creation {
-		return // TODO(dist): route to remote aliases.
+	if ref.node != n.name {
+		if d := n.distribution(); d != nil && !ref.IsZero() {
+			d.SendAlias(ref, msg)
+		}
+		return
+	}
+	if ref.creation != n.creation {
+		return
 	}
 	if ch, ok := n.aliases.take(ref.id); ok {
 		ch <- AliasMsg{Msg: msg} // never blocks: only the first gets here

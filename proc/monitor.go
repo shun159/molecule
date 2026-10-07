@@ -11,12 +11,13 @@ type DownMsg struct {
 }
 
 // watcher is who is told when a monitored process dies: a process,
-// through a DownMsg; a Watch context, by cancelling it; or a MonitorAlias,
-// through its channel.
+// through a DownMsg; a Watch context, by cancelling it; a MonitorAlias,
+// through its channel; or another node, which made the reference.
 type watcher struct {
 	pid    PID
 	cancel context.CancelCauseFunc
 	alias  bool
+	remote bool
 }
 
 func (w watcher) notify(n *Node, ref Ref, target PID, reason error) {
@@ -27,11 +28,15 @@ func (w watcher) notify(n *Node, ref Ref, target PID, reason error) {
 	case w.alias:
 		n.aliasDown(ref, reason)
 		return
+	case w.remote:
+		if d := n.distribution(); d != nil {
+			d.Down(ref, target, reason)
+		}
+		return
 	}
 	if p := n.lookup(w.pid); p != nil {
 		p.down(ref, target, reason)
 	}
-	// TODO(dist): notify remote watchers.
 }
 
 // down queues a DownMsg to p, the watcher, unless the monitor has been
@@ -59,10 +64,21 @@ func (s *Self) Monitor(target PID) Ref {
 	}
 
 	t := p.node.lookup(target)
+	if t == nil && p.node.remote(target) != nil {
+		// Under the lock, so that the death of p, which ends the monitor,
+		// comes after it.
+		p.mu.Lock()
+		if !p.dead.Load() {
+			p.watch(ref, target)
+			p.node.monitorRemote(ref, target, watcher{pid: p.pid})
+		}
+		p.mu.Unlock()
+		return ref
+	}
 	if t == nil {
 		reason := NoProc
 		if !p.node.isLocal(target) {
-			reason = NoConnection // TODO(dist): monitor remote processes.
+			reason = NoConnection
 		}
 		p.mbox.push(DownMsg{Ref: ref, PID: target, Reason: reason})
 		return ref
@@ -97,6 +113,8 @@ func (s *Self) Demonitor(ref Ref) bool {
 			t.mu.Lock()
 			delete(t.monitors, ref)
 			t.mu.Unlock()
+		} else {
+			p.node.demonitorRemote(ref, target)
 		}
 		return true
 	}
@@ -129,9 +147,16 @@ func (n *Node) Watch(parent context.Context, pid PID) (context.Context, context.
 
 	t := n.lookup(pid)
 	if t == nil {
+		ref := n.MakeRef()
+		if n.monitorRemote(ref, pid, watcher{cancel: cancel}) {
+			return ctx, func() {
+				n.demonitorRemote(ref, pid)
+				stop()
+			}
+		}
 		reason := NoProc
 		if !n.isLocal(pid) {
-			reason = NoConnection // TODO(dist): watch remote processes.
+			reason = NoConnection
 		}
 		cancel(reason)
 		return ctx, stop

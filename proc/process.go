@@ -134,6 +134,8 @@ func (p *process) die(reason error) {
 			t.mu.Lock()
 			delete(t.monitors, ref)
 			t.mu.Unlock()
+		} else {
+			p.node.demonitorRemote(ref, target)
 		}
 	}
 }
@@ -303,10 +305,21 @@ func (s *Self) Link(to PID) {
 		return
 	}
 	t := p.node.lookup(to)
+	if d := p.node.remote(to); t == nil && d != nil {
+		// Under the lock, so that the exit signal of p, should it die,
+		// follows the link.
+		p.mu.Lock()
+		if !p.dead.Load() {
+			p.link(to)
+			d.Link(p.pid, to)
+		}
+		p.mu.Unlock()
+		return
+	}
 	if t == nil {
 		reason := NoProc
 		if !p.node.isLocal(to) {
-			reason = NoConnection // TODO(dist): link to remote processes.
+			reason = NoConnection
 		}
 		p.signalExit(to, reason, false)
 		return
@@ -333,7 +346,11 @@ func (s *Self) Unlink(to PID) {
 	t := p.node.lookup(to)
 	if t == nil || t == p {
 		p.mu.Lock()
+		_, linked := p.links[to]
 		delete(p.links, to)
+		if d := p.node.remote(to); linked && d != nil {
+			d.Unlink(p.pid, to)
+		}
 		p.mu.Unlock()
 		return
 	}
