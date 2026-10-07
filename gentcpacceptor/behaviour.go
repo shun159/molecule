@@ -1,10 +1,3 @@
-// Package gentcpacceptor is a behaviour for TCP servers, like a Ranch
-// protocol in Erlang: a pool of acceptor processes hands each connection
-// to a process of its own, started under a dynamic supervisor, which runs
-// the callbacks of a Behaviour.
-//
-// A connection is itself a process, as a port is in Erlang, so callbacks
-// stay pure: data arrives as arguments, and writing is an effect.
 package gentcpacceptor
 
 import (

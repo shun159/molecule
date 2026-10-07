@@ -1,12 +1,3 @@
-// Package genstatem is a state machine behaviour on top of gen, like
-// Erlang's gen_statem in handle_event_function mode: one pure callback
-// gets every event with the current state and data, and returns the next
-// ones along with effects. State machine actions (postponing, inserting
-// events, state, event and generic timeouts) are effects as well.
-//
-// The machinery is a pure adapter over gen: postponed and inserted events
-// are replayed within the handling of the event that caused them, and
-// timeouts are gen timers.
 package genstatem
 
 import (

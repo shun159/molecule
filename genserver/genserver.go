@@ -1,6 +1,3 @@
-// Package genserver is a typed client-server behaviour on top of gen,
-// like Erlang's gen_server. Callbacks are pure: they return the next state
-// and the gen.Effect values to perform.
 package genserver
 
 import (
