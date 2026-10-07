@@ -24,3 +24,23 @@ func (l Local) WhereIs(n *proc.Node) (proc.PID, bool) { return n.WhereIs(string(
 func (l Local) Register(n *proc.Node, pid proc.PID) error { return n.Register(string(l), pid) }
 
 func (l Local) String() string { return string(l) }
+
+// Remote is a name in the registry of a node, which may be another, like
+// {Name, Node} in Erlang. It is resolved there: calls and casts go to
+// whichever process has the name when they arrive. Monitor and
+// SendRequest effects cannot resolve the name of another node, and fail
+// with proc.NoProc.
+type Remote struct {
+	Node string
+	Name string
+}
+
+// WhereIs looks the name up in the registry of n, if the name is of n.
+func (r Remote) WhereIs(n *proc.Node) (proc.PID, bool) {
+	if r.Node != n.Name() {
+		return proc.PID{}, false
+	}
+	return n.WhereIs(r.Name)
+}
+
+func (r Remote) String() string { return r.Name + "@" + r.Node }

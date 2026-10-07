@@ -21,6 +21,8 @@ type Env interface {
 	Resolve(dest Dest) (proc.PID, bool)
 	// Send sends msg to the process to.
 	Send(to proc.PID, msg any)
+	// SendName sends msg to the process registered as name on node.
+	SendName(node, name string, msg any)
 	// SendAlias sends msg to the alias ref, a reply to a call.
 	SendAlias(ref proc.Ref, msg any)
 	// Monitor monitors pid; a proc.DownMsg with the reference arrives

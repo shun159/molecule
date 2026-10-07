@@ -24,6 +24,8 @@ const (
 	opDemonitor
 	opDown
 	opTick // nothing, but that the connection lives
+	opMonitorName
+	opDemonitorName
 )
 
 // frame is an operation to or from another node.
@@ -31,7 +33,7 @@ type frame struct {
 	op       op
 	from, to proc.PID // Exit, Link, Unlink; Send: to; Monitor, Demonitor, Down: to is the target
 	ref      proc.Ref // SendAlias, Monitor, Demonitor, Down
-	name     string   // SendName
+	name     string   // SendName, MonitorName, DemonitorName
 	reason   error    // Exit, Down
 	msg      any      // Send, SendName, SendAlias: the message, before encoding
 	payload  []byte   // the message, encoded
@@ -57,6 +59,8 @@ func appendFrame(b []byte, f frame) []byte {
 		b = appendID(appendID(b, f.ref), f.to)
 	case opDown:
 		b = appendReason(appendID(appendID(b, f.ref), f.to), f.reason)
+	case opMonitorName, opDemonitorName:
+		b = appendString(appendID(b, f.ref), f.name)
 	}
 	return append(b, f.payload...)
 }
@@ -89,6 +93,9 @@ func parseFrame(b []byte) (f frame, err error) {
 		r.id(&f.to)
 		f.reason = r.reason()
 	case opTick:
+	case opMonitorName, opDemonitorName:
+		r.id(&f.ref)
+		f.name = r.string()
 	default:
 		return f, errFrame
 	}

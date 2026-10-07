@@ -31,6 +31,12 @@
 // and Refs keep their identity across nodes. A message that cannot be
 // encoded is dropped and logged, as one that cannot be decoded.
 //
+// The registered names of other nodes are reached with proc.Node.SendName
+// and gen.Remote, by which gen calls and casts a server of another node:
+//
+//	ref := genserver.NewRef[Req, Rep, Cast](gen.Remote{Node: "b@host", Name: "server"})
+//	rep, err := ref.Call(ctx, self, req)
+//
 // Exit reasons are the reasons of proc, or a [RemoteError] carrying the
 // text of another: errors.Is(reason, proc.Shutdown) holds across nodes for
 // a reason wrapping it.
@@ -40,7 +46,6 @@
 //
 // # What there is not yet
 //
-// A node restarted under the same name is refused until the connection to its previous incarnation
-// is noticed lost. Names of other nodes are reached with
-// proc.Node.SendName; gen does not call them yet.
+// A node restarted under the same name is refused until the connection to
+// its previous incarnation is noticed lost.
 package dist

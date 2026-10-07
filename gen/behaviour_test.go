@@ -612,6 +612,32 @@ func TestSendAndCastEffects(t *testing.T) {
 	})
 }
 
+// TestRemoteDest sends effects to a Remote name, here of the node itself:
+// the runtime sends them by name.
+func TestRemoteDest(t *testing.T) {
+	inWorld(t, func(w *world) {
+		pid := w.start()
+		peer := w.start()
+		w.n.Register("observer", w.observer)
+		w.n.Register("peer", peer)
+		w.do(pid,
+			gen.Send{To: gen.Remote{Node: w.n.Name(), Name: "observer"}, Msg: "by name"},
+			gen.Cast{To: gen.Remote{Node: w.n.Name(), Name: "peer"}, Req: 7},
+			gen.Send{To: gen.Remote{Node: "elsewhere", Name: "observer"}, Msg: "lost"},
+		)
+		if e := <-w.events; e != "by name" {
+			t.Errorf("observer got %#v", e)
+		}
+		if v := call(t, w.n, peer, get{}); v != 7 {
+			t.Errorf("peer state = %v", v)
+		}
+		if v, err := gen.Call(context.Background(), w.n, gen.Remote{Node: w.n.Name(), Name: "peer"}, get{}); err != nil || v != 7 {
+			t.Errorf("call by remote name = %v, %v", v, err)
+		}
+		w.noEvent()
+	})
+}
+
 func TestTerminateReport(t *testing.T) {
 	rec, logger := testlog.New()
 	n := proc.NewNode("", proc.WithLogger(logger))

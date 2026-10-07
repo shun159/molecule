@@ -102,6 +102,12 @@ func (d fakeDist) Monitor(ref Ref, target PID) {
 func (d fakeDist) Demonitor(ref Ref, target PID) {
 	d.f.do(d.from, target.node, func(r Remote) { r.Demonitor(ref, target) })
 }
+func (d fakeDist) MonitorName(ref Ref, node, name string) {
+	d.f.do(d.from, node, func(r Remote) { r.MonitorName(ref, name) })
+}
+func (d fakeDist) DemonitorName(ref Ref, node, name string) {
+	d.f.do(d.from, node, func(r Remote) { r.DemonitorName(ref, name) })
+}
 func (d fakeDist) Down(ref Ref, target PID, reason error) {
 	d.f.do(d.from, ref.node, func(r Remote) { r.Down(ref, target, reason) })
 }
@@ -433,5 +439,62 @@ func eventually(t *testing.T, cond func() bool) {
 			t.Fatal("condition never met")
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestRemoteAliasName(t *testing.T) {
+	f, nodes := newFakeNet(t, "a", "b")
+	a, b := nodes[0], nodes[1]
+	pb, _ := inbox(b)
+	b.Register("server", pb)
+
+	// The name is monitored at b before what follows reaches it.
+	al := a.MonitorAliasName("b", "server")
+	a.SendName("b", "server", func(s *Self) { s.Node().SendAlias(al.Ref, "reply") })
+	if m := <-al.C; m.Down || m.Msg != "reply" {
+		t.Errorf("got %#v", m)
+	}
+	al.Release()
+	eventually(t, func() bool { return len(watchers(b, pb)) == 0 })
+
+	// No process has the name.
+	al = a.MonitorAliasName("b", "nobody")
+	if m := <-al.C; !m.Down || m.Reason != NoProc {
+		t.Errorf("got %#v", m)
+	}
+	al.Release()
+
+	// The process with the name dies.
+	al = a.MonitorAliasName("b", "server")
+	eventually(t, func() bool { return len(watchers(b, pb)) == 1 })
+	boom := errors.New("boom")
+	b.lookup(pb).die(boom)
+	if m := <-al.C; !m.Down || m.Reason != boom {
+		t.Errorf("got %#v", m)
+	}
+	al.Release()
+
+	// The node is lost.
+	pb2, _ := inbox(b)
+	b.Register("server", pb2)
+	al = a.MonitorAliasName("b", "server")
+	defer al.Release()
+	eventually(t, func() bool { return len(watchers(b, pb2)) == 1 })
+	f.disconnect("a", "b")
+	if m := <-al.C; !m.Down || m.Reason != NoConnection {
+		t.Errorf("got %#v", m)
+	}
+
+	// On its own node, the name is resolved at once.
+	local, _ := inbox(a)
+	a.Register("here", local)
+	al2 := a.MonitorAliasName("a", "here")
+	a.SendAlias(al2.Ref, "local")
+	if m := <-al2.C; m.Msg != "local" {
+		t.Errorf("got %#v", m)
+	}
+	al2.Release()
+	if m := <-a.MonitorAliasName("a", "nobody").C; m.Reason != NoProc {
+		t.Errorf("got %#v", m)
 	}
 }

@@ -305,11 +305,15 @@ func (r *runtime[S]) apply(effs []Effect) {
 		case Reply:
 			r.env.SendAlias(e.To.Tag, e.Value)
 		case Send:
-			if pid, ok := r.env.Resolve(e.To); ok {
+			if to, ok := e.To.(Remote); ok {
+				r.env.SendName(to.Node, to.Name, e.Msg)
+			} else if pid, ok := r.env.Resolve(e.To); ok {
 				r.env.Send(pid, e.Msg)
 			}
 		case Cast:
-			if pid, ok := r.env.Resolve(e.To); ok {
+			if to, ok := e.To.(Remote); ok {
+				r.env.SendName(to.Node, to.Name, CastMsg{Req: e.Req})
+			} else if pid, ok := r.env.Resolve(e.To); ok {
 				r.env.Send(pid, CastMsg{Req: e.Req})
 			}
 		case Stop:

@@ -24,6 +24,8 @@ func TestFrameRoundTrip(t *testing.T) {
 		{op: opMonitor, ref: ref, to: pid},
 		{op: opDemonitor, ref: ref, to: pid},
 		{op: opDown, ref: ref, to: pid, reason: proc.NoProc},
+		{op: opMonitorName, ref: ref, name: "server"},
+		{op: opDemonitorName, ref: ref, name: "server"},
 	} {
 		got, err := parseFrame(appendFrame(nil, f))
 		if f.payload == nil {

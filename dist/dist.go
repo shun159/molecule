@@ -376,6 +376,14 @@ func (x distribution) Demonitor(ref proc.Ref, target proc.PID) {
 	x.d.out(target.Node(), frame{op: opDemonitor, ref: ref, to: target})
 }
 
+func (x distribution) MonitorName(ref proc.Ref, node, name string) {
+	x.d.out(node, frame{op: opMonitorName, ref: ref, name: name})
+}
+
+func (x distribution) DemonitorName(ref proc.Ref, node, name string) {
+	x.d.out(node, frame{op: opDemonitorName, ref: ref, name: name})
+}
+
 func (x distribution) Down(ref proc.Ref, target proc.PID, reason error) {
 	x.d.out(ref.Node(), frame{op: opDown, ref: ref, to: target, reason: reason})
 }

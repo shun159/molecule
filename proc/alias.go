@@ -29,6 +29,8 @@ type Alias struct {
 	n      *Node
 	target *process // watched by a MonitorAlias, if any
 	remote PID      // or watched there, of another node
+	// or the process registered as remoteName there
+	remoteName string
 }
 
 // Alias creates an alias.
@@ -90,7 +92,14 @@ func (a Alias) Release() {
 		delete(t.monitors, a.Ref)
 		t.mu.Unlock()
 	}
-	if !a.remote.IsZero() {
+	switch {
+	case a.remoteName != "":
+		if _, ok := a.n.remoteMons.take(a.Ref); ok {
+			if d := a.n.distribution(); d != nil {
+				d.DemonitorName(a.Ref, a.remote.node, a.remoteName)
+			}
+		}
+	case !a.remote.IsZero():
 		a.n.demonitorRemote(a.Ref, a.remote)
 	}
 }

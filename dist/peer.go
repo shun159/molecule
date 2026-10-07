@@ -238,6 +238,14 @@ func (c *connection) receive(b []byte) {
 		if f.ref.Node() == node {
 			r.Demonitor(f.ref, f.to)
 		}
+	case opMonitorName:
+		if f.ref.Node() == node {
+			r.MonitorName(f.ref, f.name)
+		}
+	case opDemonitorName:
+		if f.ref.Node() == node {
+			r.DemonitorName(f.ref, f.name)
+		}
 	case opDown:
 		if f.to.Node() == node {
 			r.Down(f.ref, f.to, f.reason)

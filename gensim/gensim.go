@@ -475,6 +475,17 @@ func (e *env) Resolve(dest gen.Dest) (proc.PID, bool) { return e.s.resolve(dest)
 
 func (e *env) Send(to proc.PID, msg any) { e.s.send(e.p.pid, to, msg) }
 
+// SendName sends to a name of the simulated node; a simulation has no
+// other node, and what is sent to one is lost.
+func (e *env) SendName(node, name string, msg any) {
+	if node != e.s.node.Name() {
+		return
+	}
+	if pid, ok := e.s.resolve(gen.Local(name)); ok {
+		e.s.send(e.p.pid, pid, msg)
+	}
+}
+
 func (e *env) SendAlias(ref proc.Ref, msg any) {
 	e.s.answer(ref, e.p.pid, proc.AliasMsg{Msg: msg})
 }

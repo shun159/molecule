@@ -351,3 +351,39 @@ func TestUnnamed(t *testing.T) {
 		t.Error("an unnamed node distributed")
 	}
 }
+
+// counter is a genserver counting the casts it gets, and telling the
+// count on a call.
+type counter struct{}
+
+func (counter) Init(proc.PID) (int, []gen.Effect, error) { return 0, nil, nil }
+
+func (counter) HandleCall(n int, _ string, from genserver.From[int]) (int, []gen.Effect) {
+	return n, gen.Do(from.Reply(n))
+}
+
+func (counter) HandleCast(n int, by int) (int, []gen.Effect) { return n + by, nil }
+
+func TestRemoteName(t *testing.T) {
+	nodes, _ := cluster(t, "secret", "a@test", "b@test")
+	a, b := nodes[0], nodes[1]
+	ctx := context.Background()
+	if _, err := genserver.Start(ctx, b, counter{}, gen.WithName(gen.Local("counter"))); err != nil {
+		t.Fatal(err)
+	}
+	remote := genserver.NewRef[string, int, int](gen.Remote{Node: "b@test", Name: "counter"})
+	remote.Cast(a, 2)
+	remote.Cast(a, 3)
+	if got, err := remote.Call(ctx, a, "count"); err != nil || got != 5 {
+		t.Errorf("call: %v, %v", got, err)
+	}
+	nobody := genserver.NewRef[string, int, int](gen.Remote{Node: "b@test", Name: "nobody"})
+	if _, err := nobody.Call(ctx, a, "count"); !errors.Is(err, proc.NoProc) {
+		t.Errorf("call to nobody: %v", err)
+	}
+	// A Remote name of the node itself is resolved there.
+	here := genserver.NewRef[string, int, int](gen.Remote{Node: "b@test", Name: "counter"})
+	if got, err := here.Call(ctx, b, "count"); err != nil || got != 5 {
+		t.Errorf("call from b: %v, %v", got, err)
+	}
+}

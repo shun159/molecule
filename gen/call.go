@@ -64,18 +64,25 @@ func Call(ctx context.Context, caller Caller, to Dest, req any) (any, error) {
 // call makes a synchronous request; wrap builds the message to send.
 func call(ctx context.Context, caller Caller, to Dest, wrap func(From) any) (any, error) {
 	n := caller.Node()
+	var self proc.PID
+	if p, ok := caller.(interface{ PID() proc.PID }); ok {
+		self = p.PID()
+	}
+	d, _ := caller.(dying)
+	if r, ok := to.(Remote); ok && r.Node != n.Name() {
+		// The name is resolved there, and monitored there first.
+		a := n.MonitorAliasName(r.Node, r.Name)
+		defer a.Release()
+		n.SendName(r.Node, r.Name, wrap(From{PID: self, Tag: a.Ref}))
+		return awaitReply(ctx, d, to, a.C)
+	}
 	pid, ok := to.WhereIs(n)
 	if !ok {
 		return nil, &ExitError{To: to, Reason: proc.NoProc}
 	}
-	var self proc.PID
-	if p, ok := caller.(interface{ PID() proc.PID }); ok {
-		self = p.PID()
-		if self == pid {
-			return nil, ErrCallingSelf
-		}
+	if !self.IsZero() && self == pid {
+		return nil, ErrCallingSelf
 	}
-	d, _ := caller.(dying)
 
 	a := n.MonitorAlias(pid)
 	defer a.Release()
@@ -114,6 +121,10 @@ func awaitReply(ctx context.Context, caller dying, to Dest, c <-chan proc.AliasM
 // exist is dropped. Behaviours return a Cast effect instead.
 func SendCast(caller Caller, to Dest, req any) {
 	n := caller.Node()
+	if r, ok := to.(Remote); ok {
+		n.SendName(r.Node, r.Name, CastMsg{Req: req})
+		return
+	}
 	if pid, ok := to.WhereIs(n); ok {
 		n.Send(pid, CastMsg{Req: req})
 	}

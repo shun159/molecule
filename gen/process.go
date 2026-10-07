@@ -66,6 +66,12 @@ func (e procEnv) Send(to proc.PID, msg any) {
 	}
 }
 
+func (e procEnv) SendName(node, name string, msg any) {
+	if !e.dead() {
+		e.self.Node().SendName(node, name, msg)
+	}
+}
+
 func (e procEnv) SendAlias(ref proc.Ref, msg any) {
 	if !e.dead() {
 		e.self.Node().SendAlias(ref, msg)
