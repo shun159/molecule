@@ -727,6 +727,32 @@ func TestExtensionEffectRefused(t *testing.T) {
 	})
 }
 
+// stamp is a Performer sending its message from the process performing
+// it, through the Env.
+type stamp struct {
+	gen.Extension
+	to  proc.PID
+	msg string
+}
+
+func (e stamp) Perform(env gen.Env) { env.Send(e.to, e.msg+" from "+env.Self().String()) }
+
+func TestPerformer(t *testing.T) {
+	inWorld(t, func(w *world) {
+		pid := w.start()
+		w.do(pid,
+			gen.Send{To: w.observer, Msg: "first"},
+			stamp{to: w.observer, msg: "second"},
+			gen.Send{To: w.observer, Msg: "third"},
+		)
+		for _, want := range []string{"first", "second from " + pid.String(), "third"} {
+			if e := <-w.events; e != want {
+				t.Errorf("observer got %#v, want %q", e, want)
+			}
+		}
+	})
+}
+
 func TestTerminate(t *testing.T) {
 	for _, reason := range []error{nil, errBoom} {
 		inWorld(t, func(w *world) {

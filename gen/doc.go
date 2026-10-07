@@ -72,7 +72,9 @@
 //
 // Behaviours built on gen define effects of their own by embedding
 // [Extension], and handle them in their adapter before the runtime sees the
-// rest. genstatem does so for its actions.
+// rest. genstatem does so for its actions. A [Performer] is an effect that
+// the runtime has perform itself, for what lies outside the processes:
+// gentcp sends to a socket this way.
 //
 // # Starting and stopping
 //

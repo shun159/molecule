@@ -336,6 +336,8 @@ func (r *runtime[S]) apply(effs []Effect) {
 			r.env.Unlink(e.PID)
 		case TrapExit:
 			r.env.TrapExit(e.On)
+		case Performer:
+			e.Perform(r.env)
 		default:
 			panic(fmt.Sprintf("gen: unknown effect %T", e))
 		}
