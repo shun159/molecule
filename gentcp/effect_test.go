@@ -2,8 +2,11 @@ package gentcp_test
 
 import (
 	"context"
+	"errors"
 	"io"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/genserver"
@@ -58,6 +61,56 @@ func TestEffects(t *testing.T) {
 		}
 		io.WriteString(peer, "bye\n")
 		wantEOF(t, peer)
+		awaitExit(t, s, sock)
+	})
+}
+
+// failing is a genserver sending on the socket cast to it, and passing on
+// what the socket tells it to the process in its state.
+type failing struct{}
+
+type watch struct {
+	sock gentcp.Socket
+	to   proc.PID
+}
+
+func (failing) Init(proc.PID) (proc.PID, []gen.Effect, error) { return proc.PID{}, nil, nil }
+
+func (failing) HandleCall(s proc.PID, _ struct{}, _ genserver.From[struct{}]) (proc.PID, []gen.Effect) {
+	return s, nil
+}
+
+func (failing) HandleCast(_ proc.PID, w watch) (proc.PID, []gen.Effect) {
+	return w.to, []gen.Effect{w.sock.SendActiveEffect([]byte("x"), gentcp.Once)}
+}
+
+func (failing) HandleInfo(to proc.PID, msg any) (proc.PID, []gen.Effect) {
+	return to, []gen.Effect{gen.Send{To: to, Msg: msg}}
+}
+
+// TestSendEffectFailed fails a send made by the runtime of a behaviour: the
+// socket learns of it, and the owner as well, once it asks for data.
+func TestSendEffectFailed(t *testing.T) {
+	n := proc.NewNode("")
+	ctx := context.Background()
+	srv, err := genserver.Start(ctx, n, failing{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, _ := srv.Dest().WhereIs(n)
+	inProc(t, n, func(s *proc.Self) {
+		// The write deadline has passed before the write starts.
+		sock, _ := pair(t, s, gentcp.Options{SendTimeout: time.Nanosecond})
+		if err := sock.ControllingProcess(ctx, s, pid); err != nil {
+			t.Error(err)
+		}
+		srv.Cast(s, watch{sock, s.PID()})
+		if m, ok := receive(t, s).(gentcp.ErrorMsg); !ok || !errors.Is(m.Err, os.ErrDeadlineExceeded) {
+			t.Errorf("got %#v, want Error", m)
+		}
+		if _, ok := receive(t, s).(gentcp.ClosedMsg); !ok {
+			t.Error("no Closed")
+		}
 		awaitExit(t, s, sock)
 	})
 }

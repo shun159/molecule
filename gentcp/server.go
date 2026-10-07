@@ -135,6 +135,8 @@ func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Opt
 			if stop {
 				return nil
 			}
+		case sendFailed:
+			s.fail(m.err)
 		case sendReq, setActiveReq, closeReq:
 			// From the effects of a behaviour, with no one to reply to.
 			if _, _, stop := s.handle(gen.From{}, m); stop {
@@ -219,26 +221,13 @@ func (s *server) revoke() {
 	s.direct.mu.Unlock()
 }
 
+// send writes for a Socket made by hand, which has no writer.
 func (s *server) send(data []byte) error {
-	hdr, err := s.opts.Packet.header(len(data))
-	if err != nil {
-		return err
-	}
-	if s.opts.SendTimeout > 0 {
-		s.conn.SetWriteDeadline(time.Now().Add(s.opts.SendTimeout))
-	}
-	if len(hdr) == 0 {
-		_, err = s.conn.Write(data)
-	} else {
-		bufs := net.Buffers{hdr, data}
-		_, err = bufs.WriteTo(s.conn)
-	}
-	if err != nil {
-		// The stream is cut at an unknown place: it is of no use anymore.
+	failed, err := s.sock.w.write(data)
+	if failed {
 		s.fail(err)
-		return err
 	}
-	return nil
+	return err
 }
 
 func (s *server) shutdown(how How) error {

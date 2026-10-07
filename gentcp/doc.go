@@ -17,8 +17,10 @@
 //	err = sock.Send(ctx, self, pkt)
 //
 // A [Socket] is plain data, the PID of its process and its addresses; any
-// process may send through it, and only the owner receive. A ListenSocket
-// is shared by the processes accepting on it.
+// process may send through it, and only the owner receive. Sending writes
+// in the process sending, as gen_tcp_socket does, rather than going
+// through the socket process; writes are kept whole and in order. A
+// ListenSocket is shared by the processes accepting on it.
 //
 // # Receiving
 //
@@ -68,7 +70,8 @@
 //
 // The messages of a socket arrive to a behaviour as info messages, and
 // [Socket.SendEffect], [Socket.SetActiveEffect] and [Socket.CloseEffect]
-// act on it as effects, so that the behaviour stays pure.
+// act on it as effects, so that the behaviour stays pure. The runtime of
+// the behaviour performs a SendEffect itself, see gen.Performer.
 // [Socket.SendActiveEffect] answers a packet and asks for the next in one
 // message. A failed
 // SendEffect fails the connection, which the owner learns as above.

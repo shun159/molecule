@@ -68,8 +68,9 @@ func TestHandsOverFullReads(t *testing.T) {
 	}
 }
 
-// TestSendActiveFailed fails the send of a passive socket: the mode still
-// changes, so that the owner hears of the failure.
+// TestSendActiveFailed fails the send of a passive socket, made by the
+// socket process for a Socket without writer: the mode still changes, so
+// that the owner hears of the failure.
 func TestSendActiveFailed(t *testing.T) {
 	n := proc.NewNode("")
 	got := make(chan any, 4)
@@ -86,7 +87,8 @@ func TestSendActiveFailed(t *testing.T) {
 	defer peer.Close()
 	// The write deadline has passed before the write starts.
 	sock := Start(n, server, owner, Options{SendTimeout: time.Nanosecond})
-	n.Send(sock.PID, sock.SendActiveEffect([]byte("x"), Once).(gen.Send).Msg)
+	byHand := Socket{PID: sock.PID}
+	n.Send(sock.PID, byHand.SendActiveEffect([]byte("x"), Once).(gen.Send).Msg)
 	for _, want := range []string{"ErrorMsg", "ClosedMsg"} {
 		select {
 		case m := <-got:

@@ -16,6 +16,8 @@ type Socket struct {
 	PID        proc.PID
 	LocalAddr  net.Addr
 	RemoteAddr net.Addr
+
+	w *writer // nil in a Socket made by hand: sending goes through PID
 }
 
 // Messages a socket sends its owner.
@@ -76,10 +78,19 @@ type (
 	closeReq     struct{}
 )
 
-// Send sends data, framed as the Packet option says. It returns once the
-// data is written, or fails after SendTimeout.
+// Send sends data, framed as the Packet option says. It writes in the
+// calling process, as gen_tcp_socket does, and returns once the data is
+// written, or fails after SendTimeout. A failure of the connection fails
+// the socket, as for receiving.
 func (s Socket) Send(ctx context.Context, caller gen.Caller, data []byte) error {
-	return s.call(ctx, caller, sendReq{data: data})
+	if s.w == nil {
+		return s.call(ctx, caller, sendReq{data: data})
+	}
+	failed, err := s.w.write(data)
+	if failed {
+		caller.Node().Send(s.PID, sendFailed{err})
+	}
+	return err
 }
 
 // Recv takes the next packet of a passive socket, waiting for it. For
@@ -137,11 +148,14 @@ func (s Socket) Close(ctx context.Context, caller gen.Caller) error {
 	return err
 }
 
-// SendEffect is the effect sending data, for a behaviour. A failure
-// breaks the connection, which the owner is told of as it is of a failure
-// to receive.
+// SendEffect is the effect sending data, for a behaviour: the runtime of
+// the behaviour writes, as Send does. A failure breaks the connection,
+// which the owner is told of as it is of a failure to receive.
 func (s Socket) SendEffect(data []byte) gen.Effect {
-	return gen.Send{To: s.PID, Msg: sendReq{data: data}}
+	if s.w == nil {
+		return gen.Send{To: s.PID, Msg: sendReq{data: data}}
+	}
+	return sendEffect{pid: s.PID, w: s.w, data: data}
 }
 
 // SendActiveEffect is the effect sending data, then changing the active
@@ -155,7 +169,10 @@ func (s Socket) SendEffect(data []byte) gen.Effect {
 // The mode changes even if sending fails, so that the owner hears of the
 // failure.
 func (s Socket) SendActiveEffect(data []byte, a Active) gen.Effect {
-	return gen.Send{To: s.PID, Msg: sendReq{data: data, then: true, active: a}}
+	if s.w == nil {
+		return gen.Send{To: s.PID, Msg: sendReq{data: data, then: true, active: a}}
+	}
+	return sendEffect{pid: s.PID, w: s.w, data: data, then: true, active: a}
 }
 
 // SetActiveEffect is the effect changing the active mode, for a behaviour.
@@ -201,12 +218,19 @@ func Connect(ctx context.Context, owner *proc.Self, addr string, opts Options) (
 // Start makes a socket of conn, a connection made by other means, owned by
 // owner. The socket owns conn from then on, and closes it.
 func Start(n *proc.Node, conn net.Conn, owner proc.PID, opts Options) Socket {
-	addrs := Socket{LocalAddr: conn.LocalAddr(), RemoteAddr: conn.RemoteAddr()}
+	w := &writer{conn: conn, packet: opts.Packet, timeout: opts.SendTimeout}
+	addrs := Socket{LocalAddr: conn.LocalAddr(), RemoteAddr: conn.RemoteAddr(), w: w}
+	started := make(chan struct{})
 	sock := addrs
 	sock.PID = n.Spawn(func(s *proc.Self) error {
+		<-started
 		sock := addrs
 		sock.PID = s.PID()
 		return serve(s, conn, sock, owner, opts)
 	})
+	// The process exists now: its end is the end of sending.
+	ctx, _ := n.Watch(context.Background(), sock.PID)
+	w.done = ctx.Done()
+	close(started)
 	return sock
 }
