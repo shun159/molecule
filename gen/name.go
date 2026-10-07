@@ -43,4 +43,4 @@ func (r Remote) WhereIs(n *proc.Node) (proc.PID, bool) {
 	return n.WhereIs(r.Name)
 }
 
-func (r Remote) String() string { return r.Name + "@" + r.Node }
+func (r Remote) String() string { return "{" + r.Name + "," + r.Node + "}" }

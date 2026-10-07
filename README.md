@@ -35,7 +35,8 @@ functions, without starting a process.
 
 The package documentation is available through `go doc`. The `examples`
 directory holds small programs: an echo server, a chat server, a server
-crashing and being restarted, a mailbox under load, and the code lock and
-push button of the gen_statem documentation.
+crashing and being restarted, a mailbox under load, the code lock and
+push button of the gen_statem documentation, and two nodes pinging each
+other.
 
 molecule requires Go 1.27.
