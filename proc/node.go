@@ -62,6 +62,12 @@ func (n *Node) Send(to PID, msg any) {
 	// TODO(dist): route messages for remote nodes.
 }
 
+// NewPID returns a new PID of n for a process n does not run, such as one
+// simulated by gensim. No process of n ever has it.
+func (n *Node) NewPID() PID {
+	return PID{node: n.name, creation: n.creation, id: n.nextID.Add(1)}
+}
+
 // MakeRef returns a new unique reference.
 func (n *Node) MakeRef() Ref {
 	return Ref{node: n.name, creation: n.creation, id: n.nextRef.Add(1)}

@@ -144,6 +144,11 @@ func StartLinkFunc[S, Req, Rep, Cast any](b Behaviour[S, Req, Rep, Cast], opts .
 	}
 }
 
+// Gen returns b as a gen.Behaviour, the form gen and gensim run.
+func Gen[S, Req, Rep, Cast any](b Behaviour[S, Req, Rep, Cast]) gen.Behaviour[S] {
+	return adapter[S, Req, Rep, Cast]{b}
+}
+
 // adapter turns a Behaviour into a gen.Behaviour.
 type adapter[S, Req, Rep, Cast any] struct {
 	b Behaviour[S, Req, Rep, Cast]

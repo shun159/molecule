@@ -7,8 +7,9 @@ import (
 	"github.com/shun159/molecule/proc"
 )
 
-// machine is the state of a state machine process.
-type machine[St comparable, D any] struct {
+// Machine is the state of a state machine process, as gen and gensim see
+// it: the state and data of the behaviour, with what the adapter keeps.
+type Machine[St comparable, D any] struct {
 	state St
 	data  D
 
@@ -16,6 +17,12 @@ type machine[St comparable, D any] struct {
 	stateTimer bool    // a state timeout is running
 	eventTimer bool    // an event timeout is running
 }
+
+// State returns the state of the machine.
+func (m Machine[St, D]) State() St { return m.state }
+
+// Data returns the data of the machine.
+func (m Machine[St, D]) Data() D { return m.data }
 
 // Timer keys, and the message of a timer firing.
 type (
@@ -43,12 +50,12 @@ func newAdapter[St comparable, D any](b Behaviour[St, D]) adapter[St, D] {
 	return adapter[St, D]{b: b, enter: ok && e.StateEnter()}
 }
 
-func (a adapter[St, D]) Init(self proc.PID, _ any) (machine[St, D], []gen.Effect, error) {
+func (a adapter[St, D]) Init(self proc.PID, _ any) (Machine[St, D], []gen.Effect, error) {
 	state, data, effs, err := a.b.Init(self)
 	if err != nil {
-		return machine[St, D]{}, nil, err
+		return Machine[St, D]{}, nil, err
 	}
-	m := machine[St, D]{state: state, data: data}
+	m := Machine[St, D]{state: state, data: data}
 	var out []gen.Effect
 	next, postpone := a.actions(&m, effs, &out)
 	if postpone {
@@ -65,7 +72,7 @@ func (a adapter[St, D]) Init(self proc.PID, _ any) (machine[St, D], []gen.Effect
 	return m, out, nil
 }
 
-func (a adapter[St, D]) Handle(m machine[St, D], msg gen.Msg) (machine[St, D], []gen.Effect) {
+func (a adapter[St, D]) Handle(m Machine[St, D], msg gen.Msg) (Machine[St, D], []gen.Effect) {
 	var ev Event
 	switch x := msg.(type) {
 	case gen.CallMsg:
@@ -97,7 +104,7 @@ func (a adapter[St, D]) Handle(m machine[St, D], msg gen.Msg) (machine[St, D], [
 	return a.run(m, []Event{ev})
 }
 
-func (a adapter[St, D]) Terminate(m machine[St, D], reason error) []gen.Effect {
+func (a adapter[St, D]) Terminate(m Machine[St, D], reason error) []gen.Effect {
 	t, ok := a.b.(Terminator[St, D])
 	if !ok {
 		return nil
@@ -107,7 +114,7 @@ func (a adapter[St, D]) Terminate(m machine[St, D], reason error) []gen.Effect {
 
 // run handles the events in order, with those they insert or retry, until
 // none is left or the machine stops.
-func (a adapter[St, D]) run(m machine[St, D], queue []Event) (machine[St, D], []gen.Effect) {
+func (a adapter[St, D]) run(m Machine[St, D], queue []Event) (Machine[St, D], []gen.Effect) {
 	var out []gen.Effect
 	for len(queue) > 0 {
 		ev := queue[0]
@@ -149,7 +156,7 @@ func (a adapter[St, D]) run(m machine[St, D], queue []Event) (machine[St, D], []
 }
 
 // enterState handles the state enter call after a change from old.
-func (a adapter[St, D]) enterState(m machine[St, D], old St, out []gen.Effect) (machine[St, D], []gen.Effect) {
+func (a adapter[St, D]) enterState(m Machine[St, D], old St, out []gen.Effect) (Machine[St, D], []gen.Effect) {
 	state, data, effs := a.b.HandleEvent(m.state, m.data, Enter[St]{Old: old})
 	if state != m.state {
 		return m, append(out, gen.Stop{Reason: ErrEnterChangedState})
@@ -164,7 +171,7 @@ func (a adapter[St, D]) enterState(m machine[St, D], old St, out []gen.Effect) (
 // actions performs the actions among effs on m, turning timeouts into gen
 // timers, and appends the other effects to out. It returns the events to
 // insert, and whether to postpone the event.
-func (a adapter[St, D]) actions(m *machine[St, D], effs []gen.Effect, out *[]gen.Effect) (next []Event, postpone bool) {
+func (a adapter[St, D]) actions(m *Machine[St, D], effs []gen.Effect, out *[]gen.Effect) (next []Event, postpone bool) {
 	for _, e := range effs {
 		switch x := e.(type) {
 		case Postpone:

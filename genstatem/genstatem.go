@@ -133,6 +133,12 @@ type (
 	}
 )
 
+// Gen returns b as a gen.Behaviour, the form gen and gensim run. Its state
+// is opaque; GetState and gensim give the state and data of the machine.
+func Gen[St comparable, D any](b Behaviour[St, D]) gen.Behaviour[Machine[St, D]] {
+	return newAdapter(b)
+}
+
 // Start starts b in a new process, like gen_statem:start.
 func Start[St comparable, D any](ctx context.Context, n *proc.Node, b Behaviour[St, D], opts ...gen.Option) (proc.PID, error) {
 	return gen.Start(ctx, n, newAdapter(b), nil, opts...)
@@ -160,7 +166,7 @@ func Stop(ctx context.Context, caller gen.Caller, to gen.Dest) error {
 // sys:get_state.
 func GetState[St comparable, D any](ctx context.Context, caller gen.Caller, to gen.Dest) (St, D, error) {
 	v, err := gen.GetState(ctx, caller, to)
-	m, ok := v.(machine[St, D])
+	m, ok := v.(Machine[St, D])
 	if err == nil && !ok {
 		err = errors.New("genstatem: not a state machine of these types")
 	}
