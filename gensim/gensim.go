@@ -23,13 +23,15 @@ const DefaultCallTimeout = 5 * time.Second
 // decided by its seed, on a virtual clock.
 type Sim struct {
 	rng    *rand.Rand
-	node   *proc.Node // allocates PIDs and references
 	logger *slog.Logger
 	now    time.Time
 
+	nodes map[string]*node
+	def   *node              // where processes run unless told otherwise
+	cuts  map[[2]string]bool // pairs of nodes that cannot reach each other
+
 	procs []*process // in creation order
 	byPID map[proc.PID]*process
-	names map[string]proc.PID
 
 	links  []*link // in creation order, possibly empty
 	byLink map[[2]proc.PID]*link
@@ -42,10 +44,30 @@ type Sim struct {
 
 	// CallTimeout bounds the virtual time a Call waits.
 	CallTimeout time.Duration
+	// Loss is the probability that a message between two nodes is lost,
+	// beyond the losses of partitions and crashes. Erlang loses none
+	// while connected; a protocol that must bear it, as Raft, is tested
+	// with it.
+	Loss float64
+}
+
+// DefaultNode is the node of the processes spawned without On.
+const DefaultNode = "sim"
+
+// node is a simulated node.
+type node struct {
+	name  string
+	alloc *proc.Node // allocates its PIDs and references
+	names map[string]proc.PID
+	up    bool
+	// creation tells its incarnations apart, as for a proc.Node.
+	creation uint32
 }
 
 // process is a simulated process.
 type process struct {
+	node        *node
+	on          string // the node to spawn on
 	pid, parent proc.PID
 	runner      gen.Runner
 	mailbox     []any
@@ -90,19 +112,30 @@ func WithLogger(l *slog.Logger) Option { return func(s *Sim) { s.logger = l } }
 func New(seed uint64, opts ...Option) *Sim {
 	s := &Sim{
 		rng:         rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)),
-		node:        proc.NewNode("sim", proc.WithCreation(1)),
 		logger:      slog.New(slog.DiscardHandler),
 		now:         time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC),
+		nodes:       make(map[string]*node),
+		cuts:        make(map[[2]string]bool),
 		byPID:       make(map[proc.PID]*process),
-		names:       make(map[string]proc.PID),
 		byLink:      make(map[[2]proc.PID]*link),
 		aliases:     make(map[proc.Ref]*alias),
 		CallTimeout: DefaultCallTimeout,
 	}
+	s.def = s.nodeNamed(DefaultNode)
 	for _, opt := range opts {
 		opt(s)
 	}
 	return s
+}
+
+// nodeNamed returns the node name, made on first use.
+func (s *Sim) nodeNamed(name string) *node {
+	n := s.nodes[name]
+	if n == nil {
+		n = &node{name: name, alloc: proc.NewNode(name, proc.WithCreation(1)), names: make(map[string]proc.PID), up: true, creation: 1}
+		s.nodes[name] = n
+	}
+	return n
 }
 
 // Now returns the virtual time.
@@ -111,14 +144,21 @@ func (s *Sim) Now() time.Time { return s.now }
 // SpawnOption configures Spawn.
 type SpawnOption func(*process)
 
-// Named registers the process under name, as a gen.Local name.
+// Named registers the process under name, as a gen.Local name of its
+// node.
 func Named(name string) SpawnOption { return func(p *process) { p.name = name } }
+
+// On spawns the process on the node name, made on first use, rather than
+// on DefaultNode.
+func On(name string) SpawnOption { return func(p *process) { p.on = name } }
+
+// ErrNodeDown is the error of spawning on a node crashed.
+var ErrNodeDown = errors.New("gensim: node down")
 
 // Spawn starts b in a new simulated process and runs its Init, as gen.Start
 // does. An error from Init is returned, the process exiting with it.
 func Spawn[S any](s *Sim, b gen.Behaviour[S], args any, opts ...SpawnOption) (proc.PID, error) {
 	p := &process{
-		pid:      s.node.NewPID(),
 		alive:    true,
 		linked:   make(map[proc.PID]bool),
 		watchers: make(map[proc.Ref]watcher),
@@ -127,11 +167,19 @@ func Spawn[S any](s *Sim, b gen.Behaviour[S], args any, opts ...SpawnOption) (pr
 	for _, opt := range opts {
 		opt(p)
 	}
+	p.node = s.def
+	if p.on != "" {
+		p.node = s.nodeNamed(p.on)
+	}
+	if !p.node.up {
+		return proc.PID{}, ErrNodeDown
+	}
+	p.pid = p.node.alloc.NewPID()
 	if p.name != "" {
-		if pid, ok := s.names[p.name]; ok {
+		if pid, ok := p.node.names[p.name]; ok {
 			return proc.PID{}, &gen.AlreadyStartedError{PID: pid}
 		}
-		s.names[p.name] = p.pid
+		p.node.names[p.name] = p.pid
 	}
 	s.procs = append(s.procs, p)
 	s.byPID[p.pid] = p
@@ -204,11 +252,16 @@ func (s *Sim) Alive(pid proc.PID) bool {
 	return p != nil && p.alive
 }
 
-// WhereIs returns the process registered under name.
+// WhereIs returns the process registered under name on DefaultNode, or
+// on another node with a name of the form gen.Remote takes, see Resolve.
 func (s *Sim) WhereIs(name string) (proc.PID, bool) {
-	pid, ok := s.names[name]
+	pid, ok := s.def.names[name]
 	return pid, ok
 }
+
+// Resolve returns the process at dest, as the driver sees it: a
+// gen.Local name is of DefaultNode, and a gen.Remote name of any node.
+func (s *Sim) Resolve(dest gen.Dest) (proc.PID, bool) { return s.resolve(dest) }
 
 // State returns the state of the behaviour of pid.
 func State[S any](s *Sim, pid proc.PID) (S, bool) {
@@ -266,15 +319,44 @@ func (s *Sim) resolve(dest gen.Dest) (proc.PID, bool) {
 	case proc.PID:
 		return d, !d.IsZero()
 	case gen.Local:
-		pid, ok := s.names[string(d)]
+		pid, ok := s.def.names[string(d)]
 		return pid, ok
+	case gen.Remote:
+		if n := s.nodes[d.Node]; n != nil {
+			pid, ok := n.names[d.Name]
+			return pid, ok
+		}
+		return proc.PID{}, false
 	}
-	return dest.WhereIs(s.node)
+	return dest.WhereIs(s.def.alloc)
 }
 
-// send puts msg in flight from one process to another.
+// reachable reports whether what from sends reaches to: the driver, whose
+// PID is zero, reaches all nodes up.
+func (s *Sim) reachable(from, to proc.PID) bool {
+	tn := s.nodes[to.Node()]
+	if tn == nil || !tn.up {
+		return false
+	}
+	if from.IsZero() || from.Node() == to.Node() {
+		return true
+	}
+	fn := s.nodes[from.Node()]
+	return fn != nil && fn.up && !s.cuts[[2]string{from.Node(), to.Node()}]
+}
+
+// send puts msg in flight from one process to another, unless the
+// network loses it.
 func (s *Sim) send(from, to proc.PID, msg any) {
 	s.record(Event{Kind: Sent, From: from, To: to, Msg: msg})
+	if !s.reachable(from, to) {
+		s.record(Event{Kind: Dropped, From: from, To: to, Msg: msg})
+		return
+	}
+	if s.Loss > 0 && !from.IsZero() && from.Node() != to.Node() && s.rng.Float64() < s.Loss {
+		s.record(Event{Kind: Dropped, From: from, To: to, Msg: msg})
+		return
+	}
 	key := [2]proc.PID{from, to}
 	l := s.byLink[key]
 	if l == nil {
@@ -315,8 +397,8 @@ func (s *Sim) exit(p *process, reason error) {
 	p.runner.Abort()
 	p.mailbox = nil
 	s.record(Event{Kind: Exited, To: p.pid, Msg: reason})
-	if p.name != "" && s.names[p.name] == p.pid {
-		delete(s.names, p.name)
+	if p.name != "" && p.node.names[p.name] == p.pid {
+		delete(p.node.names, p.name)
 	}
 	for ref, target := range p.watching {
 		if t := s.byPID[target]; t != nil {
@@ -363,12 +445,20 @@ func (s *Sim) signal(p *process, from proc.PID, reason error, viaLink bool) {
 }
 
 func (s *Sim) newAlias(owner, target proc.PID, reply func(proc.Ref, proc.AliasMsg) any) (proc.Ref, *alias) {
-	ref := s.node.MakeRef()
+	alloc := s.def.alloc
+	if p := s.byPID[owner]; p != nil {
+		alloc = p.node.alloc
+	}
+	ref := alloc.MakeRef()
 	a := &alias{owner: owner, target: target, reply: reply}
 	s.aliases[ref] = a
-	if t := s.byPID[target]; t != nil && t.alive {
+	t := s.byPID[target]
+	switch {
+	case !s.reachable(owner, target):
+		s.answer(ref, owner, proc.AliasMsg{Down: true, Reason: proc.NoConnection})
+	case t != nil && t.alive:
 		t.watchers[ref] = watcher{alias: true}
-	} else {
+	default:
 		s.aliasDown(ref, target, proc.NoProc)
 	}
 	return ref, a
@@ -471,17 +561,30 @@ type env struct {
 func (e *env) Self() proc.PID   { return e.p.pid }
 func (e *env) Parent() proc.PID { return e.p.parent }
 
-func (e *env) Resolve(dest gen.Dest) (proc.PID, bool) { return e.s.resolve(dest) }
+// Resolve resolves dest as on the node of the process: a gen.Remote name
+// of another node does not resolve, as in proc.
+func (e *env) Resolve(dest gen.Dest) (proc.PID, bool) {
+	switch d := dest.(type) {
+	case gen.Local:
+		pid, ok := e.p.node.names[string(d)]
+		return pid, ok
+	case gen.Remote:
+		if d.Node != e.p.node.name {
+			return proc.PID{}, false
+		}
+		pid, ok := e.p.node.names[d.Name]
+		return pid, ok
+	case proc.PID:
+		return d, !d.IsZero()
+	}
+	return dest.WhereIs(e.p.node.alloc)
+}
 
 func (e *env) Send(to proc.PID, msg any) { e.s.send(e.p.pid, to, msg) }
 
-// SendName sends to a name of the simulated node; a simulation has no
-// other node, and what is sent to one is lost.
+// SendName sends to a name of a simulated node, resolved at once.
 func (e *env) SendName(node, name string, msg any) {
-	if node != e.s.node.Name() {
-		return
-	}
-	if pid, ok := e.s.resolve(gen.Local(name)); ok {
+	if pid, ok := e.s.resolve(gen.Remote{Node: node, Name: name}); ok {
 		e.s.send(e.p.pid, pid, msg)
 	}
 }
@@ -491,8 +594,12 @@ func (e *env) SendAlias(ref proc.Ref, msg any) {
 }
 
 func (e *env) Monitor(pid proc.PID) proc.Ref {
-	ref := e.s.node.MakeRef()
+	ref := e.p.node.alloc.MakeRef()
 	t := e.s.byPID[pid]
+	if !e.s.reachable(e.p.pid, pid) {
+		e.s.deliverLocal(e.p, proc.DownMsg{Ref: ref, PID: pid, Reason: proc.NoConnection})
+		return ref
+	}
 	if t == nil || !t.alive {
 		e.s.send(pid, e.p.pid, proc.DownMsg{Ref: ref, PID: pid, Reason: proc.NoProc})
 		return ref
@@ -526,6 +633,10 @@ func (e *env) Link(pid proc.PID) {
 		return
 	}
 	t := e.s.byPID[pid]
+	if !e.s.reachable(e.p.pid, pid) {
+		e.s.signalLocal(e.p, pid, proc.NoConnection)
+		return
+	}
 	if t == nil || !t.alive {
 		e.s.signal(e.p, pid, proc.NoProc, false)
 		return

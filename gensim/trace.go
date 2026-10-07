@@ -17,10 +17,12 @@ const (
 	Handled             // To handled Msg from its mailbox
 	Exited              // To exited, with reason Msg
 	Fired               // a timer of To fired, with Msg
+	Dropped             // Msg from From to To was lost
+	Fault               // a fault of the network or a node, told by Msg
 )
 
 func (k Kind) String() string {
-	return [...]string{"spawn", "send", "handle", "exit", "timer"}[k]
+	return [...]string{"spawn", "send", "handle", "exit", "timer", "drop", "fault"}[k]
 }
 
 // Event is an entry of the trace of a simulation.
@@ -34,7 +36,11 @@ type Event struct {
 func (e Event) String() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%v %-6v ", e.At.Format("15:04:05.000"), e.Kind)
-	if e.Kind == Sent {
+	if e.Kind == Fault {
+		fmt.Fprintf(&b, "%v", e.Msg)
+		return b.String()
+	}
+	if e.Kind == Sent || e.Kind == Dropped {
 		from := "driver"
 		if !e.From.IsZero() {
 			from = e.From.String()

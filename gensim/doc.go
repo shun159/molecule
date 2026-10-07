@@ -33,10 +33,33 @@
 // Exit sends an exit signal to a process, proc.Kill killing it. Links,
 // monitors, exit signals and trapping exits work as in proc.
 //
+// # Nodes
+//
+// Processes run on DefaultNode, or on the node given with On: nodes are
+// made on first use, each with names of its own, which gen.Remote reaches
+// from the others. Nodes fail as they do with dist, at the steps the test
+// chooses, the order of all else decided by the seed:
+//
+//	Partition  cuts groups of nodes from each other; Heal undoes it
+//	Crash      stops a node: its processes vanish, without Terminate
+//	Restart    starts it again, a new incarnation, for the test to spawn on
+//	Loss       loses messages between nodes, at random, beyond Erlang
+//
+// When two nodes lose each other, what is in flight between them is lost,
+// and links, monitors and pending requests between them fail with
+// proc.NoConnection, on both sides.
+//
+// # Randomness
+//
+// A behaviour needing random numbers, for a timeout or a choice of peer,
+// keeps its generator in its state: a rand.PCG is a value, advanced by
+// calling it on the copy the callback returns. Seeded from the arguments
+// of Init, it makes the same numbers in every run of the same seed.
+//
 // # Scope
 //
 // Processes are behaviours of gen. Supervisors and gentcpacceptor, which
 // are not, cannot be simulated, nor processes written against proc
-// directly. Names are gen.Local names; other gen.Name implementations do
-// not resolve.
+// directly. Names are gen.Local and gen.Remote names; other gen.Name
+// implementations do not resolve.
 package gensim
