@@ -18,6 +18,7 @@ type Node struct {
 	nextID   atomic.Uint64
 	nextRef  atomic.Uint64
 	procs    sync.Map // uint64 -> *process
+	aliases  sync.Map // uint64 -> chan any
 
 	regMu sync.Mutex
 	names map[string]PID // guarded by regMu, as is process.name
@@ -34,6 +35,10 @@ func NewNode(name string) *Node {
 
 // Name returns the node name.
 func (n *Node) Name() string { return n.name }
+
+// Node returns n itself, so a Node can stand in for a process (whose
+// Self.Node returns its node) where only the node matters.
+func (n *Node) Node() *Node { return n }
 
 // Spawn starts fn in a new process on n and returns its PID.
 func (n *Node) Spawn(fn func(*Self) error) PID {

@@ -19,6 +19,10 @@ type PID struct {
 // Node returns the name of the node the process belongs to.
 func (p PID) Node() string { return p.node }
 
+// WhereIs returns p itself, so a PID can be used wherever a name that is
+// resolved to a PID is expected. Whether p is alive is not checked.
+func (p PID) WhereIs(*Node) (PID, bool) { return p, !p.IsZero() }
+
 // IsZero reports whether p is the zero PID, which refers to no process.
 func (p PID) IsZero() bool { return p == PID{} }
 
