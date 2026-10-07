@@ -1,6 +1,7 @@
 package proc
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -24,12 +25,16 @@ func TestCrashReport(t *testing.T) {
 			}
 			return errBoom
 		})
-		<-n.lookup(child).done
-		return nil
+		// A process is reported before its monitors learn of its death.
+		s.Monitor(child)
+		_, err := s.Receive(context.Background())
+		return err
 	})
 	parentPID := <-parent
 	// The parent waits for the child, so once it is gone, all is logged.
-	<-n.lookup(parentPID).done
+	gone, cancel := n.Watch(context.Background(), parentPID)
+	defer cancel()
+	<-gone.Done()
 
 	reports := crashReports(rec)
 	if len(reports) != 1 {
