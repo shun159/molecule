@@ -26,6 +26,7 @@ functions, without starting a process.
     genstatem       gen_statem
     supervisor      supervisors, static and dynamic
     gentcpacceptor  TCP acceptor pool and connection behaviour
+    gensim          deterministic simulation of behaviours
 
 ## Documentation
 

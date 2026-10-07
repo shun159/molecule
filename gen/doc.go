@@ -89,6 +89,14 @@
 // behaviour handles system messages only; the other messages wait, and are
 // handled in order on Resume.
 //
+// # Runners and environments
+//
+// The meaning of the effects lives in a [Runner], which acts on the world
+// only through an [Env]. Start drives a runner with the mailbox of a proc
+// process, its Env sending through proc; gensim drives one in a
+// simulation, with an Env of its own. A behaviour runs the same code in
+// both.
+//
 // # Reports
 //
 // A behaviour stopping with an abnormal reason is reported to the logger of
