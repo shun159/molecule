@@ -31,21 +31,21 @@ func server(s *proc.Self) error {
 		case gen.CallMsg:
 			switch req := m.Req.(type) {
 			case echo:
-				gen.Reply(s, m.From, req)
+				gen.SendReply(s, m.From, req)
 			case string:
 				switch req {
 				case "get":
-					gen.Reply(s, m.From, state)
+					gen.SendReply(s, m.From, state)
 				case "from":
-					gen.Reply(s, m.From, m.From)
+					gen.SendReply(s, m.From, m.From)
 				case "crash":
 					return errBoom
 				case "reply-then-crash":
-					gen.Reply(s, m.From, "bye")
+					gen.SendReply(s, m.From, "bye")
 					return errBoom
 				case "ignore":
 				case "stop":
-					gen.Reply(s, m.From, "ok")
+					gen.SendReply(s, m.From, "ok")
 					return nil
 				}
 			}
@@ -77,8 +77,8 @@ func TestCallAndCast(t *testing.T) {
 	if v := call(t, n, srv, "get"); v != 0 {
 		t.Errorf("get = %v", v)
 	}
-	gen.Cast(n, srv, 5)
-	gen.Cast(n, srv, 2)
+	gen.SendCast(n, srv, 5)
+	gen.SendCast(n, srv, 2)
 	if v := call(t, n, srv, "get"); v != 7 {
 		t.Errorf("get after casts = %v", v)
 	}
@@ -119,7 +119,7 @@ func TestCallLocalName(t *testing.T) {
 	if pid, ok := gen.Local("srv").WhereIs(n); !ok || pid != srv {
 		t.Errorf("WhereIs = %v, %v", pid, ok)
 	}
-	gen.Cast(n, gen.Local("srv"), 3)
+	gen.SendCast(n, gen.Local("srv"), 3)
 	if v := call(t, n, gen.Local("srv"), "get"); v != 3 {
 		t.Errorf("get = %v", v)
 	}
@@ -129,7 +129,7 @@ func TestCallLocalName(t *testing.T) {
 	if !errors.As(err, &ee) || !errors.Is(err, proc.NoProc) || ee.To != gen.Local("nobody") {
 		t.Errorf("call to unregistered name: %v", err)
 	}
-	gen.Cast(n, gen.Local("nobody"), 1) // dropped
+	gen.SendCast(n, gen.Local("nobody"), 1) // dropped
 }
 
 func TestCallNoServer(t *testing.T) {

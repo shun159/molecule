@@ -16,7 +16,8 @@ type From struct {
 	Tag proc.Ref
 }
 
-// CallMsg is the message a server receives for Call.
+// CallMsg is the message a server receives for Call. Behaviours get it
+// as their Msg.
 type CallMsg struct {
 	From From
 	Req  any
@@ -57,32 +58,48 @@ func (e *ExitError) Unwrap() error { return e.Reason }
 // waiting as soon as it dies itself. A reply sent before the server died
 // is still returned.
 func Call(ctx context.Context, caller Caller, to Dest, req any) (any, error) {
+	return call(ctx, caller, to, func(f From) any { return CallMsg{From: f, Req: req} })
+}
+
+// call makes a synchronous request; wrap builds the message to send.
+func call(ctx context.Context, caller Caller, to Dest, wrap func(From) any) (any, error) {
 	n := caller.Node()
 	pid, ok := to.WhereIs(n)
 	if !ok {
 		return nil, &ExitError{To: to, Reason: proc.NoProc}
 	}
-
-	var from From
+	var self proc.PID
 	if p, ok := caller.(interface{ PID() proc.PID }); ok {
-		from.PID = p.PID()
-		if from.PID == pid {
+		self = p.PID()
+		if self == pid {
 			return nil, ErrCallingSelf
 		}
 	}
-	var callerCtx context.Context = context.Background()
+	callerCtx := context.Background()
 	if c, ok := caller.(interface{ Context() context.Context }); ok {
 		callerCtx = c.Context()
 	}
 
-	// Watch first: if the server is already gone, there is nothing to send.
+	r := request(ctx, n, self, pid, to, wrap)
+	defer r.release()
+	return awaitReply(ctx, callerCtx, to, r.replies, r.down)
+}
+
+// pending is a request sent and waiting for its reply.
+type pending struct {
+	down    context.Context
+	replies <-chan any
+	release func()
+}
+
+// request sends wrap(From) to pid, the resolved to, and returns what to
+// wait on for the reply. release must be called once done waiting.
+func request(ctx context.Context, n *proc.Node, self, pid proc.PID, to Dest, wrap func(From) any) pending {
+	// Watch first: if the server is already gone, the reply never comes.
 	down, stop := n.Watch(ctx, pid)
-	defer stop()
 	tag, replies, unalias := n.Alias()
-	defer unalias()
-	from.Tag = tag
-	n.Send(pid, CallMsg{From: from, Req: req})
-	return awaitReply(ctx, callerCtx, to, replies, down)
+	n.Send(pid, wrap(From{PID: self, Tag: tag}))
+	return pending{down: down, replies: replies, release: func() { unalias(); stop() }}
 }
 
 // awaitReply waits for the reply, the server's death, ctx, or the caller's
@@ -106,17 +123,19 @@ func awaitReply(ctx, callerCtx context.Context, to Dest, replies <-chan any, dow
 	}
 }
 
-// Cast sends req to the server at to without waiting, like gen_server:cast.
-// It never fails: a request to a server that does not exist is dropped.
-func Cast(caller Caller, to Dest, req any) {
+// SendCast sends req to the server at to without waiting, like
+// gen_server:cast. It never fails: a request to a server that does not
+// exist is dropped. Behaviours return a Cast effect instead.
+func SendCast(caller Caller, to Dest, req any) {
 	n := caller.Node()
 	if pid, ok := to.WhereIs(n); ok {
 		n.Send(pid, CastMsg{Req: req})
 	}
 }
 
-// Reply sends v as the reply to the call from. Only the first reply to a
-// call is delivered, and none once the caller has stopped waiting.
-func Reply(caller Caller, from From, v any) {
+// SendReply sends v as the reply to the call from. Only the first reply to
+// a call is delivered, and none once the caller has stopped waiting.
+// Behaviours return a Reply effect instead.
+func SendReply(caller Caller, from From, v any) {
 	caller.Node().SendAlias(from.Tag, v)
 }
