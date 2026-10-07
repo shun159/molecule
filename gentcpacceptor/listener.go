@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule/gentcp"
 	"github.com/shun159/molecule/proc"
 	"github.com/shun159/molecule/supervisor"
 )
@@ -24,15 +25,21 @@ type Spec struct {
 	// MaxConns, if positive, caps the connections: those beyond it are
 	// closed as soon as accepted.
 	MaxConns int
-	// ActiveN is how many reads may be ahead of the handler, like
+	// ActiveN is how many packets may be ahead of the handler, like
 	// {active, N} in Erlang: more keeps data flowing while the handler
 	// works, fewer bounds the memory a slow handler holds. Zero means
 	// DefaultActiveN.
 	ActiveN int
+	// Options are the options of the sockets of a Behaviour, but Active,
+	// which ActiveN replaces. Raw handlers have none.
+	Options gentcp.Options
 }
 
 // DefaultActiveN is Spec.ActiveN when zero.
 const DefaultActiveN = 4
+
+// maxActive bounds Spec.ActiveN.
+const maxActive = 1024
 
 // Listener runs a Behaviour on the connections to an address: a
 // supervisor of the listening socket, the acceptors, and the processes of
@@ -76,12 +83,15 @@ func (sh *shared) get() (net.Listener, proc.PID) {
 // NewListener returns a listener running b for spec, not yet started.
 func NewListener[S any](spec Spec, b Behaviour[S]) *Listener {
 	start := gen.StartLinkFunc(adapter[S]{b: b, activeN: activeN(spec)}, nil)
+	opts := spec.Options
+	opts.Active = gentcp.Passive // until Init has run
 	return newListener(spec, func(ctx context.Context, parent *proc.Self, conn net.Conn) (proc.PID, error) {
 		pid, err := start(ctx, parent)
-		if err == nil {
-			attach(parent, conn, pid)
+		if err != nil {
+			return pid, err
 		}
-		return pid, err
+		parent.Send(pid, attached{gentcp.Start(parent.Node(), conn, pid, opts)})
+		return pid, nil
 	})
 }
 

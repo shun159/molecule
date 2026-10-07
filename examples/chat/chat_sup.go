@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule/gentcp"
 	"github.com/shun159/molecule/gentcpacceptor"
 	"github.com/shun159/molecule/pg"
 	"github.com/shun159/molecule/proc"
@@ -25,7 +26,11 @@ type chat struct {
 // startChat starts the supervision tree. The scope comes first: if it
 // fails, the connections, whose membership it held, are restarted too.
 func startChat(ctx context.Context, n *proc.Node, addr string) (*chat, error) {
-	listener := gentcpacceptor.NewListener(gentcpacceptor.Spec{Addr: addr}, ChatProtocol{})
+	// The sockets cut lines, of a reasonable length.
+	listener := gentcpacceptor.NewListener(gentcpacceptor.Spec{
+		Addr:    addr,
+		Options: gentcp.Options{Packet: gentcp.Line, PacketSize: 1024},
+	}, ChatProtocol{})
 	sup, err := supervisor.Start(ctx, n, supervisor.Spec{
 		Strategy: supervisor.RestForOne,
 		Children: []supervisor.ChildSpec{

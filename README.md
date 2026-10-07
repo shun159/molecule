@@ -26,6 +26,7 @@ functions, without starting a process.
     genstatem       gen_statem
     supervisor      supervisors, static and dynamic
     pg              process groups
+    gentcp          TCP sockets owned by processes, like gen_tcp
     gentcpacceptor  TCP acceptor pool and connection behaviour
     gensim          deterministic simulation of behaviours
 

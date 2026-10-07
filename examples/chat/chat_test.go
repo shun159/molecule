@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/shun159/molecule/gen"
-	"github.com/shun159/molecule/gentcpacceptor"
+	"github.com/shun159/molecule/gentcp"
 	"github.com/shun159/molecule/pg"
 	"github.com/shun159/molecule/proc"
 	"github.com/shun159/molecule/supervisor"
@@ -92,18 +92,19 @@ func TestChat(t *testing.T) {
 	}
 }
 
-// The protocol is pure: lines arriving in pieces are tested as calls.
-func TestLinesInPieces(t *testing.T) {
+// The protocol is pure: it is tested as calls, a line at a time, as the
+// socket cuts them.
+func TestLines(t *testing.T) {
 	p := ChatProtocol{}
 	self := proc.NewNode("").NewPID()
-	sock := gentcpacceptor.Socket{}
+	sock := gentcp.Socket{}
 	c, _, _ := p.Init(self, sock)
 
-	c, effs := p.HandleData(c, sock, []byte("ali"))
+	c, effs := p.HandleData(c, sock, []byte("\r\n"))
 	if effs != nil || c.nick != "" {
-		t.Fatalf("half a nick: %+v %#v", c, effs)
+		t.Fatalf("empty line: %+v %#v", c, effs)
 	}
-	c, effs = p.HandleData(c, sock, []byte("ce\r\nhel"))
+	c, effs = p.HandleData(c, sock, []byte("alice\r\n"))
 	want := gen.Do(
 		pg.JoinEffect(scope, lobby, self),
 		pg.SendEffect(scope, lobby, said{Text: "alice joined"}, proc.PID{}),
@@ -111,12 +112,9 @@ func TestLinesInPieces(t *testing.T) {
 	if c.nick != "alice" || !reflect.DeepEqual(effs, want) {
 		t.Fatalf("nick: %+v %#v", c, effs)
 	}
-	c, effs = p.HandleData(c, sock, []byte("lo\n\nbye\n"))
-	want = gen.Do(
-		pg.SendEffect(scope, lobby, said{From: "alice", Text: "hello"}, proc.PID{}),
-		pg.SendEffect(scope, lobby, said{From: "alice", Text: "bye"}, proc.PID{}),
-	)
-	if !reflect.DeepEqual(effs, want) || len(c.buf) != 0 {
-		t.Errorf("lines: %+v %#v", c, effs)
+	_, effs = p.HandleData(c, sock, []byte("hello\n"))
+	want = gen.Do(pg.SendEffect(scope, lobby, said{From: "alice", Text: "hello"}, proc.PID{}))
+	if !reflect.DeepEqual(effs, want) {
+		t.Errorf("line: %#v", effs)
 	}
 }

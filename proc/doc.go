@@ -39,7 +39,7 @@
 //
 // Mailboxes are unbounded FIFO queues. A process that receives slower than
 // it is sent to has its mailbox grow without limit; a protocol that needs
-// flow control asks for data, as gentcpacceptor does. There is no selective
+// flow control asks for data, as gentcp does. There is no selective
 // receive: [Self.Receive] returns the oldest message.
 //
 // # Exit reasons
