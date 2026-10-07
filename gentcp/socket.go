@@ -61,7 +61,11 @@ const (
 
 // Requests to a socket process.
 type (
-	sendReq struct{ data []byte }
+	sendReq struct {
+		data   []byte
+		then   bool // set active after
+		active Active
+	}
 	recvReq struct {
 		length  int
 		timeout time.Duration // 0: none
@@ -75,7 +79,7 @@ type (
 // Send sends data, framed as the Packet option says. It returns once the
 // data is written, or fails after SendTimeout.
 func (s Socket) Send(ctx context.Context, caller gen.Caller, data []byte) error {
-	return s.call(ctx, caller, sendReq{data})
+	return s.call(ctx, caller, sendReq{data: data})
 }
 
 // Recv takes the next packet of a passive socket, waiting for it. For
@@ -133,20 +137,35 @@ func (s Socket) Close(ctx context.Context, caller gen.Caller) error {
 	return err
 }
 
-// SendEffect is the effect sending data, for a behaviour. A failure is
-// not reported, but the socket sees the connection fail on its side.
+// SendEffect is the effect sending data, for a behaviour. A failure
+// breaks the connection, which the owner is told of as it is of a failure
+// to receive.
 func (s Socket) SendEffect(data []byte) gen.Effect {
-	return gen.Cast{To: s.PID, Req: sendReq{data}}
+	return gen.Send{To: s.PID, Msg: sendReq{data: data}}
+}
+
+// SendActiveEffect is the effect sending data, then changing the active
+// mode, as SendEffect and SetActiveEffect do, in one message to the
+// socket rather than two. It is how a behaviour answers a packet and asks
+// for the next:
+//
+//	case gentcp.DataMsg:
+//		return s, gen.Do(m.Sock.SendActiveEffect(reply, gentcp.Once))
+//
+// The mode changes even if sending fails, so that the owner hears of the
+// failure.
+func (s Socket) SendActiveEffect(data []byte, a Active) gen.Effect {
+	return gen.Send{To: s.PID, Msg: sendReq{data: data, then: true, active: a}}
 }
 
 // SetActiveEffect is the effect changing the active mode, for a behaviour.
 func (s Socket) SetActiveEffect(a Active) gen.Effect {
-	return gen.Cast{To: s.PID, Req: setActiveReq{a}}
+	return gen.Send{To: s.PID, Msg: setActiveReq{a}}
 }
 
 // CloseEffect is the effect closing the socket, for a behaviour.
 func (s Socket) CloseEffect() gen.Effect {
-	return gen.Cast{To: s.PID, Req: closeReq{}}
+	return gen.Send{To: s.PID, Msg: closeReq{}}
 }
 
 func (s Socket) call(ctx context.Context, caller gen.Caller, req any) error {
@@ -176,22 +195,18 @@ func Connect(ctx context.Context, owner *proc.Self, addr string, opts Options) (
 	if err != nil {
 		return Socket{}, err
 	}
-	return start(ctx, owner, conn, opts)
+	return Start(owner.Node(), conn, owner.PID(), opts), nil
 }
 
-// start starts the process of conn, owned by owner.
-func start(ctx context.Context, owner *proc.Self, conn net.Conn, opts Options) (Socket, error) {
-	sock := Socket{LocalAddr: conn.LocalAddr(), RemoteAddr: conn.RemoteAddr()}
-	ownerPID := owner.PID()
-	pid, err := owner.Node().Start(ctx, func(s *proc.Self) error {
-		sock := sock
+// Start makes a socket of conn, a connection made by other means, owned by
+// owner. The socket owns conn from then on, and closes it.
+func Start(n *proc.Node, conn net.Conn, owner proc.PID, opts Options) Socket {
+	addrs := Socket{LocalAddr: conn.LocalAddr(), RemoteAddr: conn.RemoteAddr()}
+	sock := addrs
+	sock.PID = n.Spawn(func(s *proc.Self) error {
+		sock := addrs
 		sock.PID = s.PID()
-		return serve(s, conn, sock, ownerPID, opts)
+		return serve(s, conn, sock, owner, opts)
 	})
-	if err != nil {
-		conn.Close()
-		return Socket{}, err
-	}
-	sock.PID = pid
-	return sock, nil
+	return sock
 }

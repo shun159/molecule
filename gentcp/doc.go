@@ -35,8 +35,9 @@
 // the mailbox of the owner stays bounded. Always gives that up.
 //
 // In an active mode, the end of the connection arrives as a [ClosedMsg],
-// after an [ErrorMsg] if reading failed; in passive mode, Recv returns
-// [ErrClosed] or the error.
+// after an [ErrorMsg] if the connection failed; in passive mode, Recv
+// returns [ErrClosed] or the error. Either comes when the owner wants
+// data, after the packets received before.
 //
 // Recv waits until the deadline of its context, if any, and then returns
 // [ErrTimeout]. Data arriving after stays in the socket for the next Recv.
@@ -49,12 +50,15 @@
 //	Packet1, Packet2, Packet4  a big-endian length prefix, added by Send
 //	Line                       up to a newline, kept in the packet
 //
-// PacketSize bounds a packet received. A packet beyond it, or bytes left
-// that make no whole packet when the connection ends, end the socket.
+// PacketSize bounds a packet received. A packet beyond it fails the
+// connection; bytes left that make no whole packet when the connection
+// ends are dropped.
 //
 // # Closing
 //
-// [Socket.Close] closes the socket, and so does the exit of its owner.
+// [Socket.Close] closes the socket, and so does the exit of its owner. A
+// connection that failed, in receiving or in sending, closes once the
+// owner is told.
 // When the peer closes its side, the socket closes too, unless HalfClosed
 // is set: then it can still send, like gen_tcp with {exit_on_close, false}.
 // [Socket.Shutdown] closes one side: Write tells the peer that nothing
@@ -64,8 +68,10 @@
 //
 // The messages of a socket arrive to a behaviour as info messages, and
 // [Socket.SendEffect], [Socket.SetActiveEffect] and [Socket.CloseEffect]
-// act on it as effects, so that the behaviour stays pure. An effect does
-// not report failure; the socket tells its owner when the connection ends.
+// act on it as effects, so that the behaviour stays pure.
+// [Socket.SendActiveEffect] answers a packet and asks for the next in one
+// message. A failed
+// SendEffect fails the connection, which the owner learns as above.
 // A socket is made by a process with Connect or Accept, then given to the
 // behaviour with ControllingProcess.
 package gentcp

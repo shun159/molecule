@@ -526,3 +526,108 @@ func TestReset(t *testing.T) {
 		}
 	})
 }
+
+func TestPacketTooLargePassive(t *testing.T) {
+	n := proc.NewNode("")
+	inProc(t, n, func(s *proc.Self) {
+		sock, peer := pair(t, s, gentcp.Options{Packet: gentcp.Line, PacketSize: 4})
+		io.WriteString(peer, "ok\ntoo long\n")
+		wantRecv(t, s, sock, 0, "ok\n")
+		if _, err := sock.Recv(context.Background(), s, 0); !errors.Is(err, gentcp.ErrPacketTooLarge) {
+			t.Errorf("Recv: %v", err)
+		}
+		awaitExit(t, s, sock)
+	})
+}
+
+// TestSendFailed fails a send on a passive socket, which does not read:
+// the owner learns of it once it wants data.
+func TestSendFailed(t *testing.T) {
+	n := proc.NewNode("")
+	ctx := context.Background()
+	inProc(t, n, func(s *proc.Self) {
+		sock, peer := pair(t, s, gentcp.Options{})
+		peer.(*net.TCPConn).SetLinger(0)
+		peer.Close()
+		var err error
+		for range 100 {
+			if err = sock.Send(ctx, s, []byte("x")); err != nil {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		if err == nil {
+			t.Fatal("send never failed")
+		}
+		quiet(t, s)
+		if e := sock.SetActive(ctx, s, gentcp.Once); e != nil {
+			t.Error(e)
+		}
+		if m, ok := receive(t, s).(gentcp.ErrorMsg); !ok || m.Err != err {
+			t.Errorf("got %#v, want Error %v", m, err)
+		}
+		if _, ok := receive(t, s).(gentcp.ClosedMsg); !ok {
+			t.Error("no Closed")
+		}
+		awaitExit(t, s, sock)
+	})
+}
+
+func TestStart(t *testing.T) {
+	n := proc.NewNode("")
+	inProc(t, n, func(s *proc.Self) {
+		a, b := net.Pipe()
+		defer b.Close()
+		sock := gentcp.Start(n, a, s.PID(), gentcp.Options{Active: gentcp.Once})
+		go io.WriteString(b, "hi")
+		wantData(t, s, sock, "hi")
+	})
+}
+
+// TestReadsOnDemand checks that a passive socket reads only for Recv, so a
+// peer cannot flood it: over a pipe, a write blocks until it is read.
+func TestReadsOnDemand(t *testing.T) {
+	n := proc.NewNode("")
+	inProc(t, n, func(s *proc.Self) {
+		server, peer := net.Pipe()
+		defer peer.Close()
+		sock := gentcp.Start(n, server, s.PID(), gentcp.Options{})
+		written := make(chan string, 2)
+		go func() {
+			for _, w := range []string{"one", "two"} {
+				peer.Write([]byte(w))
+				written <- w
+			}
+		}()
+		notWritten := func() {
+			t.Helper()
+			select {
+			case w := <-written:
+				t.Errorf("%q written without a Recv", w)
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+		notWritten()
+		wantRecv(t, s, sock, 0, "one")
+		<-written
+		notWritten()
+		wantRecv(t, s, sock, 0, "two")
+	})
+}
+
+// TestFailedHalfClosed: a failed connection closes, even with HalfClosed.
+func TestFailedHalfClosed(t *testing.T) {
+	n := proc.NewNode("")
+	inProc(t, n, func(s *proc.Self) {
+		opts := gentcp.Options{Packet: gentcp.Line, PacketSize: 2, HalfClosed: true, Active: gentcp.Once}
+		sock, peer := pair(t, s, opts)
+		io.WriteString(peer, "too long\n")
+		if _, ok := receive(t, s).(gentcp.ErrorMsg); !ok {
+			t.Error("no Error")
+		}
+		if _, ok := receive(t, s).(gentcp.ClosedMsg); !ok {
+			t.Error("no Closed")
+		}
+		awaitExit(t, s, sock)
+	})
+}

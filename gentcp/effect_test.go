@@ -31,7 +31,7 @@ func (echo) HandleInfo(s struct{}, msg any) (struct{}, []gen.Effect) {
 		if string(m.Bytes) == "bye\n" {
 			return s, []gen.Effect{m.Sock.CloseEffect()}
 		}
-		return s, []gen.Effect{m.Sock.SendEffect(m.Bytes), m.Sock.SetActiveEffect(gentcp.Once)}
+		return s, []gen.Effect{m.Sock.SendActiveEffect(m.Bytes, gentcp.Once)}
 	case gentcp.ClosedMsg:
 		return s, []gen.Effect{gen.Stop{}}
 	}

@@ -44,6 +44,7 @@ type server struct {
 
 	eof     bool  // nothing more to read
 	readErr error // why, if not the peer closing
+	broken  bool  // the connection failed: close once the owner knows
 	told    bool  // the owner got ClosedMsg
 
 	recv    *pendingRecv
@@ -75,7 +76,6 @@ func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Opt
 		reads:  make(chan struct{}, 1),
 	}
 	go s.read()
-	self.InitAck(nil)
 
 	for {
 		if done := s.deliver(); done {
@@ -89,6 +89,9 @@ func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Opt
 		switch m := msg.(type) {
 		case readResult:
 			s.reading = false
+			if s.broken {
+				break // what comes after a failure is dropped
+			}
 			if len(m.b) > 0 {
 				s.dec.feed(m.b)
 			}
@@ -106,8 +109,9 @@ func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Opt
 			if stop {
 				return nil
 			}
-		case gen.CastMsg:
-			if _, _, stop := s.handle(gen.From{}, m.Req); stop {
+		case sendReq, setActiveReq, closeReq:
+			// From the effects of a behaviour, with no one to reply to.
+			if _, _, stop := s.handle(gen.From{}, m); stop {
 				return nil
 			}
 		case recvTimeout:
@@ -123,12 +127,16 @@ func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Opt
 	}
 }
 
-// handle handles a request; casts have a zero from. It returns the reply,
+// handle handles a request; requests sent as effects have a zero from. It returns the reply,
 // whether it comes later, and whether the socket is to close.
 func (s *server) handle(from gen.From, req any) (reply any, deferred, stop bool) {
 	switch r := req.(type) {
 	case sendReq:
-		return s.send(r.data), false, false
+		err := s.send(r.data)
+		if r.then {
+			s.setActive(r.active)
+		}
+		return err, false, false
 	case recvReq:
 		switch {
 		case from.PID != s.owner:
@@ -147,10 +155,7 @@ func (s *server) handle(from gen.From, req any) (reply any, deferred, stop bool)
 		}
 		return nil, true, false
 	case setActiveReq:
-		var passive bool
-		if s.active, passive = s.active.set(r.active); passive {
-			s.self.Send(s.owner, PassiveMsg{s.sock})
-		}
+		s.setActive(r.active)
 		return nil, false, false
 	case controlReq:
 		if from.PID != s.owner {
@@ -167,6 +172,13 @@ func (s *server) handle(from gen.From, req any) (reply any, deferred, stop bool)
 	return errors.New("gentcp: unknown request"), false, false
 }
 
+func (s *server) setActive(a Active) {
+	var passive bool
+	if s.active, passive = s.active.set(a); passive {
+		s.self.Send(s.owner, PassiveMsg{s.sock})
+	}
+}
+
 func (s *server) send(data []byte) error {
 	hdr, err := s.opts.Packet.header(len(data))
 	if err != nil {
@@ -175,9 +187,18 @@ func (s *server) send(data []byte) error {
 	if s.opts.SendTimeout > 0 {
 		s.conn.SetWriteDeadline(time.Now().Add(s.opts.SendTimeout))
 	}
-	bufs := net.Buffers{hdr, data}
-	_, err = bufs.WriteTo(s.conn)
-	return err
+	if len(hdr) == 0 {
+		_, err = s.conn.Write(data)
+	} else {
+		bufs := net.Buffers{hdr, data}
+		_, err = bufs.WriteTo(s.conn)
+	}
+	if err != nil {
+		// The stream is cut at an unknown place: it is of no use anymore.
+		s.fail(err)
+		return err
+	}
+	return nil
 }
 
 func (s *server) shutdown(how How) error {
@@ -197,15 +218,13 @@ func (s *server) shutdown(how How) error {
 	return tc.CloseRead()
 }
 
-// deliver hands out the packets the owner may have: as Data messages in
-// an active mode, or to a waiting Recv. It reports when the socket is to
-// close, the connection being over.
+// deliver hands out the packets the owner may have: as DataMsg in an
+// active mode, or to a waiting Recv, and then the end of the connection,
+// when the owner wants data and there is no more. It reports when the
+// socket is to close.
 func (s *server) deliver() (done bool) {
 	for s.active != Passive {
-		pkt, ok, err := s.dec.next(0)
-		if err != nil {
-			return s.fail(err)
-		}
+		pkt, ok := s.next(0)
 		if !ok {
 			break
 		}
@@ -216,11 +235,8 @@ func (s *server) deliver() (done bool) {
 		}
 	}
 	if s.recv != nil {
-		pkt, ok, err := s.dec.next(s.recv.length)
+		pkt, ok := s.next(s.recv.length)
 		switch {
-		case err != nil:
-			s.answer(err)
-			return s.fail(err)
 		case ok:
 			s.answer(pkt)
 		case s.eof:
@@ -229,7 +245,7 @@ func (s *server) deliver() (done bool) {
 			} else {
 				s.answer(ErrClosed)
 			}
-			return !s.opts.HalfClosed
+			return s.closing()
 		}
 	}
 	if s.eof && s.active != Passive && !s.told {
@@ -239,24 +255,41 @@ func (s *server) deliver() (done bool) {
 		}
 		s.self.Send(s.owner, ClosedMsg{s.sock})
 		s.told = true
-		return !s.opts.HalfClosed
+		return s.closing()
 	}
 	return false
+}
+
+// next cuts the next packet. A bad one breaks the connection.
+func (s *server) next(length int) ([]byte, bool) {
+	pkt, ok, err := s.dec.next(length)
+	if err != nil {
+		s.fail(err)
+		return nil, false
+	}
+	return pkt, ok
+}
+
+// fail breaks the connection with err: nothing more is received, what is
+// buffered is dropped, and the owner is told when it next wants data.
+func (s *server) fail(err error) {
+	if s.broken {
+		return
+	}
+	s.dec.buf = nil
+	s.eof, s.readErr, s.broken = true, err, true
+}
+
+// closing reports whether the socket closes, now that the owner knows the
+// connection is over for receiving.
+func (s *server) closing() bool {
+	return s.broken || !s.opts.HalfClosed
 }
 
 func (s *server) answer(v any) {
 	s.recv.cancel()
 	gen.SendReply(s.self, s.recv.from, v)
 	s.recv = nil
-}
-
-// fail ends the connection on a bad packet.
-func (s *server) fail(err error) bool {
-	if s.active != Passive {
-		s.self.Send(s.owner, ErrorMsg{s.sock, err})
-		s.self.Send(s.owner, ClosedMsg{s.sock})
-	}
-	return true
 }
 
 // wantData asks for a read when the owner waits for data that is not

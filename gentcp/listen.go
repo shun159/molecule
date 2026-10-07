@@ -99,9 +99,7 @@ func (l *ListenSocket) Accept(ctx context.Context, owner *proc.Self) (Socket, er
 			}
 			return Socket{}, a.err
 		}
-		// The connection is ours now: starting its process does not give
-		// up with ctx, or it would be lost.
-		return start(context.WithoutCancel(ctx), owner, a.conn, l.opts)
+		return Start(owner.Node(), a.conn, owner.PID(), l.opts), nil
 	case <-l.closed.Done():
 		return Socket{}, ErrClosed
 	case <-ctx.Done():
