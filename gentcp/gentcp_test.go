@@ -631,3 +631,77 @@ func TestFailedHalfClosed(t *testing.T) {
 		awaitExit(t, s, sock)
 	})
 }
+
+// The tests below have a read in progress, that a Raw active socket may
+// deliver to its owner without going through its process, when the owner
+// changes something: nothing read after the change is delivered as before.
+
+func TestPassiveDuringRead(t *testing.T) {
+	n := proc.NewNode("")
+	ctx := context.Background()
+	inProc(t, n, func(s *proc.Self) {
+		sock, peer := pair(t, s, gentcp.Options{Active: gentcp.Once})
+		time.Sleep(10 * time.Millisecond) // the socket is reading
+		sock.SetActive(ctx, s, gentcp.Passive)
+		io.WriteString(peer, "x")
+		quiet(t, s)
+		wantRecv(t, s, sock, 0, "x")
+	})
+}
+
+func TestControlDuringRead(t *testing.T) {
+	n := proc.NewNode("")
+	ctx := context.Background()
+	inProc(t, n, func(s *proc.Self) {
+		sock, peer := pair(t, s, gentcp.Options{Active: gentcp.Once})
+		got := make(chan any, 1)
+		heir := n.Spawn(func(h *proc.Self) error {
+			got <- receive(t, h)
+			return nil
+		})
+		time.Sleep(10 * time.Millisecond)
+		if err := sock.ControllingProcess(ctx, s, heir); err != nil {
+			t.Error(err)
+		}
+		io.WriteString(peer, "x")
+		select {
+		case m := <-got:
+			if d, ok := m.(gentcp.DataMsg); !ok || string(d.Bytes) != "x" {
+				t.Errorf("heir got %#v", m)
+			}
+		case <-time.After(2 * time.Second):
+			t.Error("nothing for the heir")
+		}
+		quiet(t, s)
+	})
+}
+
+func TestCloseDuringRead(t *testing.T) {
+	n := proc.NewNode("")
+	inProc(t, n, func(s *proc.Self) {
+		sock, peer := pair(t, s, gentcp.Options{Active: gentcp.Once})
+		time.Sleep(10 * time.Millisecond)
+		sock.Close(context.Background(), s)
+		io.WriteString(peer, "x")
+		quiet(t, s)
+	})
+}
+
+// TestRawCount delivers reads as packets of their own, and the Passive
+// message after the last.
+func TestRawCount(t *testing.T) {
+	n := proc.NewNode("")
+	inProc(t, n, func(s *proc.Self) {
+		sock, peer := pair(t, s, gentcp.Options{Active: gentcp.N(2)})
+		for _, w := range []string{"a", "b"} {
+			io.WriteString(peer, w)
+			wantData(t, s, sock, w)
+		}
+		if m, ok := receive(t, s).(gentcp.PassiveMsg); !ok || m.Sock != sock {
+			t.Errorf("got %#v, want Passive", m)
+		}
+		io.WriteString(peer, "c")
+		quiet(t, s)
+		wantRecv(t, s, sock, 0, "c")
+	})
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/shun159/molecule/gen"
@@ -24,6 +25,7 @@ type (
 		b   []byte
 		err error
 	}
+	delivered   struct{} // the reader gave a read to the owner itself
 	recvTimeout struct{ seq uint64 }
 )
 
@@ -41,6 +43,7 @@ type server struct {
 	dec     decoder
 	reads   chan struct{} // asks the reader for one read
 	reading bool
+	direct  direct
 
 	eof     bool  // nothing more to read
 	readErr error // why, if not the peer closing
@@ -51,6 +54,18 @@ type server struct {
 	recvSeq uint64
 }
 
+// direct lets the reader hand a read to the owner itself, sparing the
+// hop through the process, when the read would be a packet of its own: a
+// Raw socket, active, with nothing buffered. The process allows it for
+// one read at a time, and takes it back under the lock when the owner
+// changes, the socket turns passive or closes, so a read is delivered
+// either before such a change or not at all by the reader.
+type direct struct {
+	mu    sync.Mutex
+	ok    bool // the read in progress may go to owner
+	owner proc.PID
+}
+
 type pendingRecv struct {
 	from   gen.From
 	length int
@@ -59,11 +74,6 @@ type pendingRecv struct {
 }
 
 func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Options) error {
-	// Closing the connection also ends a read or write in progress once
-	// the process is dead.
-	context.AfterFunc(self.Context(), func() { conn.Close() })
-	defer conn.Close()
-
 	s := &server{
 		self:   self,
 		conn:   conn,
@@ -75,6 +85,10 @@ func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Opt
 		dec:    decoder{packet: opts.Packet, max: opts.PacketSize},
 		reads:  make(chan struct{}, 1),
 	}
+	// Closing the connection also ends a read or write in progress once
+	// the process is dead.
+	context.AfterFunc(self.Context(), func() { conn.Close() })
+	defer conn.Close()
 	go s.read()
 
 	for {
@@ -100,6 +114,18 @@ func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Opt
 				if !errors.Is(m.err, io.EOF) {
 					s.readErr = m.err
 				}
+			}
+		case delivered:
+			s.reading = false
+			// The reader tells before it sends the packet, so that the
+			// owner asking for more comes after; the lock waits for the
+			// packet, so that what the process sends from now on comes
+			// after it.
+			s.direct.mu.Lock()
+			s.direct.mu.Unlock()
+			var passive bool
+			if s.active, passive = s.active.take(); passive {
+				s.self.Send(s.owner, PassiveMsg{s.sock})
 			}
 		case gen.CallMsg:
 			reply, deferred, stop := s.handle(m.From, m.Req)
@@ -163,10 +189,14 @@ func (s *server) handle(from gen.From, req any) (reply any, deferred, stop bool)
 		}
 		s.self.Demonitor(s.watch)
 		s.owner, s.watch = r.owner, s.self.Monitor(r.owner)
+		s.direct.mu.Lock()
+		s.direct.owner = r.owner
+		s.direct.mu.Unlock()
 		return nil, false, false
 	case shutdownReq:
 		return s.shutdown(r.how), false, false
 	case closeReq:
+		s.revoke()
 		return nil, false, true
 	}
 	return errors.New("gentcp: unknown request"), false, false
@@ -177,6 +207,16 @@ func (s *server) setActive(a Active) {
 	if s.active, passive = s.active.set(a); passive {
 		s.self.Send(s.owner, PassiveMsg{s.sock})
 	}
+	if s.active == Passive {
+		s.revoke()
+	}
+}
+
+// revoke takes back from the reader the right to deliver.
+func (s *server) revoke() {
+	s.direct.mu.Lock()
+	s.direct.ok = false
+	s.direct.mu.Unlock()
 }
 
 func (s *server) send(data []byte) error {
@@ -278,6 +318,7 @@ func (s *server) fail(err error) {
 	}
 	s.dec.buf = nil
 	s.eof, s.readErr, s.broken = true, err, true
+	s.revoke()
 }
 
 // closing reports whether the socket closes, now that the owner knows the
@@ -310,6 +351,10 @@ func (s *server) wantData() {
 	if _, ok, err := peek.next(length); ok || err != nil {
 		return
 	}
+	s.direct.mu.Lock()
+	s.direct.ok = s.opts.Packet == Raw && s.active != Passive && len(s.dec.buf) == 0
+	s.direct.owner = s.owner
+	s.direct.mu.Unlock()
 	s.reading = true
 	s.reads <- struct{}{}
 }
@@ -341,11 +386,36 @@ func (s *server) read() {
 				buf = make([]byte, size)
 			}
 		}
+		if k > 0 && err == nil && s.handOver(n, pid, done, b) {
+			continue
+		}
 		n.Send(pid, readResult{b, err})
 		if err != nil {
 			return
 		}
 	}
+}
+
+// handOver delivers b to the owner from the reader, if the process allows
+// it and is alive, and tells the process. A process dead, its socket
+// delivers nothing more: the process sees to it for its own sends, and
+// the reader checks under the lock, before any monitor can learn of the
+// death.
+func (s *server) handOver(n *proc.Node, pid proc.PID, done <-chan struct{}, b []byte) bool {
+	s.direct.mu.Lock()
+	defer s.direct.mu.Unlock()
+	select {
+	case <-done:
+		return false
+	default:
+	}
+	if !s.direct.ok {
+		return false
+	}
+	s.direct.ok = false
+	n.Send(pid, delivered{})
+	n.Send(s.direct.owner, DataMsg{s.sock, b})
+	return true
 }
 
 func nextReadSize(size, n int) int {

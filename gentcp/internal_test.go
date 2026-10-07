@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"testing"
@@ -104,5 +105,55 @@ func TestSendActiveFailed(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("no %s", want)
 		}
+	}
+}
+
+// TestDirectOrder stresses the reads the reader delivers itself: in each
+// round, the owner gets the packet, at once asks for one more, and must
+// get the Passive message of the round, after the packet. The process
+// must take the packet into account before the request for more, and
+// send Passive after the packet.
+func TestDirectOrder(t *testing.T) {
+	n := proc.NewNode("")
+	server, peer := net.Pipe()
+	defer peer.Close()
+	const rounds = 2000
+	next := make(chan struct{})
+	failed := make(chan string, 1)
+	owner := n.Spawn(func(s *proc.Self) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		for i := range rounds {
+			msg, err := s.Receive(ctx)
+			d, ok := msg.(DataMsg)
+			if err != nil || !ok {
+				failed <- fmt.Sprintf("round %d: got %#v, %v; want data", i, msg, err)
+				return nil
+			}
+			s.Send(d.Sock.PID, setActiveReq{N(1)})
+			if msg, err := s.Receive(ctx); err != nil || msg != (PassiveMsg{d.Sock}) {
+				failed <- fmt.Sprintf("round %d: got %#v, %v; want passive", i, msg, err)
+				return nil
+			}
+			next <- struct{}{}
+		}
+		close(failed)
+		return nil
+	})
+	Start(n, server, owner, Options{Active: N(1)})
+	go func() {
+		for range rounds {
+			if _, err := peer.Write([]byte("x")); err != nil {
+				return
+			}
+			select {
+			case <-next:
+			case <-time.After(20 * time.Second):
+				return
+			}
+		}
+	}()
+	if msg, ok := <-failed; ok {
+		t.Fatal(msg)
 	}
 }
