@@ -2,7 +2,9 @@ package gentcpacceptor_test
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"net"
 	"testing"
@@ -134,6 +136,128 @@ func BenchmarkEchoSize(b *testing.B) {
 				})
 			})
 		}
+	}
+}
+
+// summer checksums what it reads, standing for a handler with work to do
+// on its data. The peer first sends the byte count to expect, as 8 bytes,
+// and gets it back once all has arrived.
+type summer struct{}
+
+type sum struct {
+	header []byte // the count, until all 8 bytes are in
+	want   uint64
+	n      uint64
+	crc    uint32
+}
+
+func (summer) Init(gentcpacceptor.Socket) (sum, []gen.Effect, error) { return sum{}, nil, nil }
+
+func (summer) HandleData(s sum, sock gentcpacceptor.Socket, b []byte) (sum, []gen.Effect) {
+	if len(s.header) < 8 {
+		k := min(8-len(s.header), len(b))
+		s.header = append(s.header[:len(s.header):len(s.header)], b[:k]...)
+		b = b[k:]
+		if len(s.header) == 8 {
+			s.want = binary.BigEndian.Uint64(s.header)
+		}
+	}
+	s.n += uint64(len(b))
+	s.crc = work(s.crc, b)
+	if len(s.header) == 8 && s.n == s.want {
+		return s, gen.Do(sock.Write(s.header))
+	}
+	return s, nil
+}
+
+// work stands for processing the data.
+func work(crc uint32, b []byte) uint32 {
+	for range 4 {
+		crc = crc32.Update(crc, crc32.IEEETable, b)
+	}
+	return crc
+}
+
+// BenchmarkStream sends 16 KB chunks one way over one connection to a
+// handler that works on each, so reading ahead (Spec.ActiveN) can overlap
+// reading with the work.
+func BenchmarkStream(b *testing.B) {
+	const chunk = 16 << 10
+	baseline := func(b *testing.B) string {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.Cleanup(func() { ln.Close() })
+		go func() {
+			for {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				go func() {
+					defer conn.Close()
+					header := make([]byte, 8)
+					if _, err := io.ReadFull(conn, header); err != nil {
+						return
+					}
+					want := binary.BigEndian.Uint64(header)
+					buf := make([]byte, 32<<10)
+					var s sum
+					for s.n < want {
+						k, err := conn.Read(buf)
+						s.n += uint64(k)
+						s.crc = work(s.crc, buf[:k])
+						if err != nil {
+							return
+						}
+					}
+					conn.Write(header)
+				}()
+			}
+		}()
+		return ln.Addr().String()
+	}
+	molecule := func(b *testing.B) string {
+		n := proc.NewNode("")
+		l, err := gentcpacceptor.Start(context.Background(), n, gentcpacceptor.Spec{Addr: "127.0.0.1:0"}, summer{})
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.Cleanup(func() { l.Stop(context.Background(), n) })
+		return l.Addr().String()
+	}
+	for _, srv := range []struct {
+		name  string
+		start func(*testing.B) string
+	}{{"molecule", molecule}, {"baseline", baseline}} {
+		b.Run(srv.name, func(b *testing.B) {
+			addr := srv.start(b)
+			conn, err := net.Dial("tcp", addr)
+			if err != nil {
+				b.Fatal(err)
+			}
+			defer conn.Close()
+			want := uint64(b.N) * chunk
+			if _, err := conn.Write(binary.BigEndian.AppendUint64(nil, want)); err != nil {
+				b.Fatal(err)
+			}
+			b.SetBytes(chunk)
+			buf := make([]byte, chunk)
+			b.ResetTimer()
+			for range b.N {
+				if _, err := conn.Write(buf); err != nil {
+					b.Fatal(err)
+				}
+			}
+			var got [8]byte
+			if _, err := io.ReadFull(conn, got[:]); err != nil {
+				b.Fatal(err)
+			}
+			if n := binary.BigEndian.Uint64(got[:]); n != want {
+				b.Fatalf("server counted %d bytes, want %d", n, want)
+			}
+		})
 	}
 }
 

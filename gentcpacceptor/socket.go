@@ -26,8 +26,8 @@ func (s Socket) Write(b []byte) gen.Effect { return gen.Send{To: s.PID, Msg: wri
 // the handler then: it is expected to stop as well.
 func (s Socket) Close() gen.Effect { return gen.Send{To: s.PID, Msg: closeReq{}} }
 
-// activeOnce asks the socket to read once, like {active, once} in Erlang.
-func (s Socket) activeOnce() gen.Effect { return gen.Send{To: s.PID, Msg: activeOnce{}} }
+// active allows the socket n more reads, like {active, N} in Erlang.
+func (s Socket) active(n int) gen.Effect { return gen.Send{To: s.PID, Msg: active{n}} }
 
 // Messages from a socket process to its owner.
 type (
@@ -44,14 +44,33 @@ type (
 
 // Requests to a socket process.
 type (
-	activeOnce struct{}
+	active     struct{ n int }
 	write      struct{ b []byte }
 	closeReq   struct{}
 	readFailed struct{ err error }
 )
 
-// readBufferSize is the most a single read delivers.
-const readBufferSize = 32 << 10
+// Read buffers start at minReadBuffer, double while reads fill them, and
+// halve while reads use less than a quarter, within the limits.
+const (
+	minReadBuffer = 2 << 10
+	maxReadBuffer = 64 << 10
+)
+
+// maxActive bounds the reads a socket may be allowed ahead.
+const maxActive = 1024
+
+// nextReadSize returns the size of the buffer for the next read, after
+// one of size returned n bytes.
+func nextReadSize(size, n int) int {
+	switch {
+	case n == size && size < maxReadBuffer:
+		return size * 2
+	case n < size/4 && size > minReadBuffer:
+		return size / 2
+	}
+	return size
+}
 
 // attach starts the socket process of conn for owner and tells owner.
 func attach(parent *proc.Self, c net.Conn, owner proc.PID) {
@@ -61,6 +80,12 @@ func attach(parent *proc.Self, c net.Conn, owner proc.PID) {
 
 // runSocket owns c for owner: it reads on demand, writes on request, and
 // closes c when either itself or owner terminates, whatever the reason.
+//
+// Reads happen in a goroutine of their own, only as many as the owner
+// allowed with active. The read buffer is resized to the reads. What is
+// read belongs to the owner: a read filling most of the buffer hands the
+// buffer over, and a new one is made; a smaller read is copied out, so the
+// owner does not hold a mostly empty buffer, and the buffer is reused.
 func runSocket(s *proc.Self, c net.Conn, owner proc.PID) error {
 	// Closing the connection is also what unblocks a pending Read once the
 	// process is dead.
@@ -69,9 +94,9 @@ func runSocket(s *proc.Self, c net.Conn, owner proc.PID) error {
 	ownerRef := s.Monitor(owner)
 
 	n, self := s.Node(), s.PID()
-	permits := make(chan struct{}, 1)
+	permits := make(chan struct{}, maxActive)
 	go func() {
-		buf := make([]byte, readBufferSize)
+		buf := make([]byte, minReadBuffer)
 		for {
 			select {
 			case <-permits:
@@ -79,8 +104,18 @@ func runSocket(s *proc.Self, c net.Conn, owner proc.PID) error {
 				return
 			}
 			k, err := c.Read(buf)
-			if k > 0 {
+			size := nextReadSize(len(buf), k)
+			switch {
+			case k > len(buf)/2:
+				n.Send(owner, data{sock: self, b: buf[:k:k]})
+				buf = make([]byte, size)
+			case k > 0:
 				n.Send(owner, data{sock: self, b: append([]byte(nil), buf[:k]...)})
+				fallthrough
+			default:
+				if size != len(buf) {
+					buf = make([]byte, size)
+				}
 			}
 			if err != nil {
 				n.Send(self, readFailed{err})
@@ -95,10 +130,12 @@ func runSocket(s *proc.Self, c net.Conn, owner proc.PID) error {
 			return err
 		}
 		switch m := msg.(type) {
-		case activeOnce:
-			select {
-			case permits <- struct{}{}:
-			default: // already asked
+		case active:
+			for range m.n {
+				select {
+				case permits <- struct{}{}:
+				default: // at maxActive already
+				}
 			}
 		case write:
 			if _, err := c.Write(m.b); err != nil {

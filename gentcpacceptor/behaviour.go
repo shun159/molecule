@@ -15,9 +15,9 @@ import (
 
 // Behaviour handles one connection with state S.
 //
-// The runtime reads on demand: once the effects returned by Init or
-// HandleData have been performed, it asks the socket for the next data, so
-// a slow handler is never flooded.
+// The runtime reads ahead of the handler, but only so far: at most
+// Spec.ActiveN reads are delivered and waiting to be handled, so a slow
+// handler is never flooded. Each HandleData allows one more.
 //
 // A Behaviour may also implement ClosedHandler, InfoHandler and
 // Terminator.
@@ -58,7 +58,8 @@ type conn[S any] struct {
 
 // adapter runs a Behaviour as a gen.Behaviour.
 type adapter[S any] struct {
-	b Behaviour[S]
+	b       Behaviour[S]
+	activeN int
 }
 
 func (adapter[S]) Init(any) (conn[S], []gen.Effect, error) { return conn[S]{}, nil, nil }
@@ -74,14 +75,14 @@ func (a adapter[S]) Handle(c conn[S], msg gen.Msg) (conn[S], []gen.Effect) {
 		if err != nil {
 			return c, gen.Do(gen.Stop{Reason: err})
 		}
-		return conn[S]{sock: m.sock, ready: true, state: state}, rearm(effs, m.sock)
+		return conn[S]{sock: m.sock, ready: true, state: state}, then(effs, m.sock.active(a.activeN))
 	case data:
 		if !c.ready || m.sock != c.sock.PID {
 			return c, nil
 		}
 		var effs []gen.Effect
 		c.state, effs = a.b.HandleData(c.state, c.sock, m.b)
-		return c, rearm(effs, c.sock)
+		return c, then(effs, c.sock.active(1))
 	case closed:
 		if !c.ready || m.sock != c.sock.PID {
 			return c, nil
@@ -113,7 +114,8 @@ func (a adapter[S]) Terminate(c conn[S], reason error) []gen.Effect {
 	return nil
 }
 
-// rearm asks for the next data once effs have been performed.
-func rearm(effs []gen.Effect, sock Socket) []gen.Effect {
-	return append(slices.Clip(effs), sock.activeOnce())
+// then appends e to effs, which belong to the behaviour and are not
+// modified.
+func then(effs []gen.Effect, e gen.Effect) []gen.Effect {
+	return append(slices.Clip(effs), e)
 }

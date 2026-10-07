@@ -1,6 +1,7 @@
 package gentcpacceptor
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
@@ -44,18 +45,18 @@ func info(m any) gen.Msg { return gen.InfoMsg{Msg: m} }
 func TestAdapter(t *testing.T) {
 	pid := proc.NewNode("").Spawn(func(*proc.Self) error { return nil }) // any PID will do
 	sock := Socket{PID: pid}
-	a := adapter[rstate]{recorder{}}
+	a := adapter[rstate]{b: recorder{}, activeN: 3}
 
 	c, effs := a.Handle(conn[rstate]{}, info("before attach"))
 	if c.ready || effs != nil {
 		t.Errorf("before attach: %+v, %#v", c, effs)
 	}
 	c, effs = a.Handle(c, info(attached{sock}))
-	if !c.ready || !reflect.DeepEqual(effs, gen.Do(sock.activeOnce())) {
+	if !c.ready || !reflect.DeepEqual(effs, gen.Do(sock.active(3))) {
 		t.Errorf("on attach: %+v, %#v", c, effs)
 	}
 	c, effs = a.Handle(c, info(data{sock: pid, b: []byte("hi")}))
-	if want := gen.Do(sock.Write([]byte("hi")), sock.activeOnce()); !reflect.DeepEqual(effs, want) {
+	if want := gen.Do(sock.Write([]byte("hi")), sock.active(1)); !reflect.DeepEqual(effs, want) {
 		t.Errorf("on data: %#v, want the write then a new read", effs)
 	}
 	c, effs = a.Handle(c, info(data{sock: proc.PID{}, b: []byte("stray")}))
@@ -76,7 +77,7 @@ func TestAdapter(t *testing.T) {
 		t.Errorf("on closed by the peer: %#v", effs)
 	}
 
-	m := adapter[int]{minimal{}}
+	m := adapter[int]{b: minimal{}, activeN: 1}
 	mc, _ := m.Handle(conn[int]{}, info(attached{sock}))
 	if mc, effs = m.Handle(mc, info("ignored")); effs != nil || mc.state != 0 {
 		t.Errorf("info without InfoHandler: %+v, %#v", mc, effs)
@@ -117,7 +118,7 @@ func TestSocketReadsOnDemand(t *testing.T) {
 	}
 
 	expectNone()
-	n.Send(sock, activeOnce{})
+	n.Send(sock, active{1})
 	if m := (<-got).(data); string(m.b) != "one" {
 		t.Fatalf("got %q", m.b)
 	}
@@ -127,13 +128,13 @@ func TestSocketReadsOnDemand(t *testing.T) {
 		t.Fatal("second write went through without a read")
 	default:
 	}
-	n.Send(sock, activeOnce{})
+	n.Send(sock, active{1})
 	if m := (<-got).(data); string(m.b) != "two" {
 		t.Fatalf("got %q", m.b)
 	}
 
 	peer.Close()
-	n.Send(sock, activeOnce{})
+	n.Send(sock, active{1})
 	if m := (<-got).(closed); m.err != nil || m.sock != sock {
 		t.Errorf("on peer close: %#v", m)
 	}
@@ -147,7 +148,7 @@ func (terminator) Terminate(n int, reason error) []gen.Effect {
 }
 
 func TestAdapterTerminate(t *testing.T) {
-	a := adapter[int]{terminator{}}
+	a := adapter[int]{b: terminator{}, activeN: 1}
 	boom := errors.New("boom")
 	if effs := a.Terminate(conn[int]{}, boom); effs != nil {
 		t.Errorf("Terminate before Init: %#v", effs)
@@ -156,7 +157,110 @@ func TestAdapterTerminate(t *testing.T) {
 	if effs := a.Terminate(c, boom); !reflect.DeepEqual(effs, gen.Do(gen.Stop{Reason: boom})) {
 		t.Errorf("Terminate after Init: %#v", effs)
 	}
-	if effs := (adapter[int]{minimal{}}).Terminate(c, boom); effs != nil {
+	if effs := (adapter[int]{b: minimal{}, activeN: 1}).Terminate(c, boom); effs != nil {
 		t.Errorf("Terminate without Terminator: %#v", effs)
+	}
+}
+
+// TestSocketActiveN allows two reads ahead: both happen without waiting
+// for the owner, the third does not.
+func TestSocketActiveN(t *testing.T) {
+	n := proc.NewNode("")
+	got := make(chan any, 8)
+	owner := n.Spawn(func(s *proc.Self) error {
+		for {
+			msg, err := s.Receive(context.Background())
+			if err != nil {
+				return err
+			}
+			got <- msg
+		}
+	})
+	server, peer := net.Pipe()
+	defer peer.Close()
+	sock := n.Spawn(func(s *proc.Self) error { return runSocket(s, server, owner) })
+	go func() {
+		for _, w := range []string{"one", "two", "three"} {
+			peer.Write([]byte(w))
+		}
+	}()
+
+	n.Send(sock, active{2})
+	first := receive[data](t, got)
+	second := receive[data](t, got)
+	if string(first.b) != "one" || string(second.b) != "two" {
+		t.Fatalf("got %q, %q", first.b, second.b)
+	}
+	select {
+	case m := <-got:
+		t.Fatalf("read beyond the allowance: %#v", m)
+	case <-time.After(50 * time.Millisecond):
+	}
+	n.Send(sock, active{1})
+	if third := (<-got).(data); string(third.b) != "three" {
+		t.Fatalf("got %q", third.b)
+	}
+	// What was delivered is the owner's: later reads do not overwrite it.
+	if string(first.b) != "one" || string(second.b) != "two" {
+		t.Errorf("delivered data overwritten: %q, %q", first.b, second.b)
+	}
+}
+
+func TestNextReadSize(t *testing.T) {
+	for _, tt := range []struct{ size, n, want int }{
+		{minReadBuffer, minReadBuffer, 2 * minReadBuffer}, // full: grow
+		{maxReadBuffer, maxReadBuffer, maxReadBuffer},     // full at the top: stay
+		{8 << 10, 4 << 10, 8 << 10},                       // half: stay
+		{8 << 10, 1 << 10, 4 << 10},                       // under a quarter: shrink
+		{minReadBuffer, 0, minReadBuffer},                 // at the bottom: stay
+		{16 << 10, 16<<10 - 1, 16 << 10},                  // nearly full: stay
+	} {
+		if got := nextReadSize(tt.size, tt.n); got != tt.want {
+			t.Errorf("nextReadSize(%d, %d) = %d, want %d", tt.size, tt.n, got, tt.want)
+		}
+	}
+}
+
+// receive returns the next message from got, failing after a while.
+func receive[T any](t *testing.T, got <-chan any) T {
+	t.Helper()
+	select {
+	case m := <-got:
+		return m.(T)
+	case <-time.After(5 * time.Second):
+		t.Fatal("nothing delivered")
+		panic("unreachable")
+	}
+}
+
+// TestSocketHandsOverFullReads reads chunks filling the buffer, which are
+// handed over without a copy: the next read must go to a new buffer.
+func TestSocketHandsOverFullReads(t *testing.T) {
+	n := proc.NewNode("")
+	got := make(chan any, 8)
+	owner := n.Spawn(func(s *proc.Self) error {
+		for {
+			msg, err := s.Receive(context.Background())
+			if err != nil {
+				return err
+			}
+			got <- msg
+		}
+	})
+	server, peer := net.Pipe()
+	defer peer.Close()
+	sock := n.Spawn(func(s *proc.Self) error { return runSocket(s, server, owner) })
+
+	chunks := [][]byte{bytes.Repeat([]byte("a"), minReadBuffer), bytes.Repeat([]byte("b"), minReadBuffer)}
+	go func() {
+		for _, c := range chunks {
+			peer.Write(c)
+		}
+	}()
+	n.Send(sock, active{2})
+	first := receive[data](t, got)
+	second := receive[data](t, got)
+	if !bytes.Equal(first.b, chunks[0]) || !bytes.Equal(second.b, chunks[1]) {
+		t.Errorf("first read now %q..., second %q...", first.b[:4], second.b[:4])
 	}
 }

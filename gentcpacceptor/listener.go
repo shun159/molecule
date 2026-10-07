@@ -24,7 +24,15 @@ type Spec struct {
 	// MaxConns, if positive, caps the connections: those beyond it are
 	// closed as soon as accepted.
 	MaxConns int
+	// ActiveN is how many reads may be ahead of the handler, like
+	// {active, N} in Erlang: more keeps data flowing while the handler
+	// works, fewer bounds the memory a slow handler holds. Zero means
+	// DefaultActiveN.
+	ActiveN int
 }
+
+// DefaultActiveN is Spec.ActiveN when zero.
+const DefaultActiveN = 4
 
 // Listener runs a Behaviour on the connections to an address: a
 // supervisor of the listening socket, the acceptors, and the processes of
@@ -65,9 +73,19 @@ func (sh *shared) get() (net.Listener, proc.PID) {
 func NewListener[S any](spec Spec, b Behaviour[S]) *Listener {
 	return &Listener{
 		spec:    spec,
-		handler: gen.StartLinkFunc(adapter[S]{b}, nil),
+		handler: gen.StartLinkFunc(adapter[S]{b: b, activeN: activeN(spec)}, nil),
 		shared:  &shared{},
 	}
+}
+
+func activeN(spec Spec) int {
+	switch {
+	case spec.ActiveN <= 0:
+		return DefaultActiveN
+	case spec.ActiveN > maxActive:
+		return maxActive
+	}
+	return spec.ActiveN
 }
 
 // Start starts a listener running b on its own.
