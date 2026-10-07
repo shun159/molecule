@@ -3,6 +3,7 @@ package gensim_test
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/genserver"
@@ -208,5 +209,34 @@ func TestPendingRequest(t *testing.T) {
 		if len(log) != 2 || !errors.Is(log[1].(gen.Response).Err, proc.NoConnection) {
 			t.Errorf("%s: %#v", fault, log)
 		}
+	}
+}
+
+func TestRun(t *testing.T) {
+	s := gensim.New(1)
+	c := spawn(t, s, genserver.Gen(counter{}))
+	for range 3 {
+		s.Cast(c, add{1})
+	}
+	steps := 0
+	if err := s.Run(time.Second, func() error { steps++; return nil }); err != nil || steps != 6 {
+		t.Errorf("Run: %v after %d steps, want 6", err, steps)
+	}
+	if got := s.Now().Sub(time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)); got != time.Second {
+		t.Errorf("time %v", got)
+	}
+	// The first error stops it, at the step that broke the invariant.
+	for range 3 {
+		s.Cast(c, add{1})
+	}
+	tooMuch := errors.New("too much")
+	err := s.Run(time.Second, func() error {
+		if n, _ := gensim.State[int](s, c); n > 4 {
+			return tooMuch
+		}
+		return nil
+	})
+	if n, _ := gensim.State[int](s, c); err != tooMuch || n != 5 {
+		t.Errorf("Run: %v at %d", err, n)
 	}
 }

@@ -314,6 +314,29 @@ func (s *Sim) Advance(d time.Duration) {
 	s.now = end
 }
 
+// Run runs the simulation for d of virtual time, as Advance does, and
+// calls check after every step and every timer: an invariant of the
+// system, checked at every point. It stops at the first error check
+// returns, and returns it.
+func (s *Sim) Run(d time.Duration, check func() error) error {
+	end := s.now.Add(d)
+	for {
+		for s.Step() {
+			if err := check(); err != nil {
+				return err
+			}
+		}
+		if !s.fireTimer(end) {
+			break
+		}
+		if err := check(); err != nil {
+			return err
+		}
+	}
+	s.now = end
+	return nil
+}
+
 func (s *Sim) resolve(dest gen.Dest) (proc.PID, bool) {
 	switch d := dest.(type) {
 	case proc.PID:
