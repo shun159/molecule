@@ -5,9 +5,12 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule/gentcp"
 	"github.com/shun159/molecule/proc"
 	"github.com/shun159/molecule/supervisor"
 )
@@ -21,7 +24,7 @@ func TestEchoApplication(t *testing.T) {
 	}
 	defer supervisor.Stop(ctx, n, app.sup)
 
-	conn, err := net.Dial("tcp", app.listener.Addr().String())
+	conn, err := net.Dial("tcp", app.addr.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,5 +60,32 @@ func TestStatsPure(t *testing.T) {
 	}
 	if want := (Stats{Open: 1, Total: 2, Bytes: 8}); s != want {
 		t.Errorf("stats = %+v, want %+v", s, want)
+	}
+}
+
+func TestProtocolPure(t *testing.T) {
+	p := EchoProtocol{}
+	sock := gentcp.Socket{PID: proc.NewNode("").NewPID()}
+	c, _, _ := p.Init(proc.PID{})
+	c, effs := p.HandleCast(c, sock)
+	if want := gen.Do(statsRef.CastEffect(connOpened{}), sock.SetActiveEffect(gentcp.Once)); !c.open || !reflect.DeepEqual(effs, want) {
+		t.Errorf("on the socket: %+v, %#v", c, effs)
+	}
+	for _, b := range []string{"hi", "there"} {
+		c, effs = p.HandleInfo(c, gentcp.DataMsg{Sock: sock, Bytes: []byte(b)})
+		want := gen.Do(sock.SendActiveEffect([]byte(b), gentcp.Once))
+		if !reflect.DeepEqual(effs, want) {
+			t.Errorf("on data: %#v", effs)
+		}
+	}
+	if _, effs = p.HandleInfo(c, gentcp.ClosedMsg{Sock: sock}); !reflect.DeepEqual(effs, gen.Do(gen.Stop{})) {
+		t.Errorf("on closed: %#v", effs)
+	}
+	want := gen.Do(statsRef.CastEffect(echoed{7}), statsRef.CastEffect(connClosed{}))
+	if effs = p.Terminate(c, nil); !reflect.DeepEqual(effs, want) {
+		t.Errorf("on terminate: %#v", effs)
+	}
+	if effs = p.Terminate(conn{}, nil); effs != nil {
+		t.Errorf("terminate before the socket: %#v", effs)
 	}
 }

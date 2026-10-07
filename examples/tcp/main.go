@@ -2,11 +2,13 @@
 //
 //	echo_sup (rest_for_one)
 //	├── echo_stats     gen_server counting connections and bytes
-//	└── echo_listener  gen_tcp_acceptor; one echo_protocol per connection
+//	├── echo_conns     dynamic supervisor; one echo_protocol per connection
+//	└── echo_listener  the listening socket, and the acceptors linked to it
 //
 // Each file holds one "module": main.go is the application, echo_sup.go
-// the supervisor, echo_stats.go a gen_server and echo_protocol.go the
-// handler of a connection, plain Go reading and writing its socket.
+// the supervisor, echo_stats.go a gen_server, echo_listener.go and
+// echo_acceptor.go plain processes using gentcp as gen_tcp, and
+// echo_protocol.go the gen_server of a connection, which owns its socket.
 //
 //	go run ./examples/tcp -addr 127.0.0.1:5555
 //	nc 127.0.0.1 5555
@@ -35,7 +37,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("echo: listening on %v", app.listener.Addr())
+	log.Printf("echo: listening on %v", app.addr)
 
 	<-ctx.Done()
 	if s, err := statsRef.Call(context.Background(), n, GetStats{}); err == nil {
