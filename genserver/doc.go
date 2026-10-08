@@ -20,6 +20,10 @@
 // HandleContinue, a gen.Continue stops the server with
 // [ErrNoHandleContinue].
 //
+// A server implementing gen.StatusFormatter formats what the report of
+// its terminating tells, like format_status/1: to hide secrets of its
+// state, say.
+//
 // A server embedding [Default] needs no Init starting with the zero
 // state, and no HandleCall or HandleCast it has no use for:
 //

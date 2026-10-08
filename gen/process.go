@@ -86,6 +86,8 @@ func (e procEnv) Link(pid proc.PID)                      { e.self.Link(pid) }
 func (e procEnv) Unlink(pid proc.PID)                    { e.self.Unlink(pid) }
 func (e procEnv) TrapExit(on bool)                       { e.self.TrapExit(on) }
 
+func (e procEnv) Now() time.Time { return time.Now() }
+
 func (e procEnv) SendAfter(d time.Duration, msg any) func() {
 	n, self := e.self.Node(), e.self.PID()
 	t := time.AfterFunc(d, func() { n.Send(self, msg) })

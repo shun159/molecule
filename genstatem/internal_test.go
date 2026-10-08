@@ -44,7 +44,7 @@ func TestEventTimeoutFiredIsOver(t *testing.T) {
 	}
 
 	m, _ = a.Handle(m, arm)
-	m, effs := a.Handle(m, gen.InfoMsg{Msg: fired{eventTimerKey{}, "t"}})
+	m, effs := a.Handle(m, gen.InfoMsg{Msg: fired{eventTimerKey{}}})
 	if hasCancel(effs, eventTimerKey{}) {
 		t.Errorf("the event timeout that fired cancelled: %#v", effs)
 	}

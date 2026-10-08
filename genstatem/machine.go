@@ -1,6 +1,7 @@
 package genstatem
 
 import (
+	"maps"
 	"slices"
 
 	"github.com/shun159/molecule/gen"
@@ -14,8 +15,11 @@ type Machine[St comparable, D any] struct {
 	data  D
 
 	postponed  []Event // to retry after the next state change
-	stateTimer bool    // a state timeout is running
-	eventTimer bool    // an event timeout is running
+	stateTimer bool    // a state timeout is running, with stateMsg
+	eventTimer bool    // an event timeout is running, with eventMsg
+	stateMsg   any
+	eventMsg   any
+	generic    map[any]any // the generic timeouts running, by name, with their Msg
 }
 
 // State returns the state of the machine.
@@ -30,10 +34,8 @@ type (
 	eventTimerKey   struct{}
 	genericTimerKey struct{ name any }
 
-	fired struct {
-		key any
-		msg any
-	}
+	// fired is a timer firing; its Msg is the machine's, as updated.
+	fired struct{ key any }
 
 	// initEvents are the events Init inserted, handled once started.
 	initEvents struct{ events []Event }
@@ -57,7 +59,7 @@ func (a adapter[St, D]) Init(self proc.PID, _ any) (Machine[St, D], []gen.Effect
 	}
 	m := Machine[St, D]{state: state, data: data}
 	var out []gen.Effect
-	next, postpone := a.actions(&m, effs, &out)
+	next, postpone, _ := a.actions(&m, effs, &out)
 	if postpone {
 		return m, append(out, gen.Stop{Reason: ErrInitPostpone}), nil
 	}
@@ -92,16 +94,27 @@ func (a adapter[St, D]) Handle(m Machine[St, D], msg gen.Msg) (Machine[St, D], [
 		}
 		switch k := f.key.(type) {
 		case stateTimerKey:
-			m.stateTimer = false
-			ev = StateTimeout{Msg: f.msg}
+			ev = StateTimeout{Msg: m.stateMsg}
+			m.stateTimer, m.stateMsg = false, nil
 		case eventTimerKey:
-			m.eventTimer = false
-			ev = EventTimeout{Msg: f.msg}
+			ev = EventTimeout{Msg: m.eventMsg}
+			m.eventTimer, m.eventMsg = false, nil
 		case genericTimerKey:
-			ev = Timeout{Name: k.name, Msg: f.msg}
+			ev = Timeout{Name: k.name, Msg: m.generic[k.name]}
+			m.generic = without(m.generic, k.name)
 		}
 	}
 	return a.run(m, []Event{ev})
+}
+
+// FormatStatus formats the report of the machine terminating with the
+// FormatStatus of the behaviour, if it has one: see gen.StatusFormatter.
+// The State is the Machine, with its state and data.
+func (a adapter[St, D]) FormatStatus(st gen.Status) gen.Status {
+	if f, ok := a.b.(gen.StatusFormatter); ok {
+		return f.FormatStatus(st)
+	}
+	return st
 }
 
 func (a adapter[St, D]) Terminate(m Machine[St, D], reason error) []gen.Effect {
@@ -121,7 +134,7 @@ func (a adapter[St, D]) run(m Machine[St, D], queue []Event) (Machine[St, D], []
 		queue = queue[1:]
 		if m.eventTimer { // any event cancels the event timeout
 			out = append(out, gen.CancelTimer{Key: eventTimerKey{}})
-			m.eventTimer = false
+			m.eventTimer, m.eventMsg = false, nil
 		}
 
 		old := m.state
@@ -130,9 +143,9 @@ func (a adapter[St, D]) run(m Machine[St, D], queue []Event) (Machine[St, D], []
 		changed := state != old
 		if changed && m.stateTimer {
 			out = append(out, gen.CancelTimer{Key: stateTimerKey{}})
-			m.stateTimer = false
+			m.stateTimer, m.stateMsg = false, nil
 		}
-		next, postpone := a.actions(&m, effs, &out)
+		next, postpone, repeat := a.actions(&m, effs, &out)
 		if postpone {
 			m.postponed = append(slices.Clip(m.postponed), ev)
 		}
@@ -140,6 +153,13 @@ func (a adapter[St, D]) run(m Machine[St, D], queue []Event) (Machine[St, D], []
 			return m, out
 		}
 		if !changed {
+			// Repeating the state runs its enter call again; the postponed
+			// events wait for a change still.
+			if repeat && a.enter {
+				if m, out = a.enterState(m, m.state, out); stops(out) {
+					return m, out
+				}
+			}
 			queue = slices.Concat(next, queue)
 			continue
 		}
@@ -162,7 +182,7 @@ func (a adapter[St, D]) enterState(m Machine[St, D], old St, out []gen.Effect) (
 		return m, append(out, gen.Stop{Reason: ErrEnterChangedState})
 	}
 	m.data = data
-	if next, postpone := a.actions(&m, effs, &out); postpone || len(next) > 0 {
+	if next, postpone, repeat := a.actions(&m, effs, &out); postpone || repeat || len(next) > 0 {
 		return m, append(out, gen.Stop{Reason: ErrEnterAction})
 	}
 	return m, out
@@ -170,40 +190,84 @@ func (a adapter[St, D]) enterState(m Machine[St, D], old St, out []gen.Effect) (
 
 // actions performs the actions among effs on m, turning timeouts into gen
 // timers, and appends the other effects to out. It returns the events to
-// insert, and whether to postpone the event.
-func (a adapter[St, D]) actions(m *Machine[St, D], effs []gen.Effect, out *[]gen.Effect) (next []Event, postpone bool) {
+// insert, whether to postpone the event, and whether to repeat the state.
+func (a adapter[St, D]) actions(m *Machine[St, D], effs []gen.Effect, out *[]gen.Effect) (next []Event, postpone, repeat bool) {
 	for _, e := range effs {
 		switch x := e.(type) {
 		case Postpone:
 			postpone = true
 		case NextEvent:
 			next = append(next, x.Event)
+		case RepeatState:
+			repeat = true
 		case StartStateTimeout:
-			*out = append(*out, gen.StartTimer{Key: stateTimerKey{}, After: x.After, Msg: fired{stateTimerKey{}, x.Msg}})
-			m.stateTimer = true
+			*out = append(*out, gen.StartTimer{Key: stateTimerKey{}, After: x.After, At: x.At, Msg: fired{stateTimerKey{}}})
+			m.stateTimer, m.stateMsg = true, x.Msg
 		case CancelStateTimeout:
 			if m.stateTimer {
 				*out = append(*out, gen.CancelTimer{Key: stateTimerKey{}})
-				m.stateTimer = false
+				m.stateTimer, m.stateMsg = false, nil
+			}
+		case UpdateStateTimeout:
+			if m.stateTimer {
+				m.stateMsg = x.Msg
+			} else {
+				next = append(next, StateTimeout{Msg: x.Msg})
 			}
 		case StartEventTimeout:
-			*out = append(*out, gen.StartTimer{Key: eventTimerKey{}, After: x.After, Msg: fired{eventTimerKey{}, x.Msg}})
-			m.eventTimer = true
+			*out = append(*out, gen.StartTimer{Key: eventTimerKey{}, After: x.After, At: x.At, Msg: fired{eventTimerKey{}}})
+			m.eventTimer, m.eventMsg = true, x.Msg
+		case UpdateEventTimeout:
+			if m.eventTimer {
+				m.eventMsg = x.Msg
+			} else {
+				next = append(next, EventTimeout{Msg: x.Msg})
+			}
 		case StartTimeout:
 			key := genericTimerKey{x.Name}
-			*out = append(*out, gen.StartTimer{Key: key, After: x.After, Msg: fired{key, x.Msg}})
+			*out = append(*out, gen.StartTimer{Key: key, After: x.After, At: x.At, Msg: fired{key}})
+			m.generic = with(m.generic, x.Name, x.Msg)
+		case UpdateTimeout:
+			if _, ok := m.generic[x.Name]; ok {
+				m.generic = with(m.generic, x.Name, x.Msg)
+			} else {
+				next = append(next, Timeout{Name: x.Name, Msg: x.Msg})
+			}
 		case CancelTimeout:
-			*out = append(*out, gen.CancelTimer{Key: genericTimerKey{x.Name}})
+			if _, ok := m.generic[x.Name]; ok {
+				*out = append(*out, gen.CancelTimer{Key: genericTimerKey{x.Name}})
+				m.generic = without(m.generic, x.Name)
+			}
 		default:
 			*out = append(*out, e)
 		}
 	}
-	return next, postpone
+	return next, postpone, repeat
+}
+
+// with and without return a copy of the map m, changed: the machine is a
+// value, never changed in place.
+func with(m map[any]any, k, v any) map[any]any {
+	c := maps.Clone(m)
+	if c == nil {
+		c = make(map[any]any)
+	}
+	c[k] = v
+	return c
+}
+
+func without(m map[any]any, k any) map[any]any {
+	c := maps.Clone(m)
+	delete(c, k)
+	return c
 }
 
 func isAction(e gen.Effect) bool {
 	switch e.(type) {
-	case Postpone, NextEvent, StartStateTimeout, CancelStateTimeout, StartEventTimeout, StartTimeout, CancelTimeout:
+	case Postpone, NextEvent, RepeatState,
+		StartStateTimeout, CancelStateTimeout, UpdateStateTimeout,
+		StartEventTimeout, UpdateEventTimeout,
+		StartTimeout, UpdateTimeout, CancelTimeout:
 		return true
 	}
 	return false

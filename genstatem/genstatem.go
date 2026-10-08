@@ -102,29 +102,57 @@ type (
 		gen.Extension
 		Event Event
 	}
-	// StartStateTimeout makes StateTimeout{Msg} arrive after After,
-	// unless the state changes first. It replaces a running one.
+	// RepeatState, the state unchanged, has its enter call run again, as
+	// repeat_state does. Postponed events wait for a change still.
+	RepeatState struct{ gen.Extension }
+	// StartStateTimeout makes StateTimeout{Msg} arrive after After, or at
+	// At if set, like {abs, true}, unless the state changes first. It
+	// replaces a running one.
 	StartStateTimeout struct {
 		gen.Extension
 		After time.Duration
+		At    time.Time
 		Msg   any
 	}
 	// CancelStateTimeout cancels the state timeout.
 	CancelStateTimeout struct{ gen.Extension }
-	// StartEventTimeout makes EventTimeout{Msg} arrive after After,
-	// unless another event arrives first.
+	// UpdateStateTimeout changes the Msg of the running state timeout,
+	// without restarting it, like {state_timeout, update, Msg}. With none
+	// running, StateTimeout{Msg} is handled next, as if one fired.
+	UpdateStateTimeout struct {
+		gen.Extension
+		Msg any
+	}
+	// StartEventTimeout makes EventTimeout{Msg} arrive after After, or at
+	// At if set, unless another event arrives first.
 	StartEventTimeout struct {
 		gen.Extension
 		After time.Duration
+		At    time.Time
 		Msg   any
 	}
-	// StartTimeout makes Timeout{Name, Msg} arrive after After, whatever
-	// happens meanwhile. It replaces a running one of the same Name.
+	// UpdateEventTimeout is UpdateStateTimeout for the event timeout,
+	// which the event being handled has cancelled, unless started by the
+	// same callback.
+	UpdateEventTimeout struct {
+		gen.Extension
+		Msg any
+	}
+	// StartTimeout makes Timeout{Name, Msg} arrive after After, or at At
+	// if set, whatever happens meanwhile. It replaces a running one of the
+	// same Name.
 	StartTimeout struct {
 		gen.Extension
 		Name  any
 		After time.Duration
+		At    time.Time
 		Msg   any
+	}
+	// UpdateTimeout is UpdateStateTimeout for the generic timeout Name.
+	UpdateTimeout struct {
+		gen.Extension
+		Name any
+		Msg  any
 	}
 	// CancelTimeout cancels the generic timeout Name.
 	CancelTimeout struct {

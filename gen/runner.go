@@ -263,13 +263,20 @@ func (r *runtime[S]) Abort() {
 // it was handling and its state, like the report of a terminating
 // gen_server. The crash report of the process follows.
 func (r *runtime[S]) report(state S, reason error) {
-	r.env.Logger().Error("behaviour terminating",
+	st := Status{State: state, Message: r.last, Reason: reason}
+	if f, ok := any(r.b).(StatusFormatter); ok {
+		st = f.FormatStatus(st)
+	}
+	attrs := []any{
 		slog.String("pid", r.env.Self().String()),
 		slog.String("behaviour", fmt.Sprintf("%T", r.b)),
-		slog.String("last_message", brief(r.last)),
-		slog.String("state", brief(state)),
-		slog.String("reason", reason.Error()),
-	)
+		slog.String("last_message", brief(st.Message)),
+		slog.String("state", brief(st.State)),
+	}
+	if st.Reason != nil {
+		attrs = append(attrs, slog.String("reason", st.Reason.Error()))
+	}
+	r.env.Logger().Error("behaviour terminating", attrs...)
 }
 
 // briefLimit bounds the size of values in reports.
@@ -377,7 +384,11 @@ func (r *runtime[S]) demonitor(tag any) {
 func (r *runtime[S]) startTimer(e StartTimer) {
 	r.cancelTimer(e.Key)
 	r.timerGen++
-	cancel := r.env.SendAfter(e.After, timeout{key: e.Key, gen: r.timerGen})
+	after := e.After
+	if !e.At.IsZero() {
+		after = max(0, e.At.Sub(r.env.Now()))
+	}
+	cancel := r.env.SendAfter(after, timeout{key: e.Key, gen: r.timerGen})
 	r.timers[e.Key] = timer{cancel: cancel, gen: r.timerGen, msg: e.Msg}
 }
 

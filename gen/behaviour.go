@@ -28,6 +28,22 @@ type Behaviour[S any] interface {
 	Terminate(state S, reason error) []Effect
 }
 
+// Status is what the report of a behaviour terminating tells: the state,
+// the message it was handling, and why it terminates.
+type Status struct {
+	State   any
+	Message any
+	Reason  error
+}
+
+// StatusFormatter is a Behaviour that formats its Status for reports,
+// like format_status/1: to hide what is not to be logged, as secrets, or
+// to shorten what is large. It may replace any of the fields with any
+// value. The state the behaviour runs with is not changed.
+type StatusFormatter interface {
+	FormatStatus(Status) Status
+}
+
 // ErrIgnore, returned by Init, makes Start return it without the process
 // failing, like ignore in OTP.
 var ErrIgnore = errors.New("gen: ignore")

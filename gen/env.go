@@ -36,6 +36,8 @@ type Env interface {
 	Link(pid proc.PID)
 	Unlink(pid proc.PID)
 	TrapExit(on bool)
+	// Now returns the time, of the clock SendAfter runs on.
+	Now() time.Time
 	// SendAfter sends msg to Self after d, unless cancel is called first.
 	SendAfter(d time.Duration, msg any) (cancel func())
 	// Request makes an alias that also monitors pid, as

@@ -722,6 +722,8 @@ func (e *env) Unlink(pid proc.PID) {
 
 func (e *env) TrapExit(on bool) { e.p.trap = on }
 
+func (e *env) Now() time.Time { return e.s.now }
+
 func (e *env) SendAfter(d time.Duration, msg any) func() {
 	e.s.seq++
 	t := &simTimer{at: e.s.now.Add(d), seq: e.s.seq, pid: e.p.pid, msg: msg}

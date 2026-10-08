@@ -218,6 +218,17 @@ func (a adapter[S, Req, Rep, Cast]) Handle(s S, msg gen.Msg) (S, []gen.Effect) {
 	return s, nil
 }
 
+// FormatStatus formats the report of the server terminating with the
+// FormatStatus of the behaviour, if it has one: see gen.StatusFormatter.
+// The State is the state of the behaviour; the Message, the gen.Msg it
+// was handling.
+func (a adapter[S, Req, Rep, Cast]) FormatStatus(st gen.Status) gen.Status {
+	if f, ok := a.b.(gen.StatusFormatter); ok {
+		return f.FormatStatus(st)
+	}
+	return st
+}
+
 func (a adapter[S, Req, Rep, Cast]) Terminate(s S, reason error) []gen.Effect {
 	if t, ok := a.b.(Terminator[S]); ok {
 		return t.Terminate(s, reason)

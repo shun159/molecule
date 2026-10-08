@@ -51,10 +51,14 @@
 //
 //	Postpone            postpone
 //	NextEvent           {next_event, Type, Content}
-//	StartStateTimeout   {state_timeout, Time, Msg}
+//	RepeatState         repeat_state: the state enter call again
+//	StartStateTimeout   {state_timeout, Time, Msg}, At for {abs, true}
+//	UpdateStateTimeout  {state_timeout, update, Msg}
 //	CancelStateTimeout  {state_timeout, cancel}
 //	StartEventTimeout   {timeout, Time, Msg}
+//	UpdateEventTimeout  {timeout, update, Msg}
 //	StartTimeout        {{timeout, Name}, Time, Msg}
+//	UpdateTimeout       {{timeout, Name}, update, Msg}
 //	CancelTimeout       {{timeout, Name}, cancel}
 //
 // A postponed event is handled again after the next state change. An event
@@ -95,9 +99,12 @@
 //	status, err := lock.Call(ctx, caller, Status{})
 //	p := lock.SendRequest(caller, Status{}) // the reply, from p, later
 //
+// A machine implementing gen.StatusFormatter formats what the report of
+// its terminating tells, like format_status/1; its State is the Machine.
+//
 // # Differences from gen_statem
 //
-// There is no repeat_state, no hibernation, and no code change. States are
-// not atoms naming functions: state_functions is written with types, as
-// above.
+// There is no hibernation, no code change, and no change of callback
+// module. States are not atoms naming functions: state_functions is
+// written with types, as above.
 package genstatem

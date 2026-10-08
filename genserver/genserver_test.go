@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/genserver"
+	"github.com/shun159/molecule/internal/testlog"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -417,5 +419,43 @@ func TestSendRequest(t *testing.T) {
 	p := ref.SendRequest(n, sum{})
 	if v, err := p.Wait(ctx); v != 3 || err != nil {
 		t.Errorf("SendRequest: %v, %v", v, err)
+	}
+}
+
+// vault keeps a secret, and panics on a cast; its reports hide the secret.
+type vault struct{ genserver.Default[string] }
+
+func (vault) Init(proc.PID) (string, []gen.Effect, error) { return "s3cr3t", nil, nil }
+
+func (vault) HandleCast(string, struct{}) (string, []gen.Effect) { panic("boom") }
+
+func (vault) FormatStatus(st gen.Status) gen.Status {
+	st.State = "redacted"
+	return st
+}
+
+func TestFormatStatus(t *testing.T) {
+	rec, logger := testlog.New()
+	n := proc.NewNode("", proc.WithLogger(logger))
+	ctx := context.Background()
+	ref, err := genserver.Start(ctx, n, vault{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, _ := ref.Dest().WhereIs(n)
+	gone, stop := n.Watch(ctx, pid)
+	defer stop()
+	ref.Cast(n, struct{}{})
+	<-gone.Done()
+	reports := rec.Records("behaviour terminating")
+	if len(reports) != 1 || reports[0].Attrs["state"] != "redacted" {
+		t.Fatalf("reports %+v", reports)
+	}
+	for _, r := range rec.Records("") {
+		for _, v := range r.Attrs {
+			if strings.Contains(v, "s3cr3t") {
+				t.Errorf("secret logged: %+v", r)
+			}
+		}
 	}
 }

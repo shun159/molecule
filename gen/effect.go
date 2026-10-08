@@ -69,6 +69,9 @@ type StartTimer struct {
 	Key   any
 	After time.Duration
 	Msg   any
+	// At, if set, is when the timer fires rather than After: a time in
+	// the past fires at once.
+	At time.Time
 }
 
 // CancelTimer cancels the timer under Key. Its Msg does not arrive
