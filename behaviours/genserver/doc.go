@@ -57,7 +57,7 @@
 // the reply is taken from the Pending it returns, in a select on its Done,
 // or with Wait.
 //
-// [StartLinkFunc] makes the start function of a supervisor.ChildSpec.
+// [Child] makes the Start of a supervisor.ChildSpec.
 //
 // # Servers calling servers
 //

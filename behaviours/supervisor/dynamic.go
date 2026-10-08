@@ -47,12 +47,12 @@ func StartDynamic(ctx context.Context, n *proc.Node, spec DynamicSpec) (proc.PID
 	return n.Start(ctx, func(s *proc.Self) error { return runDynamic(s, spec) })
 }
 
-// StartDynamicLinkFunc returns a StartFunc that starts a dynamic
-// supervisor, to nest it under another supervisor.
-func StartDynamicLinkFunc(spec DynamicSpec) StartFunc {
-	return func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
+// DynamicChild returns the Starter of a dynamic supervisor, to nest it
+// under another supervisor.
+func DynamicChild(spec DynamicSpec) Starter {
+	return StartFunc(func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
 		return StartDynamicLink(ctx, parent, spec)
-	}
+	})
 }
 
 type (
@@ -226,7 +226,7 @@ func (d *dynamic) call(req any) any {
 // start starts c and records it as running. A child that is ignored is
 // not recorded, and molecule.ErrIgnore is returned.
 func (d *dynamic) start(c *dynamicChild) error {
-	pid, err := c.spec.Start(context.Background(), d.self)
+	pid, err := c.spec.Start.StartLink(context.Background(), d.self)
 	if err != nil {
 		if !errors.Is(err, molecule.ErrIgnore) {
 			reportStartFailed(d.self, "", err)

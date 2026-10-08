@@ -83,11 +83,11 @@ func (sh *shared) get() (net.Listener, proc.PID) {
 
 // NewListener returns a listener running b for spec, not yet started.
 func NewListener[S any](spec Spec, b Behaviour[S]) *Listener {
-	start := gen.StartLinkFunc(adapter[S]{b: b, activeN: activeN(spec)}, nil)
+	start := gen.ChildOf(adapter[S]{b: b, activeN: activeN(spec)}, nil)
 	opts := spec.Options
 	opts.Active = gentcp.Passive // until Init has run
 	return newListener(spec, func(ctx context.Context, parent *proc.Self, conn net.Conn) (proc.PID, error) {
-		pid, err := start(ctx, parent)
+		pid, err := start.StartLink(ctx, parent)
 		if err != nil {
 			return pid, err
 		}
@@ -137,7 +137,7 @@ func (l *Listener) StartLink(ctx context.Context, parent *proc.Self) (proc.PID, 
 // ChildSpec returns the spec to run the listener under a supervisor. When
 // it is restarted there, the Listener follows the new processes.
 func (l *Listener) ChildSpec(id string) supervisor.ChildSpec {
-	return supervisor.ChildSpec{ID: id, Start: l.StartLink, Type: supervisor.Supervisor}
+	return supervisor.ChildSpec{ID: id, Start: supervisor.StartFunc(l.StartLink), Type: supervisor.Supervisor}
 }
 
 func (l *Listener) setPID(sup proc.PID) {
@@ -183,22 +183,22 @@ func (l *Listener) supervisorSpec() supervisor.Spec {
 	for i := range acceptors {
 		accs = append(accs, supervisor.ChildSpec{
 			ID: "acceptor" + strconv.Itoa(i),
-			Start: func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
+			Start: supervisor.StartFunc(func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
 				return parent.StartLink(ctx, func(s *proc.Self) error {
 					s.InitAck(nil)
 					return accept(s, sh, l.startConn)
 				})
-			},
+			}),
 		})
 	}
 
 	return supervisor.Spec{
 		Strategy: supervisor.RestForOne,
 		Children: []supervisor.ChildSpec{
-			{ID: "socket", Start: func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
+			{ID: "socket", Start: supervisor.StartFunc(func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
 				return parent.StartLink(ctx, func(s *proc.Self) error { return listen(s, spec.Addr, sh) })
-			}},
-			{ID: "conns", Type: supervisor.Supervisor, Start: func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
+			})},
+			{ID: "conns", Type: supervisor.Supervisor, Start: supervisor.StartFunc(func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
 				pid, err := supervisor.StartDynamicLink(ctx, parent, supervisor.DynamicSpec{MaxChildren: spec.MaxConns})
 				if err == nil {
 					sh.mu.Lock()
@@ -206,8 +206,8 @@ func (l *Listener) supervisorSpec() supervisor.Spec {
 					sh.mu.Unlock()
 				}
 				return pid, err
-			}},
-			{ID: "acceptors", Type: supervisor.Supervisor, Start: supervisor.StartLinkFunc(supervisor.Spec{Children: accs})},
+			})},
+			{ID: "acceptors", Type: supervisor.Supervisor, Start: supervisor.Child(supervisor.Spec{Children: accs})},
 		},
 	}
 }
@@ -266,13 +266,13 @@ func accept(s *proc.Self, sh *shared, startConn startConn) error {
 		}
 		_, err = supervisor.StartChild(context.Background(), s, conns, supervisor.ChildSpec{
 			Restart: supervisor.Temporary,
-			Start: func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
+			Start: supervisor.StartFunc(func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
 				pid, err := startConn(ctx, parent, conn)
 				if err != nil {
 					conn.Close()
 				}
 				return pid, err
-			},
+			}),
 		})
 		if err != nil {
 			conn.Close() // over MaxConns, or the handler failed to start

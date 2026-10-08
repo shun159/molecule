@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/dist"
 	"github.com/shun159/molecule/proc"
@@ -103,10 +104,10 @@ func StartLink(ctx context.Context, parent *proc.Self, name molecule.Name) (proc
 	return pidOf(ref), err
 }
 
-// StartLinkFunc returns the start function of a scope registered as name,
-// for a supervisor.ChildSpec.
-func StartLinkFunc(name molecule.Name) func(context.Context, *proc.Self) (proc.PID, error) {
-	return genserver.StartLinkFunc(scopeFor(name), molecule.WithName(name))
+// Child returns a scope registered as name as a child to start, the Start
+// of a supervisor.ChildSpec.
+func Child(name molecule.Name) gen.Child {
+	return genserver.Child(scopeFor(name), molecule.WithName(name))
 }
 
 func scopeFor(name molecule.Name) Scope {

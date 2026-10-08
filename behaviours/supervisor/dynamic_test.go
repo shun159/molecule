@@ -146,12 +146,12 @@ func TestDynamicStartFailures(t *testing.T) {
 	inWorld(t, func(w *world) {
 		sup := w.startDynamic(supervisor.DynamicSpec{})
 		ignore := func(context.Context, *proc.Self) (proc.PID, error) { return proc.PID{}, molecule.ErrIgnore }
-		if _, err := supervisor.StartChild(context.Background(), w.n, sup, supervisor.ChildSpec{Start: ignore}); err != molecule.ErrIgnore {
+		if _, err := supervisor.StartChild(context.Background(), w.n, sup, supervisor.ChildSpec{Start: supervisor.StartFunc(ignore)}); err != molecule.ErrIgnore {
 			t.Errorf("ignored child: %v", err)
 		}
 		var fail atomic.Int32
 		fail.Store(1)
-		failing := supervisor.ChildSpec{Start: genserver.StartLinkFunc(worker{id: "f", observer: w.observer, failInit: &fail})}
+		failing := supervisor.ChildSpec{Start: genserver.Child(worker{id: "f", observer: w.observer, failInit: &fail})}
 		if _, err := supervisor.StartChild(context.Background(), w.n, sup, failing); !errors.Is(err, errInit) {
 			t.Errorf("failing child: %v", err)
 		}
@@ -181,7 +181,7 @@ func TestDynamicParallelShutdown(t *testing.T) {
 		sup := <-sups
 		var children []proc.PID
 		for range 3 {
-			children = append(children, w.startChild(sup, supervisor.ChildSpec{Start: stubborn, Shutdown: time.Second}))
+			children = append(children, w.startChild(sup, supervisor.ChildSpec{Start: supervisor.StartFunc(stubborn), Shutdown: time.Second}))
 		}
 		down, stop := w.n.Watch(context.Background(), sup)
 		defer stop()
@@ -230,7 +230,7 @@ func TestDynamicRestartRetry(t *testing.T) {
 		var fail atomic.Int32
 		sup := w.startDynamic(supervisor.DynamicSpec{Intensity: 5})
 		pid := w.startChild(sup, supervisor.ChildSpec{
-			Start: genserver.StartLinkFunc(worker{id: "a", observer: w.observer, failInit: &fail}),
+			Start: genserver.Child(worker{id: "a", observer: w.observer, failInit: &fail}),
 		})
 		w.expect(started{"a"})
 		fail.Store(2)

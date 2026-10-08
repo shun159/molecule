@@ -108,7 +108,7 @@ func kill(n *proc.Node, pid proc.PID, reason error) {
 func (w *world) worker(id string, restart supervisor.Restart) supervisor.ChildSpec {
 	return supervisor.ChildSpec{
 		ID:      id,
-		Start:   genserver.StartLinkFunc(worker{id: id, observer: w.observer}),
+		Start:   genserver.Child(worker{id: id, observer: w.observer}),
 		Restart: restart,
 	}
 }
@@ -325,7 +325,7 @@ func TestStartFailure(t *testing.T) {
 		fail.Store(1)
 		_, err := supervisor.Start(context.Background(), w.n, supervisor.Spec{Children: []supervisor.ChildSpec{
 			w.worker("a", supervisor.Permanent),
-			{ID: "b", Start: genserver.StartLinkFunc(worker{id: "b", observer: w.observer, failInit: &fail})},
+			{ID: "b", Start: genserver.Child(worker{id: "b", observer: w.observer, failInit: &fail})},
 			w.worker("c", supervisor.Permanent),
 		}})
 		var se *supervisor.StartError
@@ -340,7 +340,7 @@ func TestIgnoredChild(t *testing.T) {
 	inWorld(t, func(w *world) {
 		ignore := func(context.Context, *proc.Self) (proc.PID, error) { return proc.PID{}, molecule.ErrIgnore }
 		sup := w.start(supervisor.Spec{Children: []supervisor.ChildSpec{
-			{ID: "ignored", Start: ignore},
+			{ID: "ignored", Start: supervisor.StartFunc(ignore)},
 			w.worker("a", supervisor.Permanent),
 		}})
 		w.expect(started{"a"})
@@ -378,7 +378,7 @@ func TestShutdown(t *testing.T) {
 				sup := w.start(supervisor.Spec{
 					Strategy: supervisor.OneForAll,
 					Children: []supervisor.ChildSpec{
-						{ID: "stubborn", Start: stubborn, Shutdown: tt.shutdown},
+						{ID: "stubborn", Start: supervisor.StartFunc(stubborn), Shutdown: tt.shutdown},
 						w.worker("b", supervisor.Permanent),
 					},
 				})
@@ -409,7 +409,7 @@ func TestShutdownWaitsForSupervisors(t *testing.T) {
 		outer := w.start(supervisor.Spec{
 			Strategy: supervisor.OneForAll,
 			Children: []supervisor.ChildSpec{
-				{ID: "inner", Start: supervisor.StartLinkFunc(inner), Type: supervisor.Supervisor},
+				{ID: "inner", Start: supervisor.Child(inner), Type: supervisor.Supervisor},
 				w.worker("w", supervisor.Permanent),
 			},
 		})
@@ -430,12 +430,12 @@ func TestShutdownWaitsForSupervisors(t *testing.T) {
 func TestSupervisorChildWaitsForever(t *testing.T) {
 	inWorld(t, func(w *world) {
 		inner := supervisor.Spec{Children: []supervisor.ChildSpec{
-			{ID: "slow", Start: stubborn, Shutdown: 10 * time.Second},
+			{ID: "slow", Start: supervisor.StartFunc(stubborn), Shutdown: 10 * time.Second},
 		}}
 		outer := w.start(supervisor.Spec{
 			Strategy: supervisor.OneForAll,
 			Children: []supervisor.ChildSpec{
-				{ID: "inner", Start: supervisor.StartLinkFunc(inner), Type: supervisor.Supervisor},
+				{ID: "inner", Start: supervisor.Child(inner), Type: supervisor.Supervisor},
 				w.worker("w", supervisor.Permanent),
 			},
 		})
@@ -488,7 +488,7 @@ func TestNestedRestart(t *testing.T) {
 	inWorld(t, func(w *world) {
 		inner := supervisor.Spec{Intensity: 1, Children: []supervisor.ChildSpec{w.worker("x", supervisor.Permanent)}}
 		outer := w.start(supervisor.Spec{Intensity: 1, Children: []supervisor.ChildSpec{
-			{ID: "inner", Start: supervisor.StartLinkFunc(inner), Type: supervisor.Supervisor},
+			{ID: "inner", Start: supervisor.Child(inner), Type: supervisor.Supervisor},
 		}})
 		w.expect(started{"x"})
 		innerPID := w.children(outer)["inner"]
@@ -518,7 +518,7 @@ func TestRestartRetry(t *testing.T) {
 			inWorld(t, func(w *world) {
 				var fail atomic.Int32
 				sup := w.start(supervisor.Spec{Intensity: tt.intensity, Children: []supervisor.ChildSpec{
-					{ID: "a", Start: genserver.StartLinkFunc(worker{id: "a", observer: w.observer, failInit: &fail})},
+					{ID: "a", Start: genserver.Child(worker{id: "a", observer: w.observer, failInit: &fail})},
 				}})
 				w.expect(started{"a"})
 				down, stop := w.n.Watch(context.Background(), sup)
@@ -548,7 +548,7 @@ func TestSpecErrors(t *testing.T) {
 		for _, spec := range []supervisor.Spec{
 			{Children: []supervisor.ChildSpec{w.worker("a", supervisor.Permanent), w.worker("a", supervisor.Permanent)}},
 			{Children: []supervisor.ChildSpec{{ID: "nostart"}}},
-			{Children: []supervisor.ChildSpec{{Start: stubborn}}},
+			{Children: []supervisor.ChildSpec{{Start: supervisor.StartFunc(stubborn)}}},
 			{Strategy: 42},
 		} {
 			if _, err := supervisor.Start(context.Background(), w.n, spec); err == nil {

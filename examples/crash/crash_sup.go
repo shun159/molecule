@@ -21,7 +21,7 @@ func startCrashSup(ctx context.Context, n *proc.Node) (proc.PID, error) {
 		Period:    5 * time.Second,
 		Children: []supervisor.ChildSpec{{
 			ID:      "calc",
-			Start:   genserver.StartLinkFunc(CalcServer{}, molecule.WithName(calcName)),
+			Start:   genserver.Child(CalcServer{}, molecule.WithName(calcName)),
 			Restart: supervisor.Permanent,
 		}},
 	})

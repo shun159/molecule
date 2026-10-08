@@ -179,10 +179,10 @@ func StartLink[St comparable, D any](ctx context.Context, parent *proc.Self, b B
 	return gen.StartLink(ctx, parent, newAdapter(b), nil, opts...)
 }
 
-// StartLinkFunc returns a function that starts b linked to its parent, to
-// use as the Start of a supervisor.ChildSpec.
-func StartLinkFunc[St comparable, D any](b Behaviour[St, D], opts ...molecule.Option) func(context.Context, *proc.Self) (proc.PID, error) {
-	return gen.StartLinkFunc(newAdapter(b), nil, opts...)
+// Child returns b as a child to start, the Start of a
+// supervisor.ChildSpec, which gensim can simulate as well.
+func Child[St comparable, D any](b Behaviour[St, D], opts ...molecule.Option) gen.Child {
+	return gen.ChildOf(newAdapter(b), nil, opts...)
 }
 
 // Ref is a handle on a machine, to call and cast it.

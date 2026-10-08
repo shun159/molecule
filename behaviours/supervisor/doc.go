@@ -59,12 +59,14 @@
 //
 //   - ID identifies the child within the supervisor. It is required, except
 //     for a dynamic supervisor.
-//   - Start starts the child and returns its PID. It must start the child
-//     linked to the supervisor, which it gets as parent, and wait until the
-//     child has started: the StartLinkFunc functions of genserver,
-//     genstatem, gen and this package do so. Returning molecule.ErrIgnore means
-//     the child is not to run: the supervisor keeps its specification
-//     without a process. Any other error is a failure to start.
+//   - Start is a [Starter], which starts the child and returns its PID: it
+//     starts the child linked to the supervisor, which it gets as parent,
+//     and waits until the child has started. genserver.Child,
+//     genstatem.Child, [Child] and [DynamicChild] make one, which gensim
+//     can simulate as well; [StartFunc] makes one of any function.
+//     Returning molecule.ErrIgnore means the child is not to run: the
+//     supervisor keeps its specification without a process. Any other
+//     error is a failure to start.
 //   - Restart says when a child that exited is restarted. [Permanent]
 //     children always are. [Temporary] children never are, and are
 //     forgotten. [Transient] children are restarted only after an abnormal

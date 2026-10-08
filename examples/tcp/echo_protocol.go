@@ -21,14 +21,14 @@ func connsChildSpec(id string) supervisor.ChildSpec {
 	return supervisor.ChildSpec{
 		ID:    id,
 		Type:  supervisor.Supervisor,
-		Start: supervisor.StartDynamicLinkFunc(supervisor.DynamicSpec{Name: connsName}),
+		Start: supervisor.DynamicChild(supervisor.DynamicSpec{Name: connsName}),
 	}
 }
 
 func protocolChildSpec() supervisor.ChildSpec {
 	return supervisor.ChildSpec{
 		Restart: supervisor.Temporary,
-		Start:   genserver.StartLinkFunc(EchoProtocol{}),
+		Start:   genserver.Child(EchoProtocol{}),
 	}
 }
 

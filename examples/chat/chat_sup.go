@@ -34,7 +34,7 @@ func startChat(ctx context.Context, n *proc.Node, addr string) (*chat, error) {
 	sup, err := supervisor.Start(ctx, n, supervisor.Spec{
 		Strategy: supervisor.RestForOne,
 		Children: []supervisor.ChildSpec{
-			{ID: "chat_pg", Start: pg.StartLinkFunc(scope)},
+			{ID: "chat_pg", Start: pg.Child(scope)},
 			listener.ChildSpec("chat_listener"),
 		},
 	})

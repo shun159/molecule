@@ -42,7 +42,7 @@ var (
 func statsChildSpec(id string) supervisor.ChildSpec {
 	return supervisor.ChildSpec{
 		ID:    id,
-		Start: genserver.StartLinkFunc(EchoStats{}, molecule.WithName(statsName)),
+		Start: genserver.Child(EchoStats{}, molecule.WithName(statsName)),
 	}
 }
 

@@ -64,7 +64,7 @@ func TestStartFailedReports(t *testing.T) {
 	inWorld(t, func(w *world) {
 		var fail atomic.Int32
 		sup := w.start(supervisor.Spec{Intensity: 5, Children: []supervisor.ChildSpec{
-			{ID: "a", Start: genserver.StartLinkFunc(worker{id: "a", observer: w.observer, failInit: &fail})},
+			{ID: "a", Start: genserver.Child(worker{id: "a", observer: w.observer, failInit: &fail})},
 		}})
 		w.expect(started{"a"})
 		fail.Store(2)

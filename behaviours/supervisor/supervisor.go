@@ -35,16 +35,26 @@ const (
 	Supervisor
 )
 
-// StartFunc starts a child linked to parent and returns its PID. It
-// returns molecule.ErrIgnore for a child that is not to run, which the
-// supervisor keeps without a process. genserver.StartLinkFunc and
-// StartLinkFunc make one.
+// Starter starts a child linked to parent and returns its PID, once it has
+// started. It returns molecule.ErrIgnore for a child that is not to run,
+// which the supervisor keeps without a process. genserver.Child,
+// genstatem.Child, Child and DynamicChild make one, which gensim can
+// simulate as well; StartFunc makes one of any function.
+type Starter interface {
+	StartLink(ctx context.Context, parent *proc.Self) (proc.PID, error)
+}
+
+// StartFunc is a Starter of a function.
 type StartFunc func(ctx context.Context, parent *proc.Self) (proc.PID, error)
+
+func (f StartFunc) StartLink(ctx context.Context, parent *proc.Self) (proc.PID, error) {
+	return f(ctx, parent)
+}
 
 // ChildSpec describes a child.
 type ChildSpec struct {
 	ID      string
-	Start   StartFunc
+	Start   Starter
 	Restart Restart
 	// Shutdown is how long the child is given to stop after being asked
 	// to with proc.Shutdown, before it is killed. Zero means
@@ -116,12 +126,12 @@ func Start(ctx context.Context, n *proc.Node, spec Spec) (proc.PID, error) {
 	return n.Start(ctx, func(s *proc.Self) error { return run(ctx, s, spec) })
 }
 
-// StartLinkFunc returns a StartFunc that starts a supervisor, to nest it
-// under another one.
-func StartLinkFunc(spec Spec) StartFunc {
-	return func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
+// Child returns the Starter of a supervisor, to nest it under another
+// one.
+func Child(spec Spec) Starter {
+	return StartFunc(func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
 		return StartLink(ctx, parent, spec)
-	}
+	})
 }
 
 type (
@@ -330,7 +340,7 @@ func (s *supervisor) restart(c *child) error {
 }
 
 func (s *supervisor) start(ctx context.Context, c *child) error {
-	pid, err := c.spec.Start(ctx, s.self)
+	pid, err := c.spec.Start.StartLink(ctx, s.self)
 	switch {
 	case errors.Is(err, molecule.ErrIgnore):
 		c.pid = proc.PID{}

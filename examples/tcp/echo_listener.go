@@ -26,11 +26,11 @@ type listener struct {
 func (l *listener) childSpec(id, addr string, acceptors int) supervisor.ChildSpec {
 	return supervisor.ChildSpec{
 		ID: id,
-		Start: func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
+		Start: supervisor.StartFunc(func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
 			return parent.StartLink(ctx, func(self *proc.Self) error {
 				return l.listen(self, addr, acceptors)
 			})
-		},
+		}),
 	}
 }
 
