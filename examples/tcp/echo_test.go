@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/shun159/molecule"
-	"github.com/shun159/molecule/behaviours/supervisor"
 	"github.com/shun159/molecule/net/gentcp"
 	"github.com/shun159/molecule/proc"
 )
@@ -18,13 +17,13 @@ import (
 func TestEchoApplication(t *testing.T) {
 	n := proc.NewNode("")
 	ctx := context.Background()
-	app, err := startEcho(ctx, n, "127.0.0.1:0")
+	app, addr, err := startEcho(ctx, n, "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer supervisor.Stop(ctx, n, app.sup)
+	defer app.Stop(ctx)
 
-	conn, err := net.Dial("tcp", app.addr.String())
+	conn, err := net.Dial("tcp", addr.String())
 	if err != nil {
 		t.Fatal(err)
 	}

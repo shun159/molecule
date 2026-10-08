@@ -26,6 +26,7 @@ functions, without starting a process.
     behaviours/genstatem       gen_statem
     behaviours/supervisor      supervisors, static and dynamic
     behaviours/gen             the runtime of behaviours, for those building them
+    application                applications: trees started and stopped in order
     net/gentcp                 TCP sockets owned by processes, like gen_tcp
     net/gentcpacceptor         TCP acceptor pool and connection behaviour
     dist                       distribution: processes of several nodes, by PID

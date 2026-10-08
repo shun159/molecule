@@ -18,12 +18,13 @@ import (
 	"flag"
 	"log"
 	"os"
-	"os/signal"
 	"strings"
 	"time"
 
 	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/application"
 	"github.com/shun159/molecule/behaviours/genserver"
+	"github.com/shun159/molecule/behaviours/supervisor"
 	"github.com/shun159/molecule/dist"
 	"github.com/shun159/molecule/proc"
 )
@@ -38,9 +39,6 @@ func main() {
 	flag.Parse()
 	peerName, peerAddr, _ := strings.Cut(*peer, "=")
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
 	n := proc.NewNode(*name)
 	d, err := dist.Start(n, dist.Config{
 		Listen:   *listen,
@@ -52,10 +50,16 @@ func main() {
 		log.Fatal(err)
 	}
 	defer d.Stop()
-	n.Register(consoleName, n.Spawn(console(os.Stdout)))
+
 	w := Worker{Node: *name, Peer: peerName, Primary: *primary, Every: 500 * time.Millisecond}
-	if _, err := genserver.Start(ctx, n, w, molecule.WithName(workerName)); err != nil {
+	err = application.Run(context.Background(), n, application.App{
+		Name: "failover",
+		Start: supervisor.Child(supervisor.Spec{Children: []supervisor.ChildSpec{
+			{ID: "console", Start: consoleChild(os.Stdout)},
+			{ID: "worker", Start: genserver.Child(w, molecule.WithName(workerName))},
+		}}),
+	})
+	if err != nil {
 		log.Fatal(err)
 	}
-	<-ctx.Done()
 }

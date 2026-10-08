@@ -20,8 +20,8 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"syscall"
 
-	"github.com/shun159/molecule/behaviours/supervisor"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -29,21 +29,28 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:5555", "address to listen on")
 	flag.Parse()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	n := proc.NewNode("echo@localhost")
-	app, err := startEcho(context.Background(), n, *addr)
+	app, a, err := startEcho(context.Background(), n, *addr)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("echo: listening on %v", app.addr)
+	log.Printf("echo: listening on %v", a)
 
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case <-app.Done(): // the tree gave up
+	}
 	if s, err := statsRef.Call(context.Background(), n, GetStats{}); err == nil {
 		log.Printf("echo: served %d connections, %d bytes", s.Total, s.Bytes)
 	}
-	if err := supervisor.Stop(context.Background(), n, app.sup); err != nil {
+	// The tree stops in order: the listener, the connections, the stats.
+	if err := app.Stop(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+	if err := app.Err(); err != nil {
 		log.Fatal(err)
 	}
 }
