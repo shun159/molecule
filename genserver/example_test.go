@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/genserver"
 	"github.com/shun159/molecule/proc"
 )
@@ -28,19 +28,19 @@ func (Reset) counterReq() {}
 // Add is the only cast.
 type Add struct{ N int }
 
-func (c Counter) Init(proc.PID) (int, []gen.Effect, error) { return c.Initial, nil, nil }
+func (c Counter) Init(proc.PID) (int, []molecule.Effect, error) { return c.Initial, nil, nil }
 
-func (Counter) HandleCall(n int, req CounterReq, from genserver.From[int]) (int, []gen.Effect) {
+func (Counter) HandleCall(n int, req CounterReq, from genserver.From[int]) (int, []molecule.Effect) {
 	switch req.(type) {
 	case Get:
-		return n, gen.Do(from.Reply(n))
+		return n, molecule.Do(from.Reply(n))
 	case Reset:
-		return 0, gen.Do(from.Reply(n))
+		return 0, molecule.Do(from.Reply(n))
 	}
 	return n, nil
 }
 
-func (Counter) HandleCast(n int, msg Add) (int, []gen.Effect) {
+func (Counter) HandleCast(n int, msg Add) (int, []molecule.Effect) {
 	return n + msg.N, nil
 }
 
@@ -48,7 +48,7 @@ func Example() {
 	n := proc.NewNode("")
 	ctx := context.Background()
 
-	counter, err := genserver.Start(ctx, n, Counter{Initial: 10}, gen.WithName(gen.Local("counter")))
+	counter, err := genserver.Start(ctx, n, Counter{Initial: 10}, molecule.WithName(molecule.Local("counter")))
 	if err != nil {
 		panic(err)
 	}
@@ -57,7 +57,7 @@ func Example() {
 	fmt.Println("get:", v)
 
 	// Elsewhere, reach it by name with the types taken from the behaviour.
-	byName := genserver.RefFor(Counter{}, gen.Local("counter"))
+	byName := genserver.RefFor(Counter{}, molecule.Local("counter"))
 	v, _ = byName.Call(ctx, n, Reset{})
 	fmt.Println("reset returned:", v)
 	v, _ = byName.Call(ctx, n, Get{})
@@ -79,12 +79,12 @@ type Barrier struct {
 
 type Wait struct{}
 
-func (b Barrier) HandleCall(waiting []genserver.From[string], _ Wait, from genserver.From[string]) ([]genserver.From[string], []gen.Effect) {
+func (b Barrier) HandleCall(waiting []genserver.From[string], _ Wait, from genserver.From[string]) ([]genserver.From[string], []molecule.Effect) {
 	waiting = append(waiting[:len(waiting):len(waiting)], from)
 	if len(waiting) < b.N {
 		return waiting, nil // no reply yet
 	}
-	var effs []gen.Effect
+	var effs []molecule.Effect
 	for _, w := range waiting {
 		effs = append(effs, w.Reply("go"))
 	}

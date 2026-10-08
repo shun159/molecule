@@ -7,7 +7,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -36,7 +36,7 @@ const (
 )
 
 // StartFunc starts a child linked to parent and returns its PID. It
-// returns gen.ErrIgnore for a child that is not to run, which the
+// returns molecule.ErrIgnore for a child that is not to run, which the
 // supervisor keeps without a process. genserver.StartLinkFunc and
 // StartLinkFunc make one.
 type StartFunc func(ctx context.Context, parent *proc.Self) (proc.PID, error)
@@ -66,7 +66,7 @@ func (c ChildSpec) shutdown() time.Duration {
 // Spec describes a supervisor.
 type Spec struct {
 	// Name, if set, is registered before the children start.
-	Name     gen.Name
+	Name     molecule.Name
 	Strategy Strategy
 	// If more than Intensity restarts happen within Period, the
 	// supervisor terminates its children and exits with ErrMaxIntensity.
@@ -132,15 +132,15 @@ type (
 // Stop stops the supervisor at sup, static or dynamic, as its parent
 // exiting would: its children are stopped, then it exits with
 // proc.Shutdown. It returns once the supervisor is dead.
-func Stop(ctx context.Context, caller gen.Caller, sup gen.Dest) error {
+func Stop(ctx context.Context, caller molecule.Caller, sup molecule.Dest) error {
 	n := caller.Node()
 	pid, ok := sup.WhereIs(n)
 	if !ok {
-		return &gen.ExitError{To: sup, Reason: proc.NoProc}
+		return &molecule.ExitError{To: sup, Reason: proc.NoProc}
 	}
 	down, release := n.Watch(ctx, pid)
 	defer release()
-	if _, err := gen.Call(ctx, caller, pid, stopReq{}); err != nil {
+	if _, err := molecule.Call(ctx, caller, pid, stopReq{}); err != nil {
 		return err
 	}
 	<-down.Done()
@@ -149,8 +149,8 @@ func Stop(ctx context.Context, caller gen.Caller, sup gen.Dest) error {
 
 // WhichChildren returns the children of the supervisor at sup, in start
 // order.
-func WhichChildren(ctx context.Context, caller gen.Caller, sup gen.Dest) ([]ChildInfo, error) {
-	v, err := gen.Call(ctx, caller, sup, whichChildren{})
+func WhichChildren(ctx context.Context, caller molecule.Caller, sup molecule.Dest) ([]ChildInfo, error) {
+	v, err := molecule.Call(ctx, caller, sup, whichChildren{})
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +203,7 @@ func run(ctx context.Context, self *proc.Self, spec Spec) error {
 	if spec.Name != nil {
 		if err := spec.Name.Register(self.Node(), self.PID()); err != nil {
 			if pid, ok := spec.Name.WhereIs(self.Node()); ok && pid != self.PID() {
-				err = &gen.AlreadyStartedError{PID: pid}
+				err = &molecule.AlreadyStartedError{PID: pid}
 			}
 			self.InitAck(err)
 			return nil
@@ -270,13 +270,13 @@ func (s *supervisor) loop() error {
 				s.terminateAll()
 				return err
 			}
-		case gen.CallMsg:
+		case molecule.CallMsg:
 			switch m.Req.(type) {
 			case whichChildren:
-				gen.SendReply(s.self, m.From, s.which())
+				molecule.SendReply(s.self, m.From, s.which())
 			case stopReq:
 				s.terminateAll()
-				gen.SendReply(s.self, m.From, nil)
+				molecule.SendReply(s.self, m.From, nil)
 				return proc.Shutdown
 			}
 		}
@@ -332,7 +332,7 @@ func (s *supervisor) restart(c *child) error {
 func (s *supervisor) start(ctx context.Context, c *child) error {
 	pid, err := c.spec.Start(ctx, s.self)
 	switch {
-	case errors.Is(err, gen.ErrIgnore):
+	case errors.Is(err, molecule.ErrIgnore):
 		c.pid = proc.PID{}
 		return nil
 	case err != nil:

@@ -1,4 +1,4 @@
-package gen
+package molecule
 
 import (
 	"time"
@@ -14,7 +14,7 @@ import (
 // must be comparable.
 type Effect interface{ effect() }
 
-// Do collects effects, for brevity: return s, gen.Do(a, b).
+// Do collects effects, for brevity: return s, Do(a, b).
 func Do(effs ...Effect) []Effect { return effs }
 
 // Reply replies to a call.
@@ -107,23 +107,12 @@ type TrapExit struct {
 }
 
 // Extension is embedded in the effects of behaviours built on gen, such as
-// genstatem: an effect type embedding it is an Effect, for the behaviour's
-// adapter to handle before returning the rest to the runtime. The runtime
-// panics on any it is given.
+// the actions of genstatem: an effect type embedding it is an Effect, for
+// the adapter of the behaviour to handle before returning the rest to the
+// runtime, which panics on any it is given, but a gen.Performer.
 type Extension struct{}
 
 func (Extension) effect() {}
-
-// Performer is an effect that performs itself, for what lies outside the
-// processes, such as a socket: the runtime calls Perform in the process
-// of the behaviour, in the order of the effects, with the Env it acts on.
-// It embeds Extension. The effect is still a value, compared and tested as
-// any other; only the runtime performs it, so the behaviour stays pure.
-// In gensim, Perform acts on the real world all the same.
-type Performer interface {
-	Effect
-	Perform(env Env)
-}
 
 func (Continue) effect()    {}
 func (Reply) effect()       {}

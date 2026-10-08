@@ -8,7 +8,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/genstatem"
 	"github.com/shun159/molecule/proc"
 )
@@ -50,19 +50,19 @@ func TestCodeLockPure(t *testing.T) {
 
 	state, data, effs := l.HandleEvent(Locked, Data{}, press(1))
 	if state != Locked || !reflect.DeepEqual(data.Buttons, []int{1}) ||
-		!reflect.DeepEqual(effs, gen.Do(genstatem.StartEventTimeout{After: clearTime, Msg: clear{}})) {
+		!reflect.DeepEqual(effs, molecule.Do(genstatem.StartEventTimeout{After: clearTime, Msg: clear{}})) {
 		t.Errorf("first button: %v %+v %#v", state, data, effs)
 	}
 	state, _, effs = l.HandleEvent(state, data, press(2))
-	if state != Open || !reflect.DeepEqual(effs, gen.Do(gen.Send{To: display, Msg: "correct code"})) {
+	if state != Open || !reflect.DeepEqual(effs, molecule.Do(molecule.Send{To: display, Msg: "correct code"})) {
 		t.Errorf("right code: %v %#v", state, effs)
 	}
 	_, _, effs = l.HandleEvent(Open, Data{}, genstatem.Enter[State]{Old: Locked})
-	want := gen.Do(gen.Send{To: display, Msg: "door open"}, genstatem.StartStateTimeout{After: time.Second, Msg: lock{}})
+	want := molecule.Do(molecule.Send{To: display, Msg: "door open"}, genstatem.StartStateTimeout{After: time.Second, Msg: lock{}})
 	if !reflect.DeepEqual(effs, want) {
 		t.Errorf("entering Open: %#v", effs)
 	}
-	if _, _, effs = l.HandleEvent(Open, Data{}, press(1)); !reflect.DeepEqual(effs, gen.Do(genstatem.Postpone{})) {
+	if _, _, effs = l.HandleEvent(Open, Data{}, press(1)); !reflect.DeepEqual(effs, molecule.Do(genstatem.Postpone{})) {
 		t.Errorf("button while open: %#v", effs)
 	}
 	if state, _, _ = l.HandleEvent(Open, Data{}, genstatem.StateTimeout{Msg: lock{}}); state != Locked {

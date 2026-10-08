@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/genserver"
 	"github.com/shun159/molecule/supervisor"
 )
@@ -35,22 +35,22 @@ func (echoed) statsEvent()     {}
 
 // statsName is where EchoStats is registered, and statsRef how to reach it.
 var (
-	statsName = gen.Local("echo_stats")
+	statsName = molecule.Local("echo_stats")
 	statsRef  = genserver.RefFor(EchoStats{}, statsName)
 )
 
 func statsChildSpec(id string) supervisor.ChildSpec {
 	return supervisor.ChildSpec{
 		ID:    id,
-		Start: genserver.StartLinkFunc(EchoStats{}, gen.WithName(statsName)),
+		Start: genserver.StartLinkFunc(EchoStats{}, molecule.WithName(statsName)),
 	}
 }
 
-func (EchoStats) HandleCall(s Stats, _ GetStats, from genserver.From[Stats]) (Stats, []gen.Effect) {
-	return s, gen.Do(from.Reply(s))
+func (EchoStats) HandleCall(s Stats, _ GetStats, from genserver.From[Stats]) (Stats, []molecule.Effect) {
+	return s, molecule.Do(from.Reply(s))
 }
 
-func (EchoStats) HandleCast(s Stats, ev StatsEvent) (Stats, []gen.Effect) {
+func (EchoStats) HandleCast(s Stats, ev StatsEvent) (Stats, []molecule.Effect) {
 	switch e := ev.(type) {
 	case connOpened:
 		s.Open++

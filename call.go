@@ -1,4 +1,4 @@
-package gen
+package molecule
 
 import (
 	"context"
@@ -8,26 +8,6 @@ import (
 	"github.com/shun159/molecule/proc"
 )
 
-// From identifies a pending call, to reply to with Reply. It is plain data:
-// the caller's PID (zero when the caller is not a process) and the alias
-// the reply goes to.
-type From struct {
-	PID proc.PID
-	Tag proc.Ref
-}
-
-// CallMsg is the message a server receives for Call. Behaviours get it
-// as their Msg.
-type CallMsg struct {
-	From From
-	Req  any
-}
-
-// CastMsg is the message a server receives for Cast.
-type CastMsg struct {
-	Req any
-}
-
 // Caller is who makes a call or a cast: a process (*proc.Self) or, for
 // code outside processes, a *proc.Node.
 type Caller interface {
@@ -36,7 +16,7 @@ type Caller interface {
 
 // ErrCallingSelf is returned by a process that calls itself, which would
 // otherwise wait forever for its own reply.
-var ErrCallingSelf = errors.New("gen: calling self")
+var ErrCallingSelf = errors.New("molecule: calling self")
 
 // ExitError is returned by Call when the server died, or never existed,
 // before replying. It unwraps to the exit reason, so
@@ -47,7 +27,7 @@ type ExitError struct {
 }
 
 func (e *ExitError) Error() string {
-	return fmt.Sprintf("gen: call to %v: %v", e.To, e.Reason)
+	return fmt.Sprintf("molecule: call to %v: %v", e.To, e.Reason)
 }
 
 func (e *ExitError) Unwrap() error { return e.Reason }
@@ -59,6 +39,13 @@ func (e *ExitError) Unwrap() error { return e.Reason }
 // is still returned.
 func Call(ctx context.Context, caller Caller, to Dest, req any) (any, error) {
 	return call(ctx, caller, to, func(f From) any { return CallMsg{From: f, Req: req} })
+}
+
+// CallWith is Call with the message wrap makes of the From, for the
+// runtimes of behaviours with messages of their own, as the system
+// messages of gen, like the label of gen:call in Erlang.
+func CallWith(ctx context.Context, caller Caller, to Dest, wrap func(From) any) (any, error) {
+	return call(ctx, caller, to, wrap)
 }
 
 // call makes a synchronous request; wrap builds the message to send.

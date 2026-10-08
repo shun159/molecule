@@ -20,8 +20,9 @@ functions, without starting a process.
 
 ## Packages
 
+    molecule        names, calls, casts and effects: the vocabulary of programs
     proc            processes, links, monitors, names, synchronous start
-    gen             calls, casts, effects and the runtime of behaviours
+    gen             the runtime of behaviours, for those building them
     genserver       gen_server
     genstatem       gen_statem
     supervisor      supervisors, static and dynamic

@@ -21,8 +21,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/dist"
-	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/genserver"
 	"github.com/shun159/molecule/proc"
 )
@@ -78,7 +78,7 @@ func startNode(name string, cfg dist.Config) (*proc.Node, *dist.Dist, error) {
 		return nil, nil, err
 	}
 	pong := PongServer{node: name}
-	if _, err := genserver.Start(context.Background(), n, pong, gen.WithName(pongName)); err != nil {
+	if _, err := genserver.Start(context.Background(), n, pong, molecule.WithName(pongName)); err != nil {
 		d.Stop()
 		return nil, nil, err
 	}

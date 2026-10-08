@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -18,7 +19,7 @@ type Env interface {
 	Self() proc.PID
 	Parent() proc.PID
 	// Resolve finds the process at dest.
-	Resolve(dest Dest) (proc.PID, bool)
+	Resolve(dest molecule.Dest) (proc.PID, bool)
 	// Send sends msg to the process to.
 	Send(to proc.PID, msg any)
 	// SendName sends msg to the process registered as name on node.

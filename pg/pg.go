@@ -4,7 +4,7 @@ import (
 	"context"
 	"slices"
 
-	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/genserver"
 	"github.com/shun159/molecule/proc"
 )
@@ -29,7 +29,7 @@ type (
 	}
 )
 
-// Queries to a scope, for gen.SendRequest from a behaviour, or gensim.
+// Queries to a scope, for molecule.SendRequest from a behaviour, or gensim.
 type (
 	// MembersRequest asks for the members of Group, as Members returns
 	// them.
@@ -47,21 +47,21 @@ type state struct {
 }
 
 // Start starts a scope registered as name.
-func Start(ctx context.Context, n *proc.Node, name gen.Name) (proc.PID, error) {
-	ref, err := genserver.Start(ctx, n, Scope{}, gen.WithName(name))
+func Start(ctx context.Context, n *proc.Node, name molecule.Name) (proc.PID, error) {
+	ref, err := genserver.Start(ctx, n, Scope{}, molecule.WithName(name))
 	return pidOf(ref), err
 }
 
 // StartLink starts a scope registered as name, linked to parent.
-func StartLink(ctx context.Context, parent *proc.Self, name gen.Name) (proc.PID, error) {
-	ref, err := genserver.StartLink(ctx, parent, Scope{}, gen.WithName(name))
+func StartLink(ctx context.Context, parent *proc.Self, name molecule.Name) (proc.PID, error) {
+	ref, err := genserver.StartLink(ctx, parent, Scope{}, molecule.WithName(name))
 	return pidOf(ref), err
 }
 
 // StartLinkFunc returns the start function of a scope registered as name,
 // for a supervisor.ChildSpec.
-func StartLinkFunc(name gen.Name) func(context.Context, *proc.Self) (proc.PID, error) {
-	return genserver.StartLinkFunc(Scope{}, gen.WithName(name))
+func StartLinkFunc(name molecule.Name) func(context.Context, *proc.Self) (proc.PID, error) {
+	return genserver.StartLinkFunc(Scope{}, molecule.WithName(name))
 }
 
 func pidOf(ref genserver.Ref[any, any, any]) proc.PID {
@@ -70,78 +70,78 @@ func pidOf(ref genserver.Ref[any, any, any]) proc.PID {
 }
 
 // Join makes pids members of group in the scope, once more each.
-func Join(ctx context.Context, caller gen.Caller, scope gen.Dest, group any, pids ...proc.PID) error {
-	_, err := gen.Call(ctx, caller, scope, join{group, pids})
+func Join(ctx context.Context, caller molecule.Caller, scope molecule.Dest, group any, pids ...proc.PID) error {
+	_, err := molecule.Call(ctx, caller, scope, join{group, pids})
 	return err
 }
 
 // Leave makes pids members of group once less each. Leaving a group one
 // is not in does nothing.
-func Leave(ctx context.Context, caller gen.Caller, scope gen.Dest, group any, pids ...proc.PID) error {
-	_, err := gen.Call(ctx, caller, scope, leave{group, pids})
+func Leave(ctx context.Context, caller molecule.Caller, scope molecule.Dest, group any, pids ...proc.PID) error {
+	_, err := molecule.Call(ctx, caller, scope, leave{group, pids})
 	return err
 }
 
 // Members returns the members of group, in the order they joined, a
 // process once per join.
-func Members(ctx context.Context, caller gen.Caller, scope gen.Dest, group any) ([]proc.PID, error) {
-	v, err := gen.Call(ctx, caller, scope, MembersRequest{group})
+func Members(ctx context.Context, caller molecule.Caller, scope molecule.Dest, group any) ([]proc.PID, error) {
+	v, err := molecule.Call(ctx, caller, scope, MembersRequest{group})
 	pids, _ := v.([]proc.PID)
 	return pids, err
 }
 
 // Which returns the groups having members, in the order they were created.
-func Which(ctx context.Context, caller gen.Caller, scope gen.Dest) ([]any, error) {
-	v, err := gen.Call(ctx, caller, scope, WhichRequest{})
+func Which(ctx context.Context, caller molecule.Caller, scope molecule.Dest) ([]any, error) {
+	v, err := molecule.Call(ctx, caller, scope, WhichRequest{})
 	groups, _ := v.([]any)
 	return groups, err
 }
 
 // JoinEffect is the effect making pids members of group, for a behaviour.
-func JoinEffect(scope gen.Dest, group any, pids ...proc.PID) gen.Effect {
-	return gen.Cast{To: scope, Req: join{group, pids}}
+func JoinEffect(scope molecule.Dest, group any, pids ...proc.PID) molecule.Effect {
+	return molecule.Cast{To: scope, Req: join{group, pids}}
 }
 
 // LeaveEffect is the effect making pids leave group, for a behaviour.
-func LeaveEffect(scope gen.Dest, group any, pids ...proc.PID) gen.Effect {
-	return gen.Cast{To: scope, Req: leave{group, pids}}
+func LeaveEffect(scope molecule.Dest, group any, pids ...proc.PID) molecule.Effect {
+	return molecule.Cast{To: scope, Req: leave{group, pids}}
 }
 
 // SendEffect is the effect having the scope send msg to every member of
 // group, once per member however many times it joined, except the process
 // except, which may be zero.
-func SendEffect(scope gen.Dest, group any, msg any, except proc.PID) gen.Effect {
-	return gen.Cast{To: scope, Req: send{group, msg, except}}
+func SendEffect(scope molecule.Dest, group any, msg any, except proc.PID) molecule.Effect {
+	return molecule.Cast{To: scope, Req: send{group, msg, except}}
 }
 
-func (Scope) Init(proc.PID) (state, []gen.Effect, error) {
+func (Scope) Init(proc.PID) (state, []molecule.Effect, error) {
 	return state{groups: map[any][]proc.PID{}, joins: map[proc.PID]int{}}, nil, nil
 }
 
-func (sc Scope) HandleCall(s state, req any, from genserver.From[any]) (state, []gen.Effect) {
+func (sc Scope) HandleCall(s state, req any, from genserver.From[any]) (state, []molecule.Effect) {
 	switch r := req.(type) {
 	case MembersRequest:
-		return s, gen.Do(from.Reply(slices.Clone(s.groups[r.Group])))
+		return s, molecule.Do(from.Reply(slices.Clone(s.groups[r.Group])))
 	case WhichRequest:
-		return s, gen.Do(from.Reply(slices.Clone(s.order)))
+		return s, molecule.Do(from.Reply(slices.Clone(s.order)))
 	}
 	s, effs := sc.HandleCast(s, req)
 	return s, append(effs, from.Reply(nil))
 }
 
-func (Scope) HandleCast(s state, req any) (state, []gen.Effect) {
+func (Scope) HandleCast(s state, req any) (state, []molecule.Effect) {
 	switch r := req.(type) {
 	case join:
 		return s.join(r.group, r.pids)
 	case leave:
 		return s.leave(r.group, r.pids)
 	case send:
-		var effs []gen.Effect
+		var effs []molecule.Effect
 		seen := map[proc.PID]bool{r.except: true}
 		for _, pid := range s.groups[r.group] {
 			if !seen[pid] {
 				seen[pid] = true
-				effs = append(effs, gen.Send{To: pid, Msg: r.msg})
+				effs = append(effs, molecule.Send{To: pid, Msg: r.msg})
 			}
 		}
 		return s, effs
@@ -150,8 +150,8 @@ func (Scope) HandleCast(s state, req any) (state, []gen.Effect) {
 }
 
 // HandleInfo takes the members that exit out of all their groups.
-func (Scope) HandleInfo(s state, msg any) (state, []gen.Effect) {
-	down, ok := msg.(gen.Down)
+func (Scope) HandleInfo(s state, msg any) (state, []molecule.Effect) {
+	down, ok := msg.(molecule.Down)
 	if !ok {
 		return s, nil
 	}
@@ -164,25 +164,25 @@ func (Scope) HandleInfo(s state, msg any) (state, []gen.Effect) {
 	return next.prune(), nil
 }
 
-func (s state) join(group any, pids []proc.PID) (state, []gen.Effect) {
+func (s state) join(group any, pids []proc.PID) (state, []molecule.Effect) {
 	next := s.clone()
-	var effs []gen.Effect
+	var effs []molecule.Effect
 	if _, ok := next.groups[group]; !ok {
 		next.order = append(next.order, group)
 	}
 	for _, pid := range pids {
 		next.groups[group] = append(next.groups[group], pid)
 		if next.joins[pid] == 0 {
-			effs = append(effs, gen.Monitor{Target: pid, Tag: pid})
+			effs = append(effs, molecule.Monitor{Target: pid, Tag: pid})
 		}
 		next.joins[pid]++
 	}
 	return next, effs
 }
 
-func (s state) leave(group any, pids []proc.PID) (state, []gen.Effect) {
+func (s state) leave(group any, pids []proc.PID) (state, []molecule.Effect) {
 	next := s.clone()
-	var effs []gen.Effect
+	var effs []molecule.Effect
 	for _, pid := range pids {
 		members := next.groups[group]
 		i := slices.Index(members, pid)
@@ -192,7 +192,7 @@ func (s state) leave(group any, pids []proc.PID) (state, []gen.Effect) {
 		next.groups[group] = slices.Delete(members, i, i+1)
 		if next.joins[pid]--; next.joins[pid] == 0 {
 			delete(next.joins, pid)
-			effs = append(effs, gen.Demonitor{Tag: pid})
+			effs = append(effs, molecule.Demonitor{Tag: pid})
 		}
 	}
 	return next.prune(), effs

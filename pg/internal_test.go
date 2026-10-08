@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -19,7 +19,7 @@ func TestCallbacksArePure(t *testing.T) {
 	Scope{}.HandleCast(s, join{"g", []proc.PID{a}})
 	Scope{}.HandleCast(s, join{"h", []proc.PID{a}})
 	Scope{}.HandleCast(s, leave{"g", []proc.PID{a, b}})
-	Scope{}.HandleInfo(s, gen.Down{Tag: a, PID: a})
+	Scope{}.HandleInfo(s, molecule.Down{Tag: a, PID: a})
 	if !reflect.DeepEqual(s, before) {
 		t.Errorf("state modified:\n%+v\nwas\n%+v", s, before)
 	}

@@ -5,7 +5,7 @@ import (
 	"encoding/gob"
 	"errors"
 
-	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -48,8 +48,8 @@ func Register(msgs ...any) {
 func init() {
 	gob.Register(proc.PID{})
 	gob.Register(proc.Ref{})
-	gob.Register(gen.CallMsg{})
-	gob.Register(gen.CastMsg{})
+	gob.Register(molecule.CallMsg{})
+	gob.Register(molecule.CastMsg{})
 }
 
 // gobCodec is the default Codec, of encoding/gob.

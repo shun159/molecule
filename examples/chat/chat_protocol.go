@@ -3,7 +3,7 @@ package main
 import (
 	"strings"
 
-	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/gentcp"
 	"github.com/shun159/molecule/pg"
 	"github.com/shun159/molecule/proc"
@@ -33,39 +33,39 @@ func (s said) String() string {
 	return "<" + s.From + "> " + s.Text + "\n"
 }
 
-func (ChatProtocol) Init(self proc.PID, sock gentcp.Socket) (conn, []gen.Effect, error) {
-	return conn{self: self}, gen.Do(sock.SendEffect([]byte("nick? "))), nil
+func (ChatProtocol) Init(self proc.PID, sock gentcp.Socket) (conn, []molecule.Effect, error) {
+	return conn{self: self}, molecule.Do(sock.SendEffect([]byte("nick? "))), nil
 }
 
 // HandleData handles a line: the socket cuts them, see startChat.
-func (p ChatProtocol) HandleData(c conn, sock gentcp.Socket, line []byte) (conn, []gen.Effect) {
+func (p ChatProtocol) HandleData(c conn, sock gentcp.Socket, line []byte) (conn, []molecule.Effect) {
 	text := strings.TrimSpace(string(line))
 	switch {
 	case text == "":
 		return c, nil
 	case c.nick == "":
 		c.nick = text
-		return c, gen.Do(
+		return c, molecule.Do(
 			pg.JoinEffect(scope, lobby, c.self),
 			pg.SendEffect(scope, lobby, said{Text: c.nick + " joined"}, proc.PID{}),
 		)
 	}
-	return c, gen.Do(pg.SendEffect(scope, lobby, said{From: c.nick, Text: text}, proc.PID{}))
+	return c, molecule.Do(pg.SendEffect(scope, lobby, said{From: c.nick, Text: text}, proc.PID{}))
 }
 
 // HandleInfo writes what the lobby says.
-func (ChatProtocol) HandleInfo(c conn, sock gentcp.Socket, msg any) (conn, []gen.Effect) {
+func (ChatProtocol) HandleInfo(c conn, sock gentcp.Socket, msg any) (conn, []molecule.Effect) {
 	if s, ok := msg.(said); ok {
-		return c, gen.Do(sock.SendEffect([]byte(s.String())))
+		return c, molecule.Do(sock.SendEffect([]byte(s.String())))
 	}
 	return c, nil
 }
 
 // Terminate tells the others; the scope takes the process out of the
 // lobby by itself once it is gone.
-func (ChatProtocol) Terminate(c conn, _ error) []gen.Effect {
+func (ChatProtocol) Terminate(c conn, _ error) []molecule.Effect {
 	if c.nick == "" {
 		return nil
 	}
-	return gen.Do(pg.SendEffect(scope, lobby, said{Text: c.nick + " left"}, c.self))
+	return molecule.Do(pg.SendEffect(scope, lobby, said{Text: c.nick + " left"}, c.self))
 }

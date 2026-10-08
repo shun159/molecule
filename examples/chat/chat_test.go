@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/gentcp"
 	"github.com/shun159/molecule/pg"
 	"github.com/shun159/molecule/proc"
@@ -105,7 +105,7 @@ func TestLines(t *testing.T) {
 		t.Fatalf("empty line: %+v %#v", c, effs)
 	}
 	c, effs = p.HandleData(c, sock, []byte("alice\r\n"))
-	want := gen.Do(
+	want := molecule.Do(
 		pg.JoinEffect(scope, lobby, self),
 		pg.SendEffect(scope, lobby, said{Text: "alice joined"}, proc.PID{}),
 	)
@@ -113,7 +113,7 @@ func TestLines(t *testing.T) {
 		t.Fatalf("nick: %+v %#v", c, effs)
 	}
 	_, effs = p.HandleData(c, sock, []byte("hello\n"))
-	want = gen.Do(pg.SendEffect(scope, lobby, said{From: "alice", Text: "hello"}, proc.PID{}))
+	want = molecule.Do(pg.SendEffect(scope, lobby, said{From: "alice", Text: "hello"}, proc.PID{}))
 	if !reflect.DeepEqual(effs, want) {
 		t.Errorf("line: %#v", effs)
 	}

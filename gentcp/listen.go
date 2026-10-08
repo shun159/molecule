@@ -6,7 +6,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -49,10 +49,10 @@ func Listen(ctx context.Context, owner *proc.Self, addr string, opts Options) (*
 				return err
 			}
 			switch m := msg.(type) {
-			case gen.CallMsg:
+			case molecule.CallMsg:
 				if _, ok := m.Req.(closeReq); ok {
 					ln.Close()
-					gen.SendReply(s, m.From, nil)
+					molecule.SendReply(s, m.From, nil)
 					return nil
 				}
 			case proc.DownMsg:
@@ -126,9 +126,9 @@ func (l *ListenSocket) accept() {
 }
 
 // Close closes the listening socket.
-func (l *ListenSocket) Close(ctx context.Context, caller gen.Caller) error {
-	_, err := gen.Call(ctx, caller, l.PID, closeReq{})
-	var exit *gen.ExitError
+func (l *ListenSocket) Close(ctx context.Context, caller molecule.Caller) error {
+	_, err := molecule.Call(ctx, caller, l.PID, closeReq{})
+	var exit *molecule.ExitError
 	if errors.As(err, &exit) {
 		return nil // closed already
 	}

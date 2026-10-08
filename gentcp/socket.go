@@ -6,7 +6,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -82,7 +82,7 @@ type (
 // calling process, as gen_tcp_socket does, and returns once the data is
 // written, or fails after SendTimeout. A failure of the connection fails
 // the socket, as for receiving.
-func (s Socket) Send(ctx context.Context, caller gen.Caller, data []byte) error {
+func (s Socket) Send(ctx context.Context, caller molecule.Caller, data []byte) error {
 	if s.w == nil {
 		return s.call(ctx, caller, sendReq{data: data})
 	}
@@ -98,7 +98,7 @@ func (s Socket) Send(ctx context.Context, caller gen.Caller, data []byte) error 
 // many bytes. The wait ends at the deadline of ctx, if any, with
 // ErrTimeout; the socket keeps whatever arrives after. Only the owner may
 // receive.
-func (s Socket) Recv(ctx context.Context, caller gen.Caller, length int) ([]byte, error) {
+func (s Socket) Recv(ctx context.Context, caller molecule.Caller, length int) ([]byte, error) {
 	var timeout time.Duration
 	if deadline, ok := ctx.Deadline(); ok {
 		if timeout = time.Until(deadline); timeout <= 0 {
@@ -107,7 +107,7 @@ func (s Socket) Recv(ctx context.Context, caller gen.Caller, length int) ([]byte
 	}
 	// The socket ends the wait: giving up here could lose a packet it has
 	// just taken for this call.
-	v, err := gen.Call(context.Background(), caller, s.PID, recvReq{length, timeout})
+	v, err := molecule.Call(context.Background(), caller, s.PID, recvReq{length, timeout})
 	if err != nil {
 		return nil, gone(err)
 	}
@@ -121,14 +121,14 @@ func (s Socket) Recv(ctx context.Context, caller gen.Caller, length int) ([]byte
 }
 
 // SetActive changes the active mode.
-func (s Socket) SetActive(ctx context.Context, caller gen.Caller, a Active) error {
+func (s Socket) SetActive(ctx context.Context, caller molecule.Caller, a Active) error {
 	return s.call(ctx, caller, setActiveReq{a})
 }
 
 // ControllingProcess gives the socket to owner, which gets its messages
 // from then on, like gen_tcp:controlling_process. Only the owner may.
 // Messages already sent stay with the previous owner.
-func (s Socket) ControllingProcess(ctx context.Context, caller gen.Caller, owner proc.PID) error {
+func (s Socket) ControllingProcess(ctx context.Context, caller molecule.Caller, owner proc.PID) error {
 	return s.call(ctx, caller, controlReq{owner})
 }
 
@@ -136,12 +136,12 @@ func (s Socket) ControllingProcess(ctx context.Context, caller gen.Caller, owner
 // gen_tcp:shutdown: Write tells the peer no more data comes, while the
 // socket still receives. It needs a TCP connection, and fails on another,
 // such as TLS, given to Start.
-func (s Socket) Shutdown(ctx context.Context, caller gen.Caller, how How) error {
+func (s Socket) Shutdown(ctx context.Context, caller molecule.Caller, how How) error {
 	return s.call(ctx, caller, shutdownReq{how})
 }
 
 // Close closes the socket, and its process exits.
-func (s Socket) Close(ctx context.Context, caller gen.Caller) error {
+func (s Socket) Close(ctx context.Context, caller molecule.Caller) error {
 	err := s.call(ctx, caller, closeReq{})
 	if err == ErrClosed {
 		return nil // closed already
@@ -152,9 +152,9 @@ func (s Socket) Close(ctx context.Context, caller gen.Caller) error {
 // SendEffect is the effect sending data, for a behaviour: the runtime of
 // the behaviour writes, as Send does. A failure breaks the connection,
 // which the owner is told of as it is of a failure to receive.
-func (s Socket) SendEffect(data []byte) gen.Effect {
+func (s Socket) SendEffect(data []byte) molecule.Effect {
 	if s.w == nil {
-		return gen.Send{To: s.PID, Msg: sendReq{data: data}}
+		return molecule.Send{To: s.PID, Msg: sendReq{data: data}}
 	}
 	return sendEffect{pid: s.PID, w: s.w, data: data}
 }
@@ -165,29 +165,29 @@ func (s Socket) SendEffect(data []byte) gen.Effect {
 // for the next:
 //
 //	case gentcp.DataMsg:
-//		return s, gen.Do(m.Sock.SendActiveEffect(reply, gentcp.Once))
+//		return s, molecule.Do(m.Sock.SendActiveEffect(reply, gentcp.Once))
 //
 // The mode changes even if sending fails, so that the owner hears of the
 // failure.
-func (s Socket) SendActiveEffect(data []byte, a Active) gen.Effect {
+func (s Socket) SendActiveEffect(data []byte, a Active) molecule.Effect {
 	if s.w == nil {
-		return gen.Send{To: s.PID, Msg: sendReq{data: data, then: true, active: a}}
+		return molecule.Send{To: s.PID, Msg: sendReq{data: data, then: true, active: a}}
 	}
 	return sendEffect{pid: s.PID, w: s.w, data: data, then: true, active: a}
 }
 
 // SetActiveEffect is the effect changing the active mode, for a behaviour.
-func (s Socket) SetActiveEffect(a Active) gen.Effect {
-	return gen.Send{To: s.PID, Msg: setActiveReq{a}}
+func (s Socket) SetActiveEffect(a Active) molecule.Effect {
+	return molecule.Send{To: s.PID, Msg: setActiveReq{a}}
 }
 
 // CloseEffect is the effect closing the socket, for a behaviour.
-func (s Socket) CloseEffect() gen.Effect {
-	return gen.Send{To: s.PID, Msg: closeReq{}}
+func (s Socket) CloseEffect() molecule.Effect {
+	return molecule.Send{To: s.PID, Msg: closeReq{}}
 }
 
-func (s Socket) call(ctx context.Context, caller gen.Caller, req any) error {
-	v, err := gen.Call(ctx, caller, s.PID, req)
+func (s Socket) call(ctx context.Context, caller molecule.Caller, req any) error {
+	v, err := molecule.Call(ctx, caller, s.PID, req)
 	if err != nil {
 		return gone(err)
 	}
@@ -198,7 +198,7 @@ func (s Socket) call(ctx context.Context, caller gen.Caller, req any) error {
 // gone turns the error of a call to a socket whose process is gone into
 // ErrClosed.
 func gone(err error) error {
-	var exit *gen.ExitError
+	var exit *molecule.ExitError
 	if errors.As(err, &exit) {
 		return ErrClosed
 	}

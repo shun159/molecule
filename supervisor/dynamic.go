@@ -8,7 +8,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -19,7 +19,7 @@ import (
 // are all stopped at once rather than in order.
 type DynamicSpec struct {
 	// Name, if set, is registered when the supervisor starts.
-	Name gen.Name
+	Name molecule.Name
 	// Intensity and Period limit restarts as for Spec.
 	Intensity int
 	Period    time.Duration
@@ -68,12 +68,12 @@ type (
 // StartChild starts a child of the dynamic supervisor at sup and returns
 // its PID. The ID of the spec is not used: children are known by PID, and
 // a restarted child has a new one. A child whose Start returns
-// gen.ErrIgnore is not kept, and StartChild returns gen.ErrIgnore.
-func StartChild(ctx context.Context, caller gen.Caller, sup gen.Dest, spec ChildSpec) (proc.PID, error) {
+// molecule.ErrIgnore is not kept, and StartChild returns molecule.ErrIgnore.
+func StartChild(ctx context.Context, caller molecule.Caller, sup molecule.Dest, spec ChildSpec) (proc.PID, error) {
 	if spec.Start == nil {
 		return proc.PID{}, errors.New("supervisor: child has no Start")
 	}
-	v, err := gen.Call(ctx, caller, sup, startChild{spec})
+	v, err := molecule.Call(ctx, caller, sup, startChild{spec})
 	if err != nil {
 		return proc.PID{}, err
 	}
@@ -83,8 +83,8 @@ func StartChild(ctx context.Context, caller gen.Caller, sup gen.Dest, spec Child
 
 // TerminateChild stops the child pid of the dynamic supervisor at sup, as
 // on shutdown, and forgets it.
-func TerminateChild(ctx context.Context, caller gen.Caller, sup gen.Dest, pid proc.PID) error {
-	v, err := gen.Call(ctx, caller, sup, terminateChild{pid})
+func TerminateChild(ctx context.Context, caller molecule.Caller, sup molecule.Dest, pid proc.PID) error {
+	v, err := molecule.Call(ctx, caller, sup, terminateChild{pid})
 	if err != nil {
 		return err
 	}
@@ -94,8 +94,8 @@ func TerminateChild(ctx context.Context, caller gen.Caller, sup gen.Dest, pid pr
 
 // CountChildren returns the number of children of the dynamic supervisor
 // at sup, including those waiting to be restarted.
-func CountChildren(ctx context.Context, caller gen.Caller, sup gen.Dest) (int, error) {
-	v, err := gen.Call(ctx, caller, sup, countChildren{})
+func CountChildren(ctx context.Context, caller molecule.Caller, sup molecule.Dest) (int, error) {
+	v, err := molecule.Call(ctx, caller, sup, countChildren{})
 	if err != nil {
 		return 0, err
 	}
@@ -124,7 +124,7 @@ func runDynamic(self *proc.Self, spec DynamicSpec) error {
 	if spec.Name != nil {
 		if err := spec.Name.Register(self.Node(), self.PID()); err != nil {
 			if pid, ok := spec.Name.WhereIs(self.Node()); ok && pid != self.PID() {
-				err = &gen.AlreadyStartedError{PID: pid}
+				err = &molecule.AlreadyStartedError{PID: pid}
 			}
 			self.InitAck(err)
 			return nil
@@ -184,13 +184,13 @@ func (d *dynamic) loop() error {
 				d.terminateAll()
 				return err
 			}
-		case gen.CallMsg:
+		case molecule.CallMsg:
 			if _, ok := m.Req.(stopReq); ok {
 				d.terminateAll()
-				gen.SendReply(d.self, m.From, nil)
+				molecule.SendReply(d.self, m.From, nil)
 				return proc.Shutdown
 			}
-			gen.SendReply(d.self, m.From, d.call(m.Req))
+			molecule.SendReply(d.self, m.From, d.call(m.Req))
 		}
 	}
 }
@@ -224,11 +224,11 @@ func (d *dynamic) call(req any) any {
 }
 
 // start starts c and records it as running. A child that is ignored is
-// not recorded, and gen.ErrIgnore is returned.
+// not recorded, and molecule.ErrIgnore is returned.
 func (d *dynamic) start(c *dynamicChild) error {
 	pid, err := c.spec.Start(context.Background(), d.self)
 	if err != nil {
-		if !errors.Is(err, gen.ErrIgnore) {
+		if !errors.Is(err, molecule.ErrIgnore) {
 			reportStartFailed(d.self, "", err)
 		}
 		return err
@@ -245,7 +245,7 @@ func (d *dynamic) restart(c *dynamicChild) error {
 		return ErrMaxIntensity
 	}
 	err := d.start(c)
-	if err != nil && !errors.Is(err, gen.ErrIgnore) {
+	if err != nil && !errors.Is(err, molecule.ErrIgnore) {
 		d.retrying[c.seq] = c
 		d.self.Send(d.self.PID(), dynamicRetry{seq: c.seq})
 	}

@@ -1,15 +1,8 @@
 package gen
 
-import "github.com/shun159/molecule/proc"
-
-// Msg is what a Behaviour handles: a CallMsg, a CastMsg, an InfoMsg, or a
-// ContinueMsg.
-type Msg interface{ msg() }
-
-func (CallMsg) msg()     {}
-func (CastMsg) msg()     {}
-func (InfoMsg) msg()     {}
-func (ContinueMsg) msg() {}
+// Msg is what a Behaviour handles: a molecule.CallMsg, a
+// molecule.CastMsg, an InfoMsg, or a ContinueMsg.
+type Msg = any
 
 // ContinueMsg carries the Msg of a Continue effect. It is handled right
 // after the callback that returned the effect, before any other message.
@@ -23,19 +16,4 @@ type ContinueMsg struct {
 // (except the one from the parent, which terminates the behaviour).
 type InfoMsg struct {
 	Msg any
-}
-
-// Down reports that a process watched by a Monitor effect died.
-type Down struct {
-	Tag    any
-	PID    proc.PID
-	Reason error
-}
-
-// Response is the outcome of a SendRequest effect: the reply, or an error
-// as Call would return it.
-type Response struct {
-	Tag   any
-	Value any
-	Err   error
 }

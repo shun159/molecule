@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -90,7 +90,7 @@ func TestSendActiveFailed(t *testing.T) {
 	// The write deadline has passed before the write starts.
 	sock := Start(n, server, owner, Options{SendTimeout: time.Nanosecond})
 	byHand := Socket{PID: sock.PID}
-	n.Send(sock.PID, byHand.SendActiveEffect([]byte("x"), Once).(gen.Send).Msg)
+	n.Send(sock.PID, byHand.SendActiveEffect([]byte("x"), Once).(molecule.Send).Msg)
 	for _, want := range []string{"ErrorMsg", "ClosedMsg"} {
 		select {
 		case m := <-got:

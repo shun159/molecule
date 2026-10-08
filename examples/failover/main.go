@@ -22,8 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/dist"
-	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/genserver"
 	"github.com/shun159/molecule/proc"
 )
@@ -54,7 +54,7 @@ func main() {
 	defer d.Stop()
 	n.Register(consoleName, n.Spawn(console(os.Stdout)))
 	w := Worker{Node: *name, Peer: peerName, Primary: *primary, Every: 500 * time.Millisecond}
-	if _, err := genserver.Start(ctx, n, w, gen.WithName(workerName)); err != nil {
+	if _, err := genserver.Start(ctx, n, w, molecule.WithName(workerName)); err != nil {
 		log.Fatal(err)
 	}
 	<-ctx.Done()

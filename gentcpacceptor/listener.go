@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/gentcp"
 	"github.com/shun159/molecule/proc"
@@ -168,7 +169,7 @@ func (l *Listener) Conns() proc.PID {
 // Stop stops a listener started with Start: it stops accepting, and
 // closes every connection by stopping its handler. A listener under a
 // supervisor is stopped by that supervisor instead.
-func (l *Listener) Stop(ctx context.Context, caller gen.Caller) error {
+func (l *Listener) Stop(ctx context.Context, caller molecule.Caller) error {
 	return supervisor.Stop(ctx, caller, l.PID())
 }
 

@@ -14,7 +14,7 @@
 // [Join], [Leave], [Members] and [Which] are calls, for code that may wait.
 // A behaviour, being pure, does not wait: it returns [JoinEffect],
 // [LeaveEffect] and [SendEffect] instead, and asks for members with
-// gen.SendRequest and a [MembersRequest], the answer arriving later. SendEffect, which Erlang's pg
+// molecule.SendRequest and a [MembersRequest], the answer arriving later. SendEffect, which Erlang's pg
 // lacks, has the scope send a message to every member of a group, the way
 // a behaviour broadcasts without knowing the members.
 //

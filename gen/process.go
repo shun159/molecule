@@ -7,16 +7,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/proc"
 )
 
 // run runs b in the current process: it registers the name, starts the
 // runner, acknowledges the start, and feeds the runner the mailbox.
-func run[S any](self *proc.Self, b Behaviour[S], args any, o options) error {
-	if o.name != nil {
-		if err := o.name.Register(self.Node(), self.PID()); err != nil {
-			if pid, ok := o.name.WhereIs(self.Node()); ok && pid != self.PID() {
-				err = &AlreadyStartedError{PID: pid}
+func run[S any](self *proc.Self, b Behaviour[S], args any, o molecule.StartOptions) error {
+	if o.Name != nil {
+		if err := o.Name.Register(self.Node(), self.PID()); err != nil {
+			if pid, ok := o.Name.WhereIs(self.Node()); ok && pid != self.PID() {
+				err = &molecule.AlreadyStartedError{PID: pid}
 			}
 			self.InitAck(err)
 			return nil
@@ -26,7 +27,7 @@ func run[S any](self *proc.Self, b Behaviour[S], args any, o options) error {
 	r := newRuntime(b, procEnv{self})
 	if err := r.Init(args); err != nil {
 		self.InitAck(err)
-		if errors.Is(err, ErrIgnore) {
+		if errors.Is(err, molecule.ErrIgnore) {
 			return nil
 		}
 		return err
@@ -58,7 +59,7 @@ func (e procEnv) dead() bool { return e.self.ExitReason() != nil }
 func (e procEnv) Self() proc.PID   { return e.self.PID() }
 func (e procEnv) Parent() proc.PID { return e.self.Parent() }
 
-func (e procEnv) Resolve(dest Dest) (proc.PID, bool) { return dest.WhereIs(e.self.Node()) }
+func (e procEnv) Resolve(dest molecule.Dest) (proc.PID, bool) { return dest.WhereIs(e.self.Node()) }
 
 func (e procEnv) Send(to proc.PID, msg any) {
 	if !e.dead() {

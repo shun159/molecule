@@ -19,14 +19,14 @@ func TestScenario(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	want := []string{
 		"value: 42",
-		"crash 1: call failed: gen: call to calc: panic: runtime error: integer divide by zero",
+		"crash 1: call failed: molecule: call to calc: panic: runtime error: integer divide by zero",
 		"crash 1: restarted, value back to 0",
-		"crash 2: call failed: gen: call to calc: panic: runtime error: integer divide by zero",
+		"crash 2: call failed: molecule: call to calc: panic: runtime error: integer divide by zero",
 		"crash 2: restarted, value back to 0",
-		"crash 3: call failed: gen: call to calc: panic: runtime error: integer divide by zero",
+		"crash 3: call failed: molecule: call to calc: panic: runtime error: integer divide by zero",
 		"crash 3: restarted, value back to 0",
 		"crash 4: supervisor gave up: supervisor: reached maximum restart intensity: shutdown",
-		"calc is gone: gen: call to calc: noproc",
+		"calc is gone: molecule: call to calc: noproc",
 	}
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
 		t.Errorf("output:\n%s\nwant:\n%s", out.String(), strings.Join(want, "\n"))

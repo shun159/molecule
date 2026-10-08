@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/proc"
 )
@@ -79,7 +80,7 @@ func (w *writer) write(data []byte) (failed bool, err error) {
 // sendEffect sends from the process of a behaviour, as Socket.Send does,
 // then changes the active mode if then.
 type sendEffect struct {
-	gen.Extension
+	molecule.Extension
 	pid    proc.PID
 	w      *writer
 	data   []byte

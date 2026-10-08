@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/genserver"
 	"github.com/shun159/molecule/proc"
 	"github.com/shun159/molecule/supervisor"
@@ -43,7 +43,7 @@ func (w *world) count(sup proc.PID) int {
 
 func (w *world) crash(pid proc.PID, req any) {
 	w.t.Helper()
-	if _, err := gen.Call(context.Background(), w.n, pid, req); err != nil {
+	if _, err := molecule.Call(context.Background(), w.n, pid, req); err != nil {
 		w.t.Fatal(err)
 	}
 }
@@ -145,8 +145,8 @@ func TestDynamicMaxChildren(t *testing.T) {
 func TestDynamicStartFailures(t *testing.T) {
 	inWorld(t, func(w *world) {
 		sup := w.startDynamic(supervisor.DynamicSpec{})
-		ignore := func(context.Context, *proc.Self) (proc.PID, error) { return proc.PID{}, gen.ErrIgnore }
-		if _, err := supervisor.StartChild(context.Background(), w.n, sup, supervisor.ChildSpec{Start: ignore}); err != gen.ErrIgnore {
+		ignore := func(context.Context, *proc.Self) (proc.PID, error) { return proc.PID{}, molecule.ErrIgnore }
+		if _, err := supervisor.StartChild(context.Background(), w.n, sup, supervisor.ChildSpec{Start: ignore}); err != molecule.ErrIgnore {
 			t.Errorf("ignored child: %v", err)
 		}
 		var fail atomic.Int32
@@ -244,13 +244,13 @@ func TestDynamicRestartRetry(t *testing.T) {
 
 func TestDynamicName(t *testing.T) {
 	inWorld(t, func(w *world) {
-		name := gen.Local("conns")
+		name := molecule.Local("conns")
 		w.startDynamic(supervisor.DynamicSpec{Name: name})
 		if _, err := supervisor.StartChild(context.Background(), w.n, name, w.worker("a", supervisor.Temporary)); err != nil {
 			t.Errorf("StartChild by name: %v", err)
 		}
 		w.expect(started{"a"})
-		var already *gen.AlreadyStartedError
+		var already *molecule.AlreadyStartedError
 		if _, err := supervisor.StartDynamic(context.Background(), w.n, supervisor.DynamicSpec{Name: name}); !errors.As(err, &already) {
 			t.Errorf("second StartDynamic = %v", err)
 		}

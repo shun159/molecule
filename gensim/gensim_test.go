@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/genserver"
 	"github.com/shun159/molecule/gensim"
@@ -26,21 +27,21 @@ type (
 	mute  struct{} // never answered
 )
 
-func (counter) Init(proc.PID) (int, []gen.Effect, error) { return 0, nil, nil }
+func (counter) Init(proc.PID) (int, []molecule.Effect, error) { return 0, nil, nil }
 
-func (counter) HandleCall(n int, req any, from genserver.From[int]) (int, []gen.Effect) {
+func (counter) HandleCall(n int, req any, from genserver.From[int]) (int, []molecule.Effect) {
 	switch r := req.(type) {
 	case get:
-		return n, gen.Do(from.Reply(n))
+		return n, molecule.Do(from.Reply(n))
 	case set:
-		return r.n, gen.Do(from.Reply(r.n))
+		return r.n, molecule.Do(from.Reply(r.n))
 	case crash:
 		panic("crash")
 	}
 	return n, nil // mute: no reply
 }
 
-func (counter) HandleCast(n int, msg add) (int, []gen.Effect) { return n + msg.n, nil }
+func (counter) HandleCast(n int, msg add) (int, []molecule.Effect) { return n + msg.n, nil }
 
 func spawn[S any](t *testing.T, s *gensim.Sim, b gen.Behaviour[S], opts ...gensim.SpawnOption) proc.PID {
 	t.Helper()
@@ -55,17 +56,17 @@ func TestCallAndCast(t *testing.T) {
 	s := gensim.New(1)
 	c := spawn(t, s, genserver.Gen(counter{}), gensim.Named("counter"))
 	s.Cast(c, add{2})
-	s.Cast(gen.Local("counter"), add{3})
-	if v, err := s.Call(gen.Local("counter"), get{}); v != 5 || err != nil {
+	s.Cast(molecule.Local("counter"), add{3})
+	if v, err := s.Call(molecule.Local("counter"), get{}); v != 5 || err != nil {
 		t.Errorf("Call = %v, %v", v, err)
 	}
 	if n, ok := gensim.State[int](s, c); n != 5 || !ok {
 		t.Errorf("State = %v, %v", n, ok)
 	}
-	if _, err := gensim.Spawn(s, genserver.Gen(counter{}), nil, gensim.Named("counter")); !errors.As(err, new(*gen.AlreadyStartedError)) {
+	if _, err := gensim.Spawn(s, genserver.Gen(counter{}), nil, gensim.Named("counter")); !errors.As(err, new(*molecule.AlreadyStartedError)) {
 		t.Errorf("second Spawn with the name = %v", err)
 	}
-	if _, err := s.Call(gen.Local("nobody"), get{}); !errors.Is(err, proc.NoProc) {
+	if _, err := s.Call(molecule.Local("nobody"), get{}); !errors.Is(err, proc.NoProc) {
 		t.Errorf("Call to nobody = %v", err)
 	}
 }
@@ -92,13 +93,13 @@ func TestCallFailures(t *testing.T) {
 // recorder logs the casts it gets, in order.
 type recorder struct{}
 
-func (recorder) Init(proc.PID) ([]string, []gen.Effect, error) { return nil, nil, nil }
+func (recorder) Init(proc.PID) ([]string, []molecule.Effect, error) { return nil, nil, nil }
 
-func (recorder) HandleCall(log []string, _ get, from genserver.From[[]string]) ([]string, []gen.Effect) {
-	return log, gen.Do(from.Reply(log))
+func (recorder) HandleCall(log []string, _ get, from genserver.From[[]string]) ([]string, []molecule.Effect) {
+	return log, molecule.Do(from.Reply(log))
 }
 
-func (recorder) HandleCast(log []string, msg string) ([]string, []gen.Effect) {
+func (recorder) HandleCast(log []string, msg string) ([]string, []molecule.Effect) {
 	return append(slices.Clip(log), msg), nil
 }
 
@@ -110,16 +111,16 @@ type sender struct {
 
 type goNow struct{}
 
-func (sender) Init(proc.PID) (struct{}, []gen.Effect, error) { return struct{}{}, nil, nil }
+func (sender) Init(proc.PID) (struct{}, []molecule.Effect, error) { return struct{}{}, nil, nil }
 
-func (sender) HandleCall(s struct{}, _ struct{}, _ genserver.From[struct{}]) (struct{}, []gen.Effect) {
+func (sender) HandleCall(s struct{}, _ struct{}, _ genserver.From[struct{}]) (struct{}, []molecule.Effect) {
 	return s, nil
 }
 
-func (w sender) HandleCast(s struct{}, _ goNow) (struct{}, []gen.Effect) {
-	return s, gen.Do(
-		gen.Cast{To: w.target, Req: w.label + "1"},
-		gen.Cast{To: w.target, Req: w.label + "2"},
+func (w sender) HandleCast(s struct{}, _ goNow) (struct{}, []molecule.Effect) {
+	return s, molecule.Do(
+		molecule.Cast{To: w.target, Req: w.label + "1"},
+		molecule.Cast{To: w.target, Req: w.label + "2"},
 	)
 }
 
@@ -162,12 +163,14 @@ func TestDeterminism(t *testing.T) {
 // light is a gen_statem on for 10 seconds after each push.
 type light struct{}
 
-func (light) Init(proc.PID) (bool, struct{}, []gen.Effect, error) { return false, struct{}{}, nil, nil }
+func (light) Init(proc.PID) (bool, struct{}, []molecule.Effect, error) {
+	return false, struct{}{}, nil, nil
+}
 
-func (light) HandleEvent(on bool, d struct{}, ev genstatem.Event) (bool, struct{}, []gen.Effect) {
+func (light) HandleEvent(on bool, d struct{}, ev genstatem.Event) (bool, struct{}, []molecule.Effect) {
 	switch ev.(type) {
 	case genstatem.Cast:
-		return true, d, gen.Do(genstatem.StartStateTimeout{After: 10 * time.Second, Msg: "off"})
+		return true, d, molecule.Do(genstatem.StartStateTimeout{After: 10 * time.Second, Msg: "off"})
 	case genstatem.StateTimeout:
 		return false, d, nil
 	}
@@ -201,16 +204,16 @@ type waiter struct{}
 
 type waiterState struct{ from genserver.From[string] }
 
-func (waiter) Init(proc.PID) (waiterState, []gen.Effect, error) { return waiterState{}, nil, nil }
+func (waiter) Init(proc.PID) (waiterState, []molecule.Effect, error) { return waiterState{}, nil, nil }
 
-func (waiter) HandleCall(_ waiterState, _ get, from genserver.From[string]) (waiterState, []gen.Effect) {
-	return waiterState{from}, gen.Do(gen.StartTimer{Key: "t", After: 2 * time.Second, Msg: "now"})
+func (waiter) HandleCall(_ waiterState, _ get, from genserver.From[string]) (waiterState, []molecule.Effect) {
+	return waiterState{from}, molecule.Do(molecule.StartTimer{Key: "t", After: 2 * time.Second, Msg: "now"})
 }
 
-func (waiter) HandleCast(s waiterState, _ struct{}) (waiterState, []gen.Effect) { return s, nil }
+func (waiter) HandleCast(s waiterState, _ struct{}) (waiterState, []molecule.Effect) { return s, nil }
 
-func (waiter) HandleInfo(s waiterState, _ any) (waiterState, []gen.Effect) {
-	return s, gen.Do(s.from.Reply("done"))
+func (waiter) HandleInfo(s waiterState, _ any) (waiterState, []molecule.Effect) {
+	return s, molecule.Do(s.from.Reply("done"))
 }
 
 func TestCallWaitsForTimers(t *testing.T) {
@@ -228,21 +231,21 @@ type watcher struct {
 	trap              bool
 }
 
-func (w watcher) Init(proc.PID) ([]any, []gen.Effect, error) {
-	return nil, gen.Do(
-		gen.TrapExit{On: w.trap},
-		gen.Monitor{Target: w.monitored, Tag: "m"},
-		gen.Link{PID: w.linked},
+func (w watcher) Init(proc.PID) ([]any, []molecule.Effect, error) {
+	return nil, molecule.Do(
+		molecule.TrapExit{On: w.trap},
+		molecule.Monitor{Target: w.monitored, Tag: "m"},
+		molecule.Link{PID: w.linked},
 	), nil
 }
 
-func (watcher) HandleCall(log []any, _ get, from genserver.From[[]any]) ([]any, []gen.Effect) {
-	return log, gen.Do(from.Reply(log))
+func (watcher) HandleCall(log []any, _ get, from genserver.From[[]any]) ([]any, []molecule.Effect) {
+	return log, molecule.Do(from.Reply(log))
 }
 
-func (watcher) HandleCast(log []any, _ struct{}) ([]any, []gen.Effect) { return log, nil }
+func (watcher) HandleCast(log []any, _ struct{}) ([]any, []molecule.Effect) { return log, nil }
 
-func (watcher) HandleInfo(log []any, msg any) ([]any, []gen.Effect) {
+func (watcher) HandleInfo(log []any, msg any) ([]any, []molecule.Effect) {
 	return append(slices.Clip(log), msg), nil
 }
 
@@ -257,7 +260,7 @@ func TestExitsMonitorsAndLinks(t *testing.T) {
 		s.Exit(m, proc.Kill)
 		s.RunUntilIdle()
 		log, _ := gensim.State[[]any](s, w)
-		if len(log) != 1 || log[0] != (gen.Down{Tag: "m", PID: m, Reason: proc.Killed}) {
+		if len(log) != 1 || log[0] != (molecule.Down{Tag: "m", PID: m, Reason: proc.Killed}) {
 			t.Fatalf("trap %v: log after the monitored died: %#v", trap, log)
 		}
 
@@ -280,19 +283,19 @@ func TestExitsMonitorsAndLinks(t *testing.T) {
 // racing can lose an update.
 type incrementer struct{ counter proc.PID }
 
-func (incrementer) Init(proc.PID) (struct{}, []gen.Effect, error) { return struct{}{}, nil, nil }
+func (incrementer) Init(proc.PID) (struct{}, []molecule.Effect, error) { return struct{}{}, nil, nil }
 
-func (incrementer) HandleCall(s struct{}, _ struct{}, _ genserver.From[struct{}]) (struct{}, []gen.Effect) {
+func (incrementer) HandleCall(s struct{}, _ struct{}, _ genserver.From[struct{}]) (struct{}, []molecule.Effect) {
 	return s, nil
 }
 
-func (i incrementer) HandleCast(s struct{}, _ goNow) (struct{}, []gen.Effect) {
-	return s, gen.Do(gen.SendRequest{To: i.counter, Req: get{}, Tag: "read"})
+func (i incrementer) HandleCast(s struct{}, _ goNow) (struct{}, []molecule.Effect) {
+	return s, molecule.Do(molecule.SendRequest{To: i.counter, Req: get{}, Tag: "read"})
 }
 
-func (i incrementer) HandleInfo(s struct{}, msg any) (struct{}, []gen.Effect) {
-	if r, ok := msg.(gen.Response); ok && r.Tag == "read" {
-		return s, gen.Do(gen.SendRequest{To: i.counter, Req: set{r.Value.(int) + 1}, Tag: "write"})
+func (i incrementer) HandleInfo(s struct{}, msg any) (struct{}, []molecule.Effect) {
+	if r, ok := msg.(molecule.Response); ok && r.Tag == "read" {
+		return s, molecule.Do(molecule.SendRequest{To: i.counter, Req: set{r.Value.(int) + 1}, Tag: "write"})
 	}
 	return s, nil
 }
@@ -339,7 +342,7 @@ func TestRequestTimeout(t *testing.T) {
 	}
 	s.Advance(time.Nanosecond)
 	got := log()
-	if len(got) != 2 || got[1].(gen.Response).Err != context.DeadlineExceeded {
+	if len(got) != 2 || got[1].(molecule.Response).Err != context.DeadlineExceeded {
 		t.Errorf("at the timeout: %#v", got)
 	}
 }
@@ -347,18 +350,18 @@ func TestRequestTimeout(t *testing.T) {
 // requester sends a request that is never answered, with a timeout.
 type requester struct{ to proc.PID }
 
-func (requester) Init(proc.PID) ([]any, []gen.Effect, error) { return nil, nil, nil }
+func (requester) Init(proc.PID) ([]any, []molecule.Effect, error) { return nil, nil, nil }
 
-func (requester) HandleCall(log []any, _ struct{}, _ genserver.From[struct{}]) ([]any, []gen.Effect) {
+func (requester) HandleCall(log []any, _ struct{}, _ genserver.From[struct{}]) ([]any, []molecule.Effect) {
 	return log, nil
 }
 
-func (q requester) HandleCast(log []any, _ goNow) ([]any, []gen.Effect) {
-	return append(slices.Clip(log), "sent"), gen.Do(gen.SendRequest{To: q.to, Req: mute{}, Tag: "r", Timeout: time.Second})
+func (q requester) HandleCast(log []any, _ goNow) ([]any, []molecule.Effect) {
+	return append(slices.Clip(log), "sent"), molecule.Do(molecule.SendRequest{To: q.to, Req: mute{}, Tag: "r", Timeout: time.Second})
 }
 
-func (requester) HandleInfo(log []any, msg any) ([]any, []gen.Effect) {
-	if r, ok := msg.(gen.Response); ok {
+func (requester) HandleInfo(log []any, msg any) ([]any, []molecule.Effect) {
+	if r, ok := msg.(molecule.Response); ok {
 		return append(slices.Clip(log), r), nil
 	}
 	return log, nil

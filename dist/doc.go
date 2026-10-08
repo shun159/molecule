@@ -35,9 +35,9 @@
 // cannot be decoded. Config.Codec replaces the encoding.
 //
 // The registered names of other nodes are reached with proc.Node.SendName
-// and gen.Remote, by which gen calls and casts a server of another node:
+// and molecule.Remote, by which gen calls and casts a server of another node:
 //
-//	ref := genserver.NewRef[Req, Rep, Cast](gen.Remote{Node: "b@host", Name: "server"})
+//	ref := genserver.NewRef[Req, Rep, Cast](molecule.Remote{Node: "b@host", Name: "server"})
 //	rep, err := ref.Call(ctx, self, req)
 //
 // Exit reasons are the reasons of proc, or a [RemoteError] carrying the

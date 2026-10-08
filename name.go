@@ -1,4 +1,4 @@
-package gen
+package molecule
 
 import "github.com/shun159/molecule/proc"
 
@@ -27,7 +27,7 @@ func (l Local) String() string { return string(l) }
 
 // At returns the name on node, which may be another:
 //
-//	gen.Cast{To: gen.Local("worker").At("b@host"), Req: req}
+//	Cast{To: Local("worker").At("b@host"), Req: req}
 func (l Local) At(node string) Remote { return Remote{Node: node, Name: string(l)} }
 
 // Remote is a name in the registry of a node, which may be another, like

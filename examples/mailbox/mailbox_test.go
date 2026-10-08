@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/genserver"
 	"github.com/shun159/molecule/proc"
 )
@@ -50,10 +50,10 @@ func TestReceiverPure(t *testing.T) {
 		t.Fatalf("answered early: %#v", effs)
 	}
 	s, effs = r.HandleCast(s, Pong{})
-	if !reflect.DeepEqual(effs, gen.Do(from.Reply(2))) || len(s.waiting) != 0 {
+	if !reflect.DeepEqual(effs, molecule.Do(from.Reply(2))) || len(s.waiting) != 0 {
 		t.Errorf("on the last pong: %+v, %#v", s, effs)
 	}
-	if _, effs = r.HandleCall(s, Wait{}, from); !reflect.DeepEqual(effs, gen.Do(from.Reply(2))) {
+	if _, effs = r.HandleCall(s, Wait{}, from); !reflect.DeepEqual(effs, molecule.Do(from.Reply(2))) {
 		t.Errorf("Wait after all are in: %#v", effs)
 	}
 }

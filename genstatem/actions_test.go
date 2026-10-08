@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/gensim"
 	"github.com/shun159/molecule/genstatem"
 	"github.com/shun159/molecule/proc"
@@ -17,14 +17,14 @@ type scripted struct{}
 
 type step struct {
 	to   int
-	effs []gen.Effect
+	effs []molecule.Effect
 }
 
 func (scripted) StateEnter() bool { return true }
 
-func (scripted) Init(proc.PID) (int, []any, []gen.Effect, error) { return 0, nil, nil, nil }
+func (scripted) Init(proc.PID) (int, []any, []molecule.Effect, error) { return 0, nil, nil, nil }
 
-func (scripted) HandleEvent(st int, log []any, ev genstatem.Event) (int, []any, []gen.Effect) {
+func (scripted) HandleEvent(st int, log []any, ev genstatem.Event) (int, []any, []molecule.Effect) {
 	if c, ok := ev.(genstatem.Cast); ok {
 		if s, ok := c.Msg.(step); ok {
 			return s.to, log, s.effs
@@ -32,7 +32,7 @@ func (scripted) HandleEvent(st int, log []any, ev genstatem.Event) (int, []any, 
 	}
 	log = append(slices.Clip(log), ev)
 	if c, ok := ev.(genstatem.Cast); ok && c.Msg == "postpone" {
-		return st, log, gen.Do(genstatem.Postpone{})
+		return st, log, molecule.Do(genstatem.Postpone{})
 	}
 	return st, log, nil
 }
@@ -51,7 +51,7 @@ func start(t *testing.T) (*gensim.Sim, proc.PID, func() []any) {
 	}
 }
 
-func do(s *gensim.Sim, pid proc.PID, to int, effs ...gen.Effect) {
+func do(s *gensim.Sim, pid proc.PID, to int, effs ...molecule.Effect) {
 	s.Cast(pid, step{to, effs})
 	s.RunUntilIdle()
 }

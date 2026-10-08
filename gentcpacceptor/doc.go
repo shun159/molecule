@@ -36,11 +36,11 @@
 //
 // # Callbacks
 //
-//	Init(self, gentcp.Socket) (S, []gen.Effect, error)         when the connection is ready
-//	HandleData(S, gentcp.Socket, []byte) (S, []gen.Effect)     on a packet
-//	HandleClosed(S, gentcp.Socket, error) (S, []gen.Effect)    on the connection closing, optional
-//	HandleInfo(S, gentcp.Socket, any) (S, []gen.Effect)        on other messages, optional
-//	Terminate(S, error) []gen.Effect                           when stopping, optional
+//	Init(self, gentcp.Socket) (S, []molecule.Effect, error)         when the connection is ready
+//	HandleData(S, gentcp.Socket, []byte) (S, []molecule.Effect)     on a packet
+//	HandleClosed(S, gentcp.Socket, error) (S, []molecule.Effect)    on the connection closing, optional
+//	HandleInfo(S, gentcp.Socket, any) (S, []molecule.Effect)        on other messages, optional
+//	Terminate(S, error) []molecule.Effect                           when stopping, optional
 //
 // The optional callbacks are those of [ClosedHandler], [InfoHandler] and
 // [Terminator]. HandleData gets a packet as the Packet option cuts them: a

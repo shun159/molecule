@@ -11,6 +11,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/proc"
 )
@@ -152,7 +153,7 @@ func (s *Sim) Now() time.Time { return s.now }
 // SpawnOption configures Spawn.
 type SpawnOption func(*process)
 
-// Named registers the process under name, as a gen.Local name of its
+// Named registers the process under name, as a molecule.Local name of its
 // node.
 func Named(name string) SpawnOption { return func(p *process) { p.name = name } }
 
@@ -185,7 +186,7 @@ func Spawn[S any](s *Sim, b gen.Behaviour[S], args any, opts ...SpawnOption) (pr
 	p.pid = p.node.alloc.NewPID()
 	if p.name != "" {
 		if pid, ok := p.node.names[p.name]; ok {
-			return proc.PID{}, &gen.AlreadyStartedError{PID: pid}
+			return proc.PID{}, &molecule.AlreadyStartedError{PID: pid}
 		}
 		p.node.names[p.name] = p.pid
 	}
@@ -196,7 +197,7 @@ func Spawn[S any](s *Sim, b gen.Behaviour[S], args any, opts ...SpawnOption) (pr
 	p.runner = gen.NewRunner(b, &env{s, p})
 	if err := p.runner.Init(args); err != nil {
 		reason := err
-		if errors.Is(err, gen.ErrIgnore) {
+		if errors.Is(err, molecule.ErrIgnore) {
 			reason = proc.Normal
 		}
 		s.exit(p, reason)
@@ -209,25 +210,25 @@ func Spawn[S any](s *Sim, b gen.Behaviour[S], args any, opts ...SpawnOption) (pr
 }
 
 // Send sends msg to the process at to, from outside the simulation.
-func (s *Sim) Send(to gen.Dest, msg any) {
+func (s *Sim) Send(to molecule.Dest, msg any) {
 	if pid, ok := s.resolve(to); ok {
 		s.send(proc.PID{}, pid, msg)
 	}
 }
 
-// Cast casts req to the server at to, as gen.SendCast does.
-func (s *Sim) Cast(to gen.Dest, req any) { s.Send(to, gen.CastMsg{Req: req}) }
+// Cast casts req to the server at to, as molecule.SendCast does.
+func (s *Sim) Cast(to molecule.Dest, req any) { s.Send(to, molecule.CastMsg{Req: req}) }
 
 // Call calls the server at to and runs the simulation until the reply
-// arrives, as gen.Call does. Time passes, timers firing, while it waits,
+// arrives, as molecule.Call does. Time passes, timers firing, while it waits,
 // up to CallTimeout, after which Call returns context.DeadlineExceeded.
-func (s *Sim) Call(to gen.Dest, req any) (any, error) {
+func (s *Sim) Call(to molecule.Dest, req any) (any, error) {
 	pid, ok := s.resolve(to)
 	if !ok {
-		return nil, &gen.ExitError{To: to, Reason: proc.NoProc}
+		return nil, &molecule.ExitError{To: to, Reason: proc.NoProc}
 	}
 	ref, a := s.newAlias(proc.PID{}, pid, nil)
-	s.send(proc.PID{}, pid, gen.CallMsg{From: gen.From{Tag: ref}, Req: req})
+	s.send(proc.PID{}, pid, molecule.CallMsg{From: molecule.From{Tag: ref}, Req: req})
 
 	deadline := s.now.Add(s.CallTimeout)
 	for !a.done {
@@ -241,7 +242,7 @@ func (s *Sim) Call(to gen.Dest, req any) (any, error) {
 		}
 	}
 	if a.result.Down {
-		return nil, &gen.ExitError{To: to, Reason: a.result.Reason}
+		return nil, &molecule.ExitError{To: to, Reason: a.result.Reason}
 	}
 	return a.result.Msg, nil
 }
@@ -261,15 +262,15 @@ func (s *Sim) Alive(pid proc.PID) bool {
 }
 
 // WhereIs returns the process registered under name on DefaultNode, or
-// on another node with a name of the form gen.Remote takes, see Resolve.
+// on another node with a name of the form molecule.Remote takes, see Resolve.
 func (s *Sim) WhereIs(name string) (proc.PID, bool) {
 	pid, ok := s.def.names[name]
 	return pid, ok
 }
 
 // Resolve returns the process at dest, as the driver sees it: a
-// gen.Local name is of DefaultNode, and a gen.Remote name of any node.
-func (s *Sim) Resolve(dest gen.Dest) (proc.PID, bool) { return s.resolve(dest) }
+// molecule.Local name is of DefaultNode, and a molecule.Remote name of any node.
+func (s *Sim) Resolve(dest molecule.Dest) (proc.PID, bool) { return s.resolve(dest) }
 
 // State returns the state of the behaviour of pid.
 func State[S any](s *Sim, pid proc.PID) (S, bool) {
@@ -345,14 +346,14 @@ func (s *Sim) Run(d time.Duration, check func() error) error {
 	return nil
 }
 
-func (s *Sim) resolve(dest gen.Dest) (proc.PID, bool) {
+func (s *Sim) resolve(dest molecule.Dest) (proc.PID, bool) {
 	switch d := dest.(type) {
 	case proc.PID:
 		return d, !d.IsZero()
-	case gen.Local:
+	case molecule.Local:
 		pid, ok := s.def.names[string(d)]
 		return pid, ok
-	case gen.Remote:
+	case molecule.Remote:
 		if n := s.nodes[d.Node]; n != nil {
 			pid, ok := n.names[d.Name]
 			return pid, ok
@@ -610,14 +611,14 @@ type env struct {
 func (e *env) Self() proc.PID   { return e.p.pid }
 func (e *env) Parent() proc.PID { return e.p.parent }
 
-// Resolve resolves dest as on the node of the process: a gen.Remote name
+// Resolve resolves dest as on the node of the process: a molecule.Remote name
 // of another node does not resolve, as in proc.
-func (e *env) Resolve(dest gen.Dest) (proc.PID, bool) {
+func (e *env) Resolve(dest molecule.Dest) (proc.PID, bool) {
 	switch d := dest.(type) {
-	case gen.Local:
+	case molecule.Local:
 		pid, ok := e.p.node.names[string(d)]
 		return pid, ok
-	case gen.Remote:
+	case molecule.Remote:
 		if d.Node != e.p.node.name {
 			return proc.PID{}, false
 		}
@@ -633,7 +634,7 @@ func (e *env) Send(to proc.PID, msg any) { e.s.send(e.p.pid, to, msg) }
 
 // SendName sends to a name of a simulated node, resolved at once.
 func (e *env) SendName(node, name string, msg any) {
-	if pid, ok := e.s.resolve(gen.Remote{Node: node, Name: name}); ok {
+	if pid, ok := e.s.resolve(molecule.Remote{Node: node, Name: name}); ok {
 		e.s.send(e.p.pid, pid, msg)
 	}
 }
@@ -660,7 +661,7 @@ func (e *env) Monitor(pid proc.PID) proc.Ref {
 
 // MonitorName monitors the process with name on node, resolved at once.
 func (e *env) MonitorName(node, name string) proc.Ref {
-	if pid, ok := e.s.resolve(gen.Remote{Node: node, Name: name}); ok {
+	if pid, ok := e.s.resolve(molecule.Remote{Node: node, Name: name}); ok {
 		return e.Monitor(pid)
 	}
 	ref := e.p.node.alloc.MakeRef()
@@ -738,7 +739,7 @@ func (e *env) Request(pid proc.PID, reply func(proc.Ref, proc.AliasMsg) any) (pr
 
 // RequestName requests the process with name on node, resolved at once.
 func (e *env) RequestName(node, name string, reply func(proc.Ref, proc.AliasMsg) any) (proc.Ref, func()) {
-	if pid, ok := e.s.resolve(gen.Remote{Node: node, Name: name}); ok {
+	if pid, ok := e.s.resolve(molecule.Remote{Node: node, Name: name}); ok {
 		return e.Request(pid, reply)
 	}
 	ref, _ := e.s.newAlias(e.p.pid, e.p.pid, reply) // watching itself: never down

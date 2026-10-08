@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"runtime/debug"
 
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -15,8 +16,8 @@ type (
 		key any
 		gen uint64
 	}
-	downMsg     struct{ Down }
-	responseMsg struct{ Response }
+	downMsg     struct{ molecule.Down }
+	responseMsg struct{ molecule.Response }
 	// answer is the reply to a SendRequest, or the exit of its server.
 	answer struct {
 		ref proc.Ref
@@ -59,7 +60,7 @@ type timer struct {
 // request is a SendRequest waiting for its answer.
 type request struct {
 	tag     any
-	to      Dest
+	to      molecule.Dest
 	release func()
 	cancel  func() // of its timeout, if any
 }
@@ -89,7 +90,7 @@ func (r *runtime[S]) Init(args any) error {
 	return nil
 }
 
-func (r *runtime[S]) init(args any) (state S, effs []Effect, err error) {
+func (r *runtime[S]) init(args any) (state S, effs []molecule.Effect, err error) {
 	defer func() {
 		if v := recover(); v != nil {
 			err = &proc.PanicError{Value: v, Stack: debug.Stack()}
@@ -173,7 +174,7 @@ func (r *runtime[S]) step(in Msg) (bool, error) {
 	return false, nil
 }
 
-func (r *runtime[S]) handle(in Msg) (state S, effs []Effect, err error) {
+func (r *runtime[S]) handle(in Msg) (state S, effs []molecule.Effect, err error) {
 	defer func() {
 		if v := recover(); v != nil {
 			err = &proc.PanicError{Value: v, Stack: debug.Stack()}
@@ -188,7 +189,7 @@ func (r *runtime[S]) handle(in Msg) (state S, effs []Effect, err error) {
 // timer that has since been cancelled.
 func (r *runtime[S]) translate(msg any) (Msg, bool) {
 	switch m := msg.(type) {
-	case CallMsg, CastMsg:
+	case molecule.CallMsg, molecule.CastMsg:
 		// Already boxed in msg: asserting reuses it, where converting m
 		// would box it again.
 		return msg.(Msg), true
@@ -205,9 +206,9 @@ func (r *runtime[S]) translate(msg any) (Msg, bool) {
 			return nil, false // timed out already
 		}
 		r.endRequest(m.ref, req)
-		resp := Response{Tag: req.tag, Value: m.m.Msg}
+		resp := molecule.Response{Tag: req.tag, Value: m.m.Msg}
 		if m.m.Down {
-			resp = Response{Tag: req.tag, Err: &ExitError{To: req.to, Reason: m.m.Reason}}
+			resp = molecule.Response{Tag: req.tag, Err: &molecule.ExitError{To: req.to, Reason: m.m.Reason}}
 		}
 		return InfoMsg{Msg: resp}, true
 	case requestTimeout:
@@ -216,7 +217,7 @@ func (r *runtime[S]) translate(msg any) (Msg, bool) {
 			return nil, false // answered already
 		}
 		r.endRequest(m.ref, req)
-		return InfoMsg{Msg: Response{Tag: req.tag, Err: context.DeadlineExceeded}}, true
+		return InfoMsg{Msg: molecule.Response{Tag: req.tag, Err: context.DeadlineExceeded}}, true
 	case responseMsg:
 		return InfoMsg{Msg: m.Response}, true
 	case downMsg:
@@ -228,7 +229,7 @@ func (r *runtime[S]) translate(msg any) (Msg, bool) {
 		}
 		delete(r.tags, m.Ref)
 		delete(r.monitors, tag)
-		return InfoMsg{Msg: Down{Tag: tag, PID: m.PID, Reason: m.Reason}}, true
+		return InfoMsg{Msg: molecule.Down{Tag: tag, PID: m.PID, Reason: m.Reason}}, true
 	}
 	return InfoMsg{Msg: msg}, true
 }
@@ -263,8 +264,8 @@ func (r *runtime[S]) Abort() {
 // it was handling and its state, like the report of a terminating
 // gen_server. The crash report of the process follows.
 func (r *runtime[S]) report(state S, reason error) {
-	st := Status{State: state, Message: r.last, Reason: reason}
-	if f, ok := any(r.b).(StatusFormatter); ok {
+	st := molecule.Status{State: state, Message: r.last, Reason: reason}
+	if f, ok := any(r.b).(molecule.StatusFormatter); ok {
 		st = f.FormatStatus(st)
 	}
 	attrs := []any{
@@ -304,26 +305,26 @@ func (r *runtime[S]) system(m sysMsg) {
 	r.env.SendAlias(m.From.Tag, reply)
 }
 
-func (r *runtime[S]) apply(effs []Effect) {
+func (r *runtime[S]) apply(effs []molecule.Effect) {
 	for _, e := range effs {
 		switch e := e.(type) {
-		case Continue:
+		case molecule.Continue:
 			r.continues = append(r.continues, e.Msg)
-		case Reply:
+		case molecule.Reply:
 			r.env.SendAlias(e.To.Tag, e.Value)
-		case Send:
-			if to, ok := e.To.(Remote); ok {
+		case molecule.Send:
+			if to, ok := e.To.(molecule.Remote); ok {
 				r.env.SendName(to.Node, to.Name, e.Msg)
 			} else if pid, ok := r.env.Resolve(e.To); ok {
 				r.env.Send(pid, e.Msg)
 			}
-		case Cast:
-			if to, ok := e.To.(Remote); ok {
-				r.env.SendName(to.Node, to.Name, CastMsg{Req: e.Req})
+		case molecule.Cast:
+			if to, ok := e.To.(molecule.Remote); ok {
+				r.env.SendName(to.Node, to.Name, molecule.CastMsg{Req: e.Req})
 			} else if pid, ok := r.env.Resolve(e.To); ok {
-				r.env.Send(pid, CastMsg{Req: e.Req})
+				r.env.Send(pid, molecule.CastMsg{Req: e.Req})
 			}
-		case Stop:
+		case molecule.Stop:
 			if !r.stopping {
 				r.stopping = true
 				r.stopReason = e.Reason
@@ -331,21 +332,21 @@ func (r *runtime[S]) apply(effs []Effect) {
 					r.stopReason = proc.Normal
 				}
 			}
-		case Monitor:
+		case molecule.Monitor:
 			r.monitor(e)
-		case Demonitor:
+		case molecule.Demonitor:
 			r.demonitor(e.Tag)
-		case StartTimer:
+		case molecule.StartTimer:
 			r.startTimer(e)
-		case CancelTimer:
+		case molecule.CancelTimer:
 			r.cancelTimer(e.Key)
-		case SendRequest:
+		case molecule.SendRequest:
 			r.sendRequest(e)
-		case Link:
+		case molecule.Link:
 			r.env.Link(e.PID)
-		case Unlink:
+		case molecule.Unlink:
 			r.env.Unlink(e.PID)
-		case TrapExit:
+		case molecule.TrapExit:
 			r.env.TrapExit(e.On)
 		case Performer:
 			e.Perform(r.env)
@@ -355,9 +356,9 @@ func (r *runtime[S]) apply(effs []Effect) {
 	}
 }
 
-func (r *runtime[S]) monitor(e Monitor) {
+func (r *runtime[S]) monitor(e molecule.Monitor) {
 	r.demonitor(e.Tag)
-	if to, ok := e.Target.(Remote); ok && to.Node != r.env.Self().Node() {
+	if to, ok := e.Target.(molecule.Remote); ok && to.Node != r.env.Self().Node() {
 		ref := r.env.MonitorName(to.Node, to.Name)
 		r.monitors[e.Tag] = ref
 		r.tags[ref] = e.Tag
@@ -365,7 +366,7 @@ func (r *runtime[S]) monitor(e Monitor) {
 	}
 	pid, ok := r.env.Resolve(e.Target)
 	if !ok {
-		r.env.Send(r.env.Self(), downMsg{Down{Tag: e.Tag, Reason: proc.NoProc}})
+		r.env.Send(r.env.Self(), downMsg{molecule.Down{Tag: e.Tag, Reason: proc.NoProc}})
 		return
 	}
 	ref := r.env.Monitor(pid)
@@ -381,7 +382,7 @@ func (r *runtime[S]) demonitor(tag any) {
 	}
 }
 
-func (r *runtime[S]) startTimer(e StartTimer) {
+func (r *runtime[S]) startTimer(e molecule.StartTimer) {
 	r.cancelTimer(e.Key)
 	r.timerGen++
 	after := e.After
@@ -399,30 +400,30 @@ func (r *runtime[S]) cancelTimer(key any) {
 	}
 }
 
-func (r *runtime[S]) sendRequest(e SendRequest) {
-	if to, ok := e.To.(Remote); ok && to.Node != r.env.Self().Node() {
+func (r *runtime[S]) sendRequest(e molecule.SendRequest) {
+	if to, ok := e.To.(molecule.Remote); ok && to.Node != r.env.Self().Node() {
 		// The name is resolved there, and monitored there first.
 		ref, release := r.env.RequestName(to.Node, to.Name, func(ref proc.Ref, m proc.AliasMsg) any {
 			return answer{ref: ref, m: m}
 		})
 		r.request(e, ref, release)
-		r.env.SendName(to.Node, to.Name, CallMsg{From: From{PID: r.env.Self(), Tag: ref}, Req: e.Req})
+		r.env.SendName(to.Node, to.Name, molecule.CallMsg{From: molecule.From{PID: r.env.Self(), Tag: ref}, Req: e.Req})
 		return
 	}
 	pid, ok := r.env.Resolve(e.To)
 	if !ok {
-		r.env.Send(r.env.Self(), responseMsg{Response{Tag: e.Tag, Err: &ExitError{To: e.To, Reason: proc.NoProc}}})
+		r.env.Send(r.env.Self(), responseMsg{molecule.Response{Tag: e.Tag, Err: &molecule.ExitError{To: e.To, Reason: proc.NoProc}}})
 		return
 	}
 	ref, release := r.env.Request(pid, func(ref proc.Ref, m proc.AliasMsg) any {
 		return answer{ref: ref, m: m}
 	})
 	r.request(e, ref, release)
-	r.env.Send(pid, CallMsg{From: From{PID: r.env.Self(), Tag: ref}, Req: e.Req})
+	r.env.Send(pid, molecule.CallMsg{From: molecule.From{PID: r.env.Self(), Tag: ref}, Req: e.Req})
 }
 
 // request records the request e, made under ref.
-func (r *runtime[S]) request(e SendRequest, ref proc.Ref, release func()) {
+func (r *runtime[S]) request(e molecule.SendRequest, ref proc.Ref, release func()) {
 	req := request{tag: e.Tag, to: e.To, release: release}
 	if e.Timeout > 0 {
 		req.cancel = r.env.SendAfter(e.Timeout, requestTimeout{ref: ref})

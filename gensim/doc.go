@@ -36,7 +36,7 @@
 // # Nodes
 //
 // Processes run on DefaultNode, or on the node given with On: nodes are
-// made on first use, each with names of its own, which gen.Remote reaches
+// made on first use, each with names of its own, which molecule.Remote reaches
 // from the others. Nodes fail as they do with dist, at the steps the test
 // chooses, the order of all else decided by the seed:
 //
@@ -70,6 +70,6 @@
 //
 // Processes are behaviours of gen. Supervisors and gentcpacceptor, which
 // are not, cannot be simulated, nor processes written against proc
-// directly. Names are gen.Local and gen.Remote names; other gen.Name
+// directly. Names are molecule.Local and molecule.Remote names; other molecule.Name
 // implementations do not resolve.
 package gensim

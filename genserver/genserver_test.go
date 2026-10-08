@@ -11,6 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/genserver"
 	"github.com/shun159/molecule/internal/testlog"
@@ -22,7 +23,7 @@ var errBoom = errors.New("boom")
 func TestCounterPure(t *testing.T) {
 	var from genserver.From[int]
 	n, effs := Counter{}.HandleCall(3, Reset{}, from)
-	if n != 0 || !reflect.DeepEqual(effs, gen.Do(gen.Reply{To: from.From, Value: 3})) {
+	if n != 0 || !reflect.DeepEqual(effs, molecule.Do(molecule.Reply{To: from.From, Value: 3})) {
 		t.Errorf("HandleCall(3, Reset) = %d, %#v", n, effs)
 	}
 	if n, effs := (Counter{}).HandleCast(3, Add{4}); n != 7 || effs != nil {
@@ -41,26 +42,26 @@ type echoState struct {
 
 type stopped struct{ reason error }
 
-func (e echo) Init(proc.PID) (echoState, []gen.Effect, error) {
+func (e echo) Init(proc.PID) (echoState, []molecule.Effect, error) {
 	return echoState{observer: e.observer}, nil, nil
 }
 
-func (echo) HandleCall(s echoState, req string, from genserver.From[string]) (echoState, []gen.Effect) {
+func (echo) HandleCall(s echoState, req string, from genserver.From[string]) (echoState, []molecule.Effect) {
 	if req == "stop" {
-		return s, gen.Do(from.Reply("bye"), gen.Stop{Reason: errBoom})
+		return s, molecule.Do(from.Reply("bye"), molecule.Stop{Reason: errBoom})
 	}
-	return s, gen.Do(from.Reply(req))
+	return s, molecule.Do(from.Reply(req))
 }
 
-func (echo) HandleCast(s echoState, _ struct{}) (echoState, []gen.Effect) { return s, nil }
+func (echo) HandleCast(s echoState, _ struct{}) (echoState, []molecule.Effect) { return s, nil }
 
-func (echo) HandleInfo(s echoState, msg any) (echoState, []gen.Effect) {
+func (echo) HandleInfo(s echoState, msg any) (echoState, []molecule.Effect) {
 	s.infos = append(s.infos[:len(s.infos):len(s.infos)], msg)
 	return s, nil
 }
 
-func (echo) Terminate(s echoState, reason error) []gen.Effect {
-	return gen.Do(gen.Send{To: s.observer, Msg: stopped{reason}})
+func (echo) Terminate(s echoState, reason error) []molecule.Effect {
+	return molecule.Do(molecule.Send{To: s.observer, Msg: stopped{reason}})
 }
 
 func collector(n *proc.Node) (proc.PID, <-chan any) {
@@ -123,13 +124,13 @@ func TestOptionalCallbacks(t *testing.T) {
 func TestBadMessage(t *testing.T) {
 	n := proc.NewNode("")
 	ctx := context.Background()
-	for _, send := range []func(gen.Dest){
-		func(d gen.Dest) {
+	for _, send := range []func(molecule.Dest){
+		func(d molecule.Dest) {
 			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
-			gen.Call(ctx, n, d, "not a CounterReq")
+			molecule.Call(ctx, n, d, "not a CounterReq")
 		},
-		func(d gen.Dest) { gen.SendCast(n, d, "not an Add") },
+		func(d molecule.Dest) { molecule.SendCast(n, d, "not an Add") },
 	} {
 		c, _ := genserver.Start(ctx, n, Counter{})
 		down, stop := n.Watch(ctx, c.Dest().(proc.PID))
@@ -154,7 +155,7 @@ func TestWrongReplyType(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		gen.SendReply(s, msg.(gen.CallMsg).From, "not an int")
+		molecule.SendReply(s, msg.(molecule.CallMsg).From, "not an int")
 		return nil
 	})
 	_, err := genserver.NewRef[CounterReq, int, Add](pid).Call(context.Background(), n, Get{})
@@ -165,7 +166,7 @@ func TestWrongReplyType(t *testing.T) {
 
 func TestCallErrors(t *testing.T) {
 	n := proc.NewNode("")
-	ref := genserver.RefFor(Counter{}, gen.Local("nobody"))
+	ref := genserver.RefFor(Counter{}, molecule.Local("nobody"))
 	if v, err := ref.Call(context.Background(), n, Get{}); v != 0 || !errors.Is(err, proc.NoProc) {
 		t.Errorf("Call = %d, %v", v, err)
 	}
@@ -183,27 +184,27 @@ type relayState struct {
 	next    int
 }
 
-func (relay) Init(proc.PID) (relayState, []gen.Effect, error) {
+func (relay) Init(proc.PID) (relayState, []molecule.Effect, error) {
 	return relayState{pending: map[int]genserver.From[int]{}}, nil, nil
 }
 
-func (r relay) HandleCall(s relayState, _ Get, from genserver.From[int]) (relayState, []gen.Effect) {
+func (r relay) HandleCall(s relayState, _ Get, from genserver.From[int]) (relayState, []molecule.Effect) {
 	pending := maps.Clone(s.pending)
 	pending[s.next] = from
-	return relayState{pending: pending, next: s.next + 1}, gen.Do(r.counter.CallEffect(Get{}, s.next))
+	return relayState{pending: pending, next: s.next + 1}, molecule.Do(r.counter.CallEffect(Get{}, s.next))
 }
 
-func (relay) HandleCast(s relayState, _ struct{}) (relayState, []gen.Effect) { return s, nil }
+func (relay) HandleCast(s relayState, _ struct{}) (relayState, []molecule.Effect) { return s, nil }
 
-func (relay) HandleInfo(s relayState, msg any) (relayState, []gen.Effect) {
-	resp, ok := msg.(gen.Response)
+func (relay) HandleInfo(s relayState, msg any) (relayState, []molecule.Effect) {
+	resp, ok := msg.(molecule.Response)
 	if !ok {
 		return s, nil
 	}
 	from := s.pending[resp.Tag.(int)]
 	pending := maps.Clone(s.pending)
 	delete(pending, resp.Tag.(int))
-	return relayState{pending: pending, next: s.next}, gen.Do(from.Reply(resp.Value.(int)))
+	return relayState{pending: pending, next: s.next}, molecule.Do(from.Reply(resp.Value.(int)))
 }
 
 func TestCallEffect(t *testing.T) {
@@ -244,16 +245,16 @@ func TestStartLink(t *testing.T) {
 // validator replies nil errors, which arrive as untyped nil.
 type validator struct{}
 
-func (validator) Init(proc.PID) (struct{}, []gen.Effect, error) { return struct{}{}, nil, nil }
+func (validator) Init(proc.PID) (struct{}, []molecule.Effect, error) { return struct{}{}, nil, nil }
 
-func (validator) HandleCall(s struct{}, n int, from genserver.From[error]) (struct{}, []gen.Effect) {
+func (validator) HandleCall(s struct{}, n int, from genserver.From[error]) (struct{}, []molecule.Effect) {
 	if n < 0 {
-		return s, gen.Do(from.Reply(errBoom))
+		return s, molecule.Do(from.Reply(errBoom))
 	}
-	return s, gen.Do(from.Reply(nil))
+	return s, molecule.Do(from.Reply(nil))
 }
 
-func (validator) HandleCast(s struct{}, _ struct{}) (struct{}, []gen.Effect) { return s, nil }
+func (validator) HandleCast(s struct{}, _ struct{}) (struct{}, []molecule.Effect) { return s, nil }
 
 func TestNilReply(t *testing.T) {
 	n := proc.NewNode("")
@@ -276,20 +277,20 @@ type warmState struct {
 	warmed bool
 }
 
-func (warmer) Init(self proc.PID) (warmState, []gen.Effect, error) {
-	return warmState{self: self}, gen.Do(gen.Continue{Msg: "warm up"}), nil
+func (warmer) Init(self proc.PID) (warmState, []molecule.Effect, error) {
+	return warmState{self: self}, molecule.Do(molecule.Continue{Msg: "warm up"}), nil
 }
 
-func (warmer) HandleContinue(s warmState, msg any) (warmState, []gen.Effect) {
+func (warmer) HandleContinue(s warmState, msg any) (warmState, []molecule.Effect) {
 	s.warmed = msg == "warm up"
 	return s, nil
 }
 
-func (warmer) HandleCall(s warmState, _ struct{}, from genserver.From[warmState]) (warmState, []gen.Effect) {
-	return s, gen.Do(from.Reply(s))
+func (warmer) HandleCall(s warmState, _ struct{}, from genserver.From[warmState]) (warmState, []molecule.Effect) {
+	return s, molecule.Do(from.Reply(s))
 }
 
-func (warmer) HandleCast(s warmState, _ struct{}) (warmState, []gen.Effect) { return s, nil }
+func (warmer) HandleCast(s warmState, _ struct{}) (warmState, []molecule.Effect) { return s, nil }
 
 func TestHandleContinue(t *testing.T) {
 	n := proc.NewNode("")
@@ -304,15 +305,17 @@ func TestHandleContinue(t *testing.T) {
 	}
 }
 
-// cold returns gen.Continue without a HandleContinue.
+// cold returns molecule.Continue without a HandleContinue.
 type cold struct{}
 
-func (cold) Init(proc.PID) (int, []gen.Effect, error) {
-	return 0, gen.Do(gen.Continue{Msg: "oops"}), nil
+func (cold) Init(proc.PID) (int, []molecule.Effect, error) {
+	return 0, molecule.Do(molecule.Continue{Msg: "oops"}), nil
 }
 
-func (cold) HandleCall(n int, _ struct{}, _ genserver.From[int]) (int, []gen.Effect) { return n, nil }
-func (cold) HandleCast(n int, _ struct{}) (int, []gen.Effect)                        { return n, nil }
+func (cold) HandleCall(n int, _ struct{}, _ genserver.From[int]) (int, []molecule.Effect) {
+	return n, nil
+}
+func (cold) HandleCast(n int, _ struct{}) (int, []molecule.Effect) { return n, nil }
 
 func TestNoHandleContinue(t *testing.T) {
 	n := proc.NewNode("")
@@ -360,14 +363,14 @@ func TestRefStop(t *testing.T) {
 // logServer keeps what it is sent, its other callbacks by Default.
 type logServer struct{ genserver.Default[[]string] }
 
-func (logServer) HandleInfo(log []string, msg any) ([]string, []gen.Effect) {
+func (logServer) HandleInfo(log []string, msg any) ([]string, []molecule.Effect) {
 	return append(log[:len(log):len(log)], fmt.Sprint(msg)), nil
 }
 
 // castOnly takes casts, and no calls.
 type castOnly struct{ genserver.Default[int] }
 
-func (castOnly) HandleCast(n int, by int) (int, []gen.Effect) { return n + by, nil }
+func (castOnly) HandleCast(n int, by int) (int, []molecule.Effect) { return n + by, nil }
 
 func TestDefault(t *testing.T) {
 	n := proc.NewNode("")
@@ -382,7 +385,7 @@ func TestDefault(t *testing.T) {
 		t.Errorf("state %v, %v", s, err)
 	}
 	// It takes no call: one stops it.
-	if _, err := gen.Call(ctx, n, pid, "call"); err == nil {
+	if _, err := molecule.Call(ctx, n, pid, "call"); err == nil {
 		t.Error("call answered")
 	}
 
@@ -402,11 +405,11 @@ type tally struct{ genserver.Default[int] }
 
 type sum struct{}
 
-func (tally) HandleCall(n int, _ sum, from genserver.From[int]) (int, []gen.Effect) {
-	return n, gen.Do(from.Reply(n))
+func (tally) HandleCall(n int, _ sum, from genserver.From[int]) (int, []molecule.Effect) {
+	return n, molecule.Do(from.Reply(n))
 }
 
-func (tally) HandleCast(n int, by int) (int, []gen.Effect) { return n + by, nil }
+func (tally) HandleCast(n int, by int) (int, []molecule.Effect) { return n + by, nil }
 
 func TestSendRequest(t *testing.T) {
 	n := proc.NewNode("")
@@ -425,11 +428,11 @@ func TestSendRequest(t *testing.T) {
 // vault keeps a secret, and panics on a cast; its reports hide the secret.
 type vault struct{ genserver.Default[string] }
 
-func (vault) Init(proc.PID) (string, []gen.Effect, error) { return "s3cr3t", nil, nil }
+func (vault) Init(proc.PID) (string, []molecule.Effect, error) { return "s3cr3t", nil, nil }
 
-func (vault) HandleCast(string, struct{}) (string, []gen.Effect) { panic("boom") }
+func (vault) HandleCast(string, struct{}) (string, []molecule.Effect) { panic("boom") }
 
-func (vault) FormatStatus(st gen.Status) gen.Status {
+func (vault) FormatStatus(st molecule.Status) molecule.Status {
 	st.State = "redacted"
 	return st
 }
