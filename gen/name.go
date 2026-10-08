@@ -25,6 +25,11 @@ func (l Local) Register(n *proc.Node, pid proc.PID) error { return n.Register(st
 
 func (l Local) String() string { return string(l) }
 
+// At returns the name on node, which may be another:
+//
+//	gen.Cast{To: gen.Local("worker").At("b@host"), Req: req}
+func (l Local) At(node string) Remote { return Remote{Node: node, Name: string(l)} }
+
 // Remote is a name in the registry of a node, which may be another, like
 // {Name, Node} in Erlang. It is resolved there: calls, casts, requests and
 // monitors go to whichever process has the name when they arrive.

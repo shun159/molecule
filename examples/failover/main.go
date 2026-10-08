@@ -54,7 +54,7 @@ func main() {
 	defer d.Stop()
 	n.Register(consoleName, n.Spawn(console(os.Stdout)))
 	w := Worker{Node: *name, Peer: peerName, Primary: *primary, Every: 500 * time.Millisecond}
-	if _, err := genserver.Start(ctx, n, w, gen.WithName(gen.Local(workerName))); err != nil {
+	if _, err := genserver.Start(ctx, n, w, gen.WithName(workerName)); err != nil {
 		log.Fatal(err)
 	}
 	<-ctx.Done()

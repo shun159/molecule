@@ -34,8 +34,8 @@ func TestFailover(t *testing.T) {
 		t.Fatal(err)
 	}
 	every := 100 * time.Millisecond
-	start("b", genserver.Gen(Worker{Node: "b", Peer: "a", Primary: true, Every: every}), workerName)
-	standby := start("a", genserver.Gen(Worker{Node: "a", Peer: "b", Every: every}), workerName)
+	start("b", genserver.Gen(Worker{Node: "b", Peer: "a", Primary: true, Every: every}), string(workerName))
+	standby := start("a", genserver.Gen(Worker{Node: "a", Peer: "b", Every: every}), string(workerName))
 
 	s.Advance(time.Second)
 	if w, _ := gensim.State[work](s, standby); w.count != 10 {

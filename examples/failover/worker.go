@@ -10,9 +10,9 @@ import (
 )
 
 // Worker counts, a tick at a time. The primary sends each count to the
-// standby on the other node; the standby monitors the primary, and when
-// it is gone, its node crashed or cut off, takes over from the last count
-// it got.
+// worker of the other node, the standby, which monitors the primary by
+// name, and when it is gone, its node crashed or cut off, takes over from
+// the last count it got.
 type Worker struct {
 	genserver.Default[work] // it takes no call
 
@@ -24,28 +24,23 @@ type Worker struct {
 
 // work is the state of a worker.
 type work struct {
-	self    proc.PID
-	active  bool     // counting, rather than standing by
-	count   int      // the last count, made or received
-	primary proc.PID // the primary watched, by a standby
+	active   bool // counting, rather than standing by
+	count    int  // the last count, made or received
+	watching bool // the primary, by a standby
 }
 
 // checkpoint is a count, from the primary to the standby.
-type checkpoint struct {
-	Count int
-	From  proc.PID
-}
+type checkpoint struct{ Count int }
 
 type tick struct{}
 
-const workerName = "worker"
+const workerName = gen.Local("worker")
 
-func (w Worker) Init(self proc.PID) (work, []gen.Effect, error) {
-	s := work{self: self, active: w.Primary}
+func (w Worker) Init(proc.PID) (work, []gen.Effect, error) {
 	if !w.Primary {
-		return s, gen.Do(w.say("standing by")), nil
+		return work{}, gen.Do(w.say("standing by")), nil
 	}
-	return s, gen.Do(w.next()), nil
+	return work{active: true}, gen.Do(w.next()), nil
 }
 
 // HandleCast takes a checkpoint of the primary, and watches it.
@@ -54,13 +49,13 @@ func (w Worker) HandleCast(s work, c checkpoint) (work, []gen.Effect) {
 		return s, nil
 	}
 	s.count = c.Count
-	if c.From == s.primary {
+	if s.watching {
 		return s, nil
 	}
-	s.primary = c.From
+	s.watching = true
 	return s, gen.Do(
-		w.say(fmt.Sprintf("watching the primary %v", c.From)),
-		gen.Monitor{Target: c.From, Tag: "primary"},
+		w.say("watching the primary on "+w.Peer),
+		gen.Monitor{Target: workerName.At(w.Peer), Tag: "primary"},
 	)
 }
 
@@ -70,7 +65,7 @@ func (w Worker) HandleInfo(s work, msg any) (work, []gen.Effect) {
 		s.count++
 		return s, gen.Do(
 			w.say(fmt.Sprintf("count %d", s.count)),
-			gen.Cast{To: gen.Remote{Node: w.Peer, Name: workerName}, Req: checkpoint{s.count, s.self}},
+			gen.Cast{To: workerName.At(w.Peer), Req: checkpoint{s.count}},
 			w.next(),
 		)
 	case gen.Down:
