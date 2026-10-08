@@ -2,7 +2,6 @@ package dist_test
 
 import (
 	"context"
-	"encoding/gob"
 	"errors"
 	"fmt"
 	"sync"
@@ -93,7 +92,7 @@ type Ping struct {
 	N    int
 }
 
-func init() { gob.Register(Ping{}) }
+func init() { dist.Register(Ping{}) }
 
 func TestSend(t *testing.T) {
 	nodes, dists := cluster(t, "secret", "a@test", "b@test")

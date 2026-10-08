@@ -23,7 +23,8 @@ type Config struct {
 	// Resolve returns the address of a node, to connect to it. Without
 	// it, or for a node it does not know, the node is unreachable.
 	Resolve func(node string) (addr string, ok bool)
-	// Codec encodes the messages; Gob if nil.
+	// Codec encodes the messages. The default one sends the types given
+	// to Register.
 	Codec Codec
 	// TLS, if set, secures the connections, as inet_tls_dist does: the
 	// node is a TLS client when it dials, and a server when it accepts,
@@ -77,7 +78,7 @@ func Start(n *proc.Node, cfg Config) (*Dist, error) {
 		return nil, errUnnamed
 	}
 	if cfg.Codec == nil {
-		cfg.Codec = Gob
+		cfg.Codec = gobCodec{}
 	}
 	if cfg.TickTime <= 0 {
 		cfg.TickTime = DefaultTickTime

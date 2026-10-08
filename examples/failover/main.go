@@ -15,7 +15,6 @@ package main
 
 import (
 	"context"
-	"encoding/gob"
 	"flag"
 	"log"
 	"os"
@@ -29,7 +28,7 @@ import (
 	"github.com/shun159/molecule/proc"
 )
 
-func init() { gob.Register(checkpoint{}) }
+func init() { dist.Register(checkpoint{}) }
 
 func main() {
 	name := flag.String("name", "a@localhost", "name of this node")

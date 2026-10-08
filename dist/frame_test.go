@@ -77,7 +77,7 @@ func TestReasons(t *testing.T) {
 // TestGobNewStream fails an encoding: the encoder starts a new stream,
 // which the decoder follows.
 func TestGobNewStream(t *testing.T) {
-	enc, dec := Gob.NewEncoder(), Gob.NewDecoder()
+	enc, dec := gobCodec{}.NewEncoder(), gobCodec{}.NewDecoder()
 	send := func(v any) (any, error) {
 		b, err := enc.Encode(v)
 		if err != nil {

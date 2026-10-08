@@ -32,7 +32,7 @@ func TestForgedFrames(t *testing.T) {
 	n.Send(local, "ready") // trapping exits
 	<-got
 	b, c := proc.NewNode("b@test"), proc.NewNode("c@test")
-	conn := &connection{d: d, p: &peer{node: "b@test"}, dec: Gob.NewDecoder()}
+	conn := &connection{d: d, p: &peer{node: "b@test"}, dec: gobCodec{}.NewDecoder()}
 	for _, from := range []proc.PID{c.NewPID(), b.NewPID()} {
 		conn.receive(appendFrame(nil, frame{op: opExit, from: from, to: local, reason: proc.Shutdown}))
 	}

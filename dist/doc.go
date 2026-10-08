@@ -29,10 +29,10 @@
 //
 // # Messages
 //
-// Messages are Go values, encoded by a [Codec]: [Gob] by default, for
-// which the types of the messages are registered with gob.Register. PIDs
-// and Refs keep their identity across nodes. A message that cannot be
-// encoded is dropped and logged, as one that cannot be decoded.
+// Messages are Go values, of the types given to [Register], sent with
+// their exported fields. PIDs and Refs keep their identity across nodes.
+// A message that cannot be encoded is dropped and logged, as one that
+// cannot be decoded. Config.Codec replaces the encoding.
 //
 // The registered names of other nodes are reached with proc.Node.SendName
 // and gen.Remote, by which gen calls and casts a server of another node:

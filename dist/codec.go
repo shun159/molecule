@@ -29,14 +29,21 @@ type Decoder interface {
 	Decode(b []byte) (any, error)
 }
 
-// Gob is the Codec of encoding/gob, the default. The types of the
-// messages must be registered with gob.Register, as for any value sent
-// in an interface: built-in types need not be. Types are described once
-// per connection, the first time they are sent.
+// Register tells the distribution the types of the messages sent between
+// nodes, by a value of each, as the default Codec needs: it sends a
+// message of a type it knows, with its exported fields. Every node
+// registers the types it sends or receives, at init, before connecting.
+// Built-in types, PIDs, Refs and the calls and casts of gen need not be
+// registered.
 //
-// PIDs and Refs are registered, and encode as such, and so are the
-// messages of gen, calls and casts.
-var Gob Codec = gobCodec{}
+//	func init() { dist.Register(Ping{}, Pong{}) }
+//
+// A type is described once per connection, the first time it is sent.
+func Register(msgs ...any) {
+	for _, m := range msgs {
+		gob.Register(m)
+	}
+}
 
 func init() {
 	gob.Register(proc.PID{})
@@ -45,6 +52,7 @@ func init() {
 	gob.Register(gen.CastMsg{})
 }
 
+// gobCodec is the default Codec, of encoding/gob.
 type gobCodec struct{}
 
 // envelope carries a message in an interface, so that gob tells its type.
