@@ -25,11 +25,11 @@ functions, without starting a process.
     behaviours/genserver       gen_server
     behaviours/genstatem       gen_statem
     behaviours/supervisor      supervisors, static and dynamic
-    behaviours/gentcpacceptor  TCP acceptor pool and connection behaviour
-    gen                        the runtime of behaviours, for those building them
-    pg                         process groups
-    gentcp                     TCP sockets owned by processes, like gen_tcp
+    behaviours/gen             the runtime of behaviours, for those building them
+    net/gentcp                 TCP sockets owned by processes, like gen_tcp
+    net/gentcpacceptor         TCP acceptor pool and connection behaviour
     dist                       distribution: processes of several nodes, by PID
+    pg                         process groups
     gensim                     deterministic simulation of behaviours
 
 ## Documentation

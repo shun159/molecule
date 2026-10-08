@@ -5,7 +5,7 @@ import (
 
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/behaviours/supervisor"
-	"github.com/shun159/molecule/gentcp"
+	"github.com/shun159/molecule/net/gentcp"
 	"github.com/shun159/molecule/proc"
 )
 

@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/shun159/molecule"
-	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/proc"
 )
 

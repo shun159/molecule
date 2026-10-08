@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/shun159/molecule/behaviours/gentcpacceptor"
 	"github.com/shun159/molecule/internal/testlog"
+	"github.com/shun159/molecule/net/gentcpacceptor"
 	"github.com/shun159/molecule/proc"
 )
 

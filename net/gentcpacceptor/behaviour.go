@@ -5,8 +5,8 @@ import (
 	"slices"
 
 	"github.com/shun159/molecule"
-	"github.com/shun159/molecule/gen"
-	"github.com/shun159/molecule/gentcp"
+	"github.com/shun159/molecule/behaviours/gen"
+	"github.com/shun159/molecule/net/gentcp"
 	"github.com/shun159/molecule/proc"
 )
 
