@@ -32,7 +32,6 @@ func run[S any](self *proc.Self, b Behaviour[S], args any, o molecule.StartOptio
 		}
 		return err
 	}
-	self.InitAck(nil)
 	if done, reason := r.Flush(); done {
 		return reason
 	}
@@ -87,6 +86,13 @@ func (e procEnv) Link(pid proc.PID)                      { e.self.Link(pid) }
 func (e procEnv) Unlink(pid proc.PID)                    { e.self.Unlink(pid) }
 func (e procEnv) TrapExit(on bool)                       { e.self.TrapExit(on) }
 func (e procEnv) MonitorNodes(on bool)                   { e.self.MonitorNodes(on) }
+
+func (e procEnv) Exit(to proc.PID, reason error) { e.self.Exit(to, reason) }
+func (e procEnv) Ack(err error)                  { e.self.InitAck(err) }
+
+func (e procEnv) StartLink(child Starter) (proc.PID, error) {
+	return child.StartLink(context.Background(), e.self)
+}
 
 func (e procEnv) Now() time.Time { return time.Now() }
 

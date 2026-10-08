@@ -42,6 +42,7 @@ type runtime[S any] struct {
 
 	stopping   bool
 	stopReason error
+	ackLater   bool // Init returned AckLater
 
 	suspended bool
 	deferred  []any
@@ -86,6 +87,9 @@ func (r *runtime[S]) Init(args any) error {
 	if r.stopping {
 		r.Abort()
 		return r.stopReason
+	}
+	if !r.ackLater {
+		r.env.Ack(nil)
 	}
 	return nil
 }
@@ -145,6 +149,9 @@ func (r *runtime[S]) receive(msg any) (bool, error) {
 	}
 	if e, ok := msg.(proc.ExitMsg); ok && e.From == r.env.Parent() && !e.From.IsZero() {
 		r.last = e
+		if pe, ok := any(r.b).(ParentExiter[S]); ok {
+			return r.parentExit(pe, e.Reason)
+		}
 		return true, r.terminate(r.state, e.Reason)
 	}
 	if r.suspended {
@@ -163,6 +170,28 @@ func (r *runtime[S]) receive(msg any) (bool, error) {
 func (r *runtime[S]) step(in Msg) (bool, error) {
 	r.last = in
 	state, effs, err := r.handle(in)
+	if err != nil {
+		return true, r.terminate(r.state, err)
+	}
+	r.state = state
+	r.apply(effs)
+	if r.stopping {
+		return true, r.terminate(r.state, r.stopReason)
+	}
+	return false, nil
+}
+
+// parentExit has the behaviour handle the exit of its parent.
+func (r *runtime[S]) parentExit(pe ParentExiter[S], reason error) (bool, error) {
+	state, effs, err := func() (state S, effs []molecule.Effect, err error) {
+		defer func() {
+			if v := recover(); v != nil {
+				err = &proc.PanicError{Value: v, Stack: debug.Stack()}
+			}
+		}()
+		state, effs = pe.ParentExit(r.state, reason)
+		return state, effs, nil
+	}()
 	if err != nil {
 		return true, r.terminate(r.state, err)
 	}
@@ -350,6 +379,19 @@ func (r *runtime[S]) apply(effs []molecule.Effect) {
 			r.env.TrapExit(e.On)
 		case molecule.MonitorNodes:
 			r.env.MonitorNodes(e.On)
+		case molecule.Exit:
+			if pid, ok := r.env.Resolve(e.To); ok {
+				r.env.Exit(pid, e.Reason)
+			}
+		case StartChild:
+			pid, err := r.env.StartLink(e.Child)
+			r.continues = append(r.continues, Started{Tag: e.Tag, PID: pid, Err: err})
+		case Log:
+			r.env.Logger().Log(context.Background(), e.Level, e.Msg, e.Attrs...)
+		case AckLater:
+			r.ackLater = true
+		case Ack:
+			r.env.Ack(e.Err)
 		case Performer:
 			e.Perform(r.env)
 		default:

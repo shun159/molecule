@@ -35,6 +35,12 @@ type Env interface {
 	MonitorName(node, name string) proc.Ref
 	// MonitorNodes is that of proc.Self.
 	MonitorNodes(on bool)
+	// Exit sends an exit signal, as proc.Self.Exit does.
+	Exit(to proc.PID, reason error)
+	// StartLink starts child linked to Self, and waits until it has.
+	StartLink(child Starter) (proc.PID, error)
+	// Ack tells the start of Self is over: with err, it failed.
+	Ack(err error)
 	// Link, Unlink and TrapExit are those of proc.Self.
 	Link(pid proc.PID)
 	Unlink(pid proc.PID)

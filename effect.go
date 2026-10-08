@@ -106,6 +106,13 @@ type TrapExit struct {
 	On bool
 }
 
+// Exit sends an exit signal with Reason to the process at To, like
+// erlang:exit/2: proc.Kill kills it, trapping exits or not.
+type Exit struct {
+	To     Dest
+	Reason error
+}
+
 // MonitorNodes makes the process monitor the connections of its node to
 // others, or stop, like net_kernel:monitor_nodes: a proc.NodeUp arrives
 // at once for each node connected, then a proc.NodeUp and a
@@ -136,3 +143,4 @@ func (Link) effect()         {}
 func (Unlink) effect()       {}
 func (TrapExit) effect()     {}
 func (MonitorNodes) effect() {}
+func (Exit) effect()         {}

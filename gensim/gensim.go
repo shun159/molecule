@@ -76,6 +76,10 @@ type process struct {
 	runner      gen.Runner
 	mailbox     []any
 	alive       bool
+	busy        bool // handling, or starting: Step leaves it alone
+	acked       bool // its start is over
+	ackErr      error
+	exitReason  error
 	name        string
 	trap        bool
 	linked      map[proc.PID]bool
@@ -175,35 +179,60 @@ var ErrNodeDown = errors.New("gensim: node down")
 // Spawn starts b in a new simulated process and runs its Init, as gen.Start
 // does. An error from Init is returned, the process exiting with it.
 func Spawn[S any](s *Sim, b gen.Behaviour[S], args any, opts ...SpawnOption) (proc.PID, error) {
+	p := &process{}
+	for _, opt := range opts {
+		opt(p)
+	}
+	node := s.def
+	if p.on != "" {
+		node = s.nodeNamed(p.on)
+	}
+	return s.start(node, nil, fmt.Sprintf("%T", b), func(e gen.Env) (gen.Runner, any, string) {
+		return gen.NewRunner(b, e), args, p.name
+	})
+}
+
+// ErrNotSimulated is the error of starting a child a simulation cannot
+// run: one started by a function, rather than a behaviour.
+var ErrNotSimulated = errors.New("gensim: child started by a function, which cannot be simulated")
+
+// start starts a process on node, linked to parent if any, running the
+// runner newRunner makes, registered under the name it tells, if any, and
+// runs the simulation until it has started, as Start and StartLink wait.
+func (s *Sim) start(node *node, parent *process, what string, newRunner func(gen.Env) (gen.Runner, any, string)) (proc.PID, error) {
+	if !node.up {
+		return proc.PID{}, ErrNodeDown
+	}
 	p := &process{
+		node:     node,
+		pid:      node.alloc.NewPID(),
 		alive:    true,
 		linked:   make(map[proc.PID]bool),
 		watchers: make(map[proc.Ref]watcher),
 		watching: make(map[proc.Ref]proc.PID),
 	}
-	for _, opt := range opts {
-		opt(p)
-	}
-	p.node = s.def
-	if p.on != "" {
-		p.node = s.nodeNamed(p.on)
-	}
-	if !p.node.up {
-		return proc.PID{}, ErrNodeDown
-	}
-	p.pid = p.node.alloc.NewPID()
-	if p.name != "" {
-		if pid, ok := p.node.names[p.name]; ok {
+	runner, args, name := newRunner(&env{s, p})
+	if name != "" {
+		if pid, ok := node.names[name]; ok {
 			return proc.PID{}, &molecule.AlreadyStartedError{PID: pid}
 		}
-		p.node.names[p.name] = p.pid
+		node.names[name] = p.pid
+		p.name = name
+	}
+	if parent != nil {
+		p.parent = parent.pid
+		p.linked[parent.pid] = true
+		parent.linked[p.pid] = true
 	}
 	s.procs = append(s.procs, p)
 	s.byPID[p.pid] = p
-	s.record(Event{Kind: Spawned, To: p.pid, Msg: fmt.Sprintf("%T", b)})
+	s.record(Event{Kind: Spawned, To: p.pid, Msg: what})
 
-	p.runner = gen.NewRunner(b, &env{s, p})
-	if err := p.runner.Init(args); err != nil {
+	p.runner = runner
+	p.busy = true
+	err := runner.Init(args)
+	if err != nil {
+		p.busy = false
 		reason := err
 		if errors.Is(err, molecule.ErrIgnore) {
 			reason = proc.Normal
@@ -211,8 +240,25 @@ func Spawn[S any](s *Sim, b gen.Behaviour[S], args any, opts ...SpawnOption) (pr
 		s.exit(p, reason)
 		return proc.PID{}, err
 	}
-	if done, reason := p.runner.Flush(); done {
+	done, reason := runner.Flush()
+	p.busy = false
+	if done {
 		s.exit(p, reason)
+	}
+	// A start held back runs on, until it is told over, or the process
+	// dies.
+	for p.alive && !p.acked {
+		if !s.Step() && !s.fireTimer(s.now.Add(s.CallTimeout)) {
+			break
+		}
+	}
+	switch {
+	case p.ackErr != nil:
+		return proc.PID{}, p.ackErr
+	case !p.acked && !p.alive:
+		return proc.PID{}, p.exitReason
+	case !p.acked:
+		return proc.PID{}, errors.New("gensim: start never acknowledged")
 	}
 	return p.pid, nil
 }
@@ -303,7 +349,8 @@ func (s *Sim) Step() bool {
 		}
 	}
 	for _, p := range s.procs {
-		if p.alive && len(p.mailbox) > 0 {
+		// A process busy starting another handles nothing meanwhile.
+		if p.alive && !p.busy && len(p.mailbox) > 0 {
 			choices = append(choices, func() { s.handle(p) })
 		}
 	}
@@ -437,7 +484,9 @@ func (s *Sim) handle(p *process) {
 		old = p.runner.State()
 		before = fingerprint(old)
 	}
+	p.busy = true
 	done, reason := p.runner.Deliver(msg)
+	p.busy = false
 	if !s.noPurity && fingerprint(old) != before {
 		panic(&ImpureError{PID: p.pid, Msg: msg, What: "changed the state it was given, handling a message"})
 	}
@@ -452,6 +501,7 @@ func (s *Sim) exit(p *process, reason error) {
 		return
 	}
 	p.alive = false
+	p.exitReason = reason
 	p.runner.Abort()
 	p.mailbox = nil
 	s.record(Event{Kind: Exited, To: p.pid, Msg: reason})
@@ -730,6 +780,33 @@ func (e *env) Unlink(pid proc.PID) {
 }
 
 func (e *env) TrapExit(on bool) { e.p.trap = on }
+
+func (e *env) Exit(to proc.PID, reason error) {
+	if t := e.s.byPID[to]; t != nil && t.alive && e.s.reachable(e.p.pid, to) {
+		e.s.signal(t, e.p.pid, reason, false)
+	}
+}
+
+func (e *env) Ack(err error) {
+	e.p.acked = true
+	if err != nil {
+		e.p.ackErr = err
+	}
+}
+
+// StartLink starts a child of a behaviour, on the node of the process,
+// and runs the simulation until it has started.
+func (e *env) StartLink(child gen.Starter) (proc.PID, error) {
+	c, ok := child.(gen.Child)
+	if !ok {
+		return proc.PID{}, ErrNotSimulated
+	}
+	return e.s.start(e.p.node, e.p, fmt.Sprintf("%T", child), func(env gen.Env) (gen.Runner, any, string) {
+		r, args, opts := c.Simulate(env)
+		l, _ := opts.Name.(molecule.Local)
+		return r, args, string(l)
+	})
+}
 
 func (e *env) MonitorNodes(on bool) {
 	if !on {
