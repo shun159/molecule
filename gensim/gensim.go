@@ -192,6 +192,27 @@ func Spawn[S any](s *Sim, b gen.Behaviour[S], args any, opts ...SpawnOption) (pr
 	})
 }
 
+// Start starts c, a child as genserver.Child or supervisor.Child make it,
+// on its own, as Spawn does: a whole supervision tree, from its top.
+func Start(s *Sim, c gen.Child, opts ...SpawnOption) (proc.PID, error) {
+	p := &process{}
+	for _, opt := range opts {
+		opt(p)
+	}
+	node := s.def
+	if p.on != "" {
+		node = s.nodeNamed(p.on)
+	}
+	return s.start(node, nil, fmt.Sprintf("%T", c), func(e gen.Env) (gen.Runner, any, string) {
+		r, args, o := c.Simulate(e)
+		name := p.name
+		if l, ok := o.Name.(molecule.Local); ok && name == "" {
+			name = string(l)
+		}
+		return r, args, name
+	})
+}
+
 // ErrNotSimulated is the error of starting a child a simulation cannot
 // run: one started by a function, rather than a behaviour.
 var ErrNotSimulated = errors.New("gensim: child started by a function, which cannot be simulated")

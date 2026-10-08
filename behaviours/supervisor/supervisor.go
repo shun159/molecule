@@ -135,7 +135,7 @@ func Start(ctx context.Context, n *proc.Node, spec Spec) (proc.PID, error) {
 
 // Child returns the Starter of a supervisor, to nest it under another
 // one, which gensim can simulate as well.
-func Child(spec Spec) Starter {
+func Child(spec Spec) gen.Child {
 	return gen.ChildOf(static(spec), nil, nameOption(spec.Name)...)
 }
 

@@ -68,8 +68,11 @@
 //
 // # Scope
 //
-// Processes are behaviours of gen. Supervisors and gentcpacceptor, which
-// are not, cannot be simulated, nor processes written against proc
-// directly. Names are molecule.Local and molecule.Remote names; other molecule.Name
+// Processes are behaviours of gen. Supervisors are, and [Start] starts a
+// supervision tree from its top, its children started as genserver.Child,
+// genstatem.Child, supervisor.Child and supervisor.DynamicChild make them;
+// a child started by a function, as gentcpacceptor starts its sockets,
+// fails to start with ErrNotSimulated, as do processes written against
+// proc directly. Names are molecule.Local and molecule.Remote names; other molecule.Name
 // implementations do not resolve.
 package gensim

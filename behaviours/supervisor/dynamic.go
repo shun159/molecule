@@ -47,7 +47,7 @@ func StartDynamic(ctx context.Context, n *proc.Node, spec DynamicSpec) (proc.PID
 
 // DynamicChild returns the Starter of a dynamic supervisor, to nest it
 // under another supervisor, which gensim can simulate as well.
-func DynamicChild(spec DynamicSpec) Starter {
+func DynamicChild(spec DynamicSpec) gen.Child {
 	return gen.ChildOf(dynamicOf(spec), nil, nameOption(spec.Name)...)
 }
 
