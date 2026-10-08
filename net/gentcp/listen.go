@@ -39,6 +39,7 @@ func Listen(ctx context.Context, owner *proc.Self, addr string, opts Options) (*
 	}
 	ownerPID := owner.PID()
 	pid, err := owner.Node().Start(ctx, func(s *proc.Self) error {
+		s.SetLabel("gentcp listener " + ln.Addr().String())
 		context.AfterFunc(s.Context(), func() { ln.Close() })
 		defer ln.Close()
 		watch := s.Monitor(ownerPID)

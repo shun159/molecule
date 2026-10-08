@@ -25,6 +25,8 @@ type Node struct {
 	remoteMons remoteMonTable
 	nodes      nodeTable
 
+	spawned, exited, crashed atomic.Uint64
+
 	regMu sync.Mutex
 	names map[string]PID // guarded by regMu, as is process.name
 
@@ -108,6 +110,7 @@ func (n *Node) spawn(fn func(*Self) error) *process {
 func (n *Node) register() *process {
 	p := newProcess(n, PID{node: n.name, creation: n.creation, id: n.nextID.Add(1)})
 	n.procs.put(p.pid.id, p)
+	n.spawned.Add(1)
 	return p
 }
 

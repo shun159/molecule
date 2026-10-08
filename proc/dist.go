@@ -362,6 +362,12 @@ func (p *PID) UnmarshalBinary(b []byte) error {
 	return err
 }
 
+// MarshalText writes p as String does, for JSON and logs.
+func (p PID) MarshalText() ([]byte, error) { return []byte(p.String()), nil }
+
+// MarshalText writes r as String does.
+func (r Ref) MarshalText() ([]byte, error) { return []byte(r.String()), nil }
+
 // MarshalBinary encodes r, for distribution.
 func (r Ref) MarshalBinary() ([]byte, error) { return marshalID(r.node, r.creation, r.id), nil }
 

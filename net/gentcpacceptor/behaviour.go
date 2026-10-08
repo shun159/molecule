@@ -156,6 +156,9 @@ func (a adapter[S]) info(c conn[S], msg any) (conn[S], []molecule.Effect) {
 	return c, effs
 }
 
+// Label tells what the process is: the connection and its behaviour.
+func (a adapter[S]) Label() string { return fmt.Sprintf("gentcpacceptor %T", a.b) }
+
 func (a adapter[S]) Terminate(c conn[S], reason error) []molecule.Effect {
 	if t, ok := a.b.(Terminator[S]); ok && c.ready {
 		return t.Terminate(c.state, reason)

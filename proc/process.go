@@ -29,6 +29,8 @@ type process struct {
 	trapExit atomic.Bool
 	// watchesNodes tells that p monitors nodes, see MonitorNodes.
 	watchesNodes atomic.Bool
+	// label tells what p is, see Self.SetLabel.
+	label atomic.Pointer[string]
 
 	// mu guards links, monitors and the transition to dead, so a link or
 	// a monitor is either established with a live process or reported as
@@ -83,6 +85,7 @@ func (p *process) run(fn func(*Self) error) {
 		// Erlang. The report comes before the links and monitors learn of
 		// the death.
 		if !p.dead.Load() && IsAbnormal(reason) {
+			p.node.crashed.Add(1)
 			p.crashReport(fn, reason)
 		}
 		p.die(reason)
@@ -113,6 +116,7 @@ func (p *process) die(reason error) {
 	}
 	p.reason = reason
 	p.dead.Store(true)
+	p.node.exited.Add(1)
 	if p.cancel != nil {
 		p.cancel(reason)
 	}

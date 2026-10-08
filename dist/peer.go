@@ -28,6 +28,7 @@ type (
 // frames received to the node. When it ends, the links and monitors
 // through it fail.
 func (d *Dist) runPeer(self *proc.Self, p *peer) error {
+	self.SetLabel("dist connection " + p.node)
 	if p.dialing {
 		go d.dial(p)
 	}

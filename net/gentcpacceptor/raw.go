@@ -36,6 +36,7 @@ func NewRawListener(spec Spec, h Handler) *Listener {
 		return parent.StartLink(ctx, func(s *proc.Self) error {
 			context.AfterFunc(s.Context(), func() { conn.Close() })
 			defer conn.Close()
+			s.SetLabel("gentcpacceptor handler " + conn.RemoteAddr().String())
 			s.InitAck(nil)
 			return connExit(h(s, conn))
 		})

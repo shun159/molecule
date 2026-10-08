@@ -14,6 +14,7 @@ import (
 // The socket is passive until the protocol asks for data, so nothing is
 // read while it changes hands.
 func accept(self *proc.Self, ls *gentcp.ListenSocket) error {
+	self.SetLabel("echo_acceptor")
 	ctx := context.Background()
 	for {
 		sock, err := ls.Accept(ctx, self)

@@ -91,6 +91,7 @@ func (r *Running) start(ctx context.Context, app App) (*running, error) {
 			return nil
 		}
 		tops <- top
+		self.SetLabel("application master " + app.Name)
 		self.InitAck(nil)
 		return r.master(self, a, top)
 	})
@@ -178,6 +179,15 @@ func (r *Running) Err() error {
 	default:
 		return nil
 	}
+}
+
+// Apps returns the names of the applications, in the order they started.
+func (r *Running) Apps() []string {
+	var names []string
+	for _, a := range r.apps {
+		names = append(names, a.app.Name)
+	}
+	return names
 }
 
 // Top returns the top process of the application name.

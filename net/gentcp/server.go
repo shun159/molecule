@@ -74,6 +74,7 @@ type pendingRecv struct {
 }
 
 func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Options) error {
+	self.SetLabel("gentcp socket " + sock.RemoteAddr.String())
 	s := &server{
 		self:   self,
 		conn:   conn,

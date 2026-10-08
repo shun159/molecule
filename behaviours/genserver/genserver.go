@@ -217,6 +217,9 @@ func (a adapter[S, Req, Rep, Cast]) Handle(s S, msg gen.Msg) (S, []molecule.Effe
 	return s, nil
 }
 
+// Label tells what the process is: the genserver and its behaviour.
+func (a adapter[S, Req, Rep, Cast]) Label() string { return fmt.Sprintf("genserver %T", a.b) }
+
 // FormatStatus formats the report of the server terminating with the
 // FormatStatus of the behaviour, if it has one: see molecule.StatusFormatter.
 // The State is the state of the behaviour; the Message, the gen.Msg it

@@ -1,6 +1,7 @@
 package genstatem
 
 import (
+	"fmt"
 	"maps"
 	"slices"
 
@@ -107,6 +108,9 @@ func (a adapter[St, D]) Handle(m Machine[St, D], msg gen.Msg) (Machine[St, D], [
 	}
 	return a.run(m, []Event{ev})
 }
+
+// Label tells what the process is: the genstatem and its behaviour.
+func (a adapter[St, D]) Label() string { return fmt.Sprintf("genstatem %T", a.b) }
 
 // FormatStatus formats the report of the machine terminating with the
 // FormatStatus of the behaviour, if it has one: see molecule.StatusFormatter.

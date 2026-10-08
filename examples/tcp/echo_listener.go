@@ -42,6 +42,7 @@ func (l *listener) Addr() net.Addr {
 }
 
 func (l *listener) listen(self *proc.Self, addr string, acceptors int) error {
+	self.SetLabel("echo_listener")
 	ls, err := gentcp.Listen(context.Background(), self, addr, gentcp.Options{})
 	if err != nil {
 		self.InitAck(err)

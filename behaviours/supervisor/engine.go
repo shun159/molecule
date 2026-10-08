@@ -29,9 +29,10 @@ type sup struct {
 
 // child is a child of a supervisor, by the order of its start.
 type child struct {
-	key  uint64
-	spec ChildSpec
-	pid  proc.PID // zero when not running
+	key      uint64
+	spec     ChildSpec
+	pid      proc.PID // zero when not running
+	restarts int      // the times a restart started it again
 }
 
 type opKind int
@@ -140,6 +141,14 @@ func (b sup) ParentExit(s state, reason error) (state, []molecule.Effect) {
 }
 
 func (sup) Terminate(state, error) []molecule.Effect { return nil }
+
+// Label tells what the process is.
+func (b sup) Label() string {
+	if b.dynamic {
+		return "dynamic supervisor"
+	}
+	return "supervisor"
+}
 
 func (b sup) info(s *state, msg any) []molecule.Effect {
 	switch m := msg.(type) {
@@ -282,6 +291,9 @@ func (b sup) started(s *state, st gen.Started) []molecule.Effect {
 		}
 	default:
 		c.pid = st.PID
+		if o.restart {
+			c.restarts++
+		}
 		effs = append(effs, reportStarted(s.self, b.childID(*c), st.PID)...)
 		if o.call {
 			effs = append(effs, molecule.Reply{To: o.from, Value: startResult{pid: st.PID}})
@@ -388,7 +400,7 @@ func (b sup) which(s state) []ChildInfo {
 		if b.dynamic && c.pid.IsZero() {
 			continue
 		}
-		infos = append(infos, ChildInfo{ID: b.childID(c), PID: c.pid, Type: c.spec.Type, Restart: c.spec.Restart})
+		infos = append(infos, ChildInfo{ID: b.childID(c), PID: c.pid, Type: c.spec.Type, Restart: c.spec.Restart, Restarts: c.restarts})
 	}
 	return infos
 }

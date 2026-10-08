@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"fmt"
+	"maps"
 	"math/rand/v2"
 	"testing"
 	"time"
@@ -204,5 +205,21 @@ func TestSimDeterministic(t *testing.T) {
 	}
 	if a, b := run(), run(); a != b {
 		t.Error("same seed, different runs")
+	}
+}
+
+func TestSimRestartCounts(t *testing.T) {
+	tr := newTree(t, 1, Spec{Strategy: RestForOne, Intensity: 10, Children: []ChildSpec{
+		worker("a", Permanent), worker("b", Permanent), worker("c", Permanent),
+	}})
+	tr.crash(tr.children(tr.top)["b"])
+	tr.crash(tr.children(tr.top)["c"])
+	v, _ := tr.s.Call(tr.top, whichChildren{})
+	got := map[string]int{}
+	for _, c := range v.([]ChildInfo) {
+		got[c.ID] = c.Restarts
+	}
+	if want := map[string]int{"a": 0, "b": 1, "c": 2}; !maps.Equal(got, want) {
+		t.Errorf("restarts %v, want %v", got, want)
 	}
 }

@@ -113,6 +113,8 @@ type ChildInfo struct {
 	PID     proc.PID
 	Type    ChildType
 	Restart Restart
+	// Restarts counts the times a restart started the child again.
+	Restarts int
 }
 
 // StartLink starts a supervisor linked to parent, and its children, and

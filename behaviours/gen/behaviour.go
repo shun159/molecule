@@ -2,6 +2,7 @@ package gen
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/proc"
@@ -25,6 +26,19 @@ type Behaviour[S any] interface {
 	// Its effects run, except Stop. It is not called when the process is
 	// killed or dies from an exit signal it does not trap.
 	Terminate(state S, reason error) []molecule.Effect
+}
+
+// Labeler is a Behaviour telling what it is, the label of its process,
+// see proc.Self.SetLabel. The label of another is the name of its type.
+type Labeler interface {
+	Label() string
+}
+
+func labelOf(b any) string {
+	if l, ok := b.(Labeler); ok {
+		return l.Label()
+	}
+	return fmt.Sprintf("%T", b)
 }
 
 // StartLink starts b in a new process linked to parent and waits until

@@ -32,6 +32,7 @@ functions, without starting a process.
     dist                       distribution: processes of several nodes, by PID
     dist/pg                    process groups, shared by the nodes
     gensim                     deterministic simulation of behaviours
+    observer                   processes and supervision trees of a running node, over HTTP
 
 ## Documentation
 

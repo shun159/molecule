@@ -185,6 +185,7 @@ func (l *Listener) supervisorSpec() supervisor.Spec {
 			ID: "acceptor" + strconv.Itoa(i),
 			Start: supervisor.StartFunc(func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
 				return parent.StartLink(ctx, func(s *proc.Self) error {
+					s.SetLabel("gentcpacceptor acceptor")
 					s.InitAck(nil)
 					return accept(s, sh, l.startConn)
 				})
@@ -214,6 +215,7 @@ func (l *Listener) supervisorSpec() supervisor.Spec {
 
 // listen owns the listening socket, closed when the process dies.
 func listen(s *proc.Self, addr string, sh *shared) error {
+	s.SetLabel("gentcpacceptor socket " + addr)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		s.InitAck(err)

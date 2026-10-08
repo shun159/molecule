@@ -122,4 +122,12 @@
 // logger of its node, see [WithLogger], with its name, parent, initial
 // call, and the stack of a panic. A process killed or terminated by an exit
 // signal is not reported: no code of its own failed.
+//
+// # Looking in
+//
+// [Node.Processes] lists the live processes of a node, and [Node.Info]
+// tells of one: its name, its label, its links and monitors, and how many
+// messages wait in its mailbox. [Node.Stats] counts the processes spawned,
+// exited and crashed. Behaviours label their processes, see
+// [Self.SetLabel]; the observer package shows all of it.
 package proc
