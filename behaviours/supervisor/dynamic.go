@@ -1,14 +1,12 @@
 package supervisor
 
 import (
-	"cmp"
 	"context"
 	"errors"
-	"maps"
-	"slices"
 	"time"
 
 	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -38,21 +36,30 @@ var (
 
 // StartDynamicLink starts a dynamic supervisor linked to parent.
 func StartDynamicLink(ctx context.Context, parent *proc.Self, spec DynamicSpec) (proc.PID, error) {
-	return parent.StartLink(ctx, func(s *proc.Self) error { return runDynamic(s, spec) })
+	return gen.StartLink(ctx, parent, dynamicOf(spec), nil, nameOption(spec.Name)...)
 }
 
 // StartDynamic starts a dynamic supervisor, like StartDynamicLink but
 // without a link.
 func StartDynamic(ctx context.Context, n *proc.Node, spec DynamicSpec) (proc.PID, error) {
-	return n.Start(ctx, func(s *proc.Self) error { return runDynamic(s, spec) })
+	return gen.Start(ctx, n, dynamicOf(spec), nil, nameOption(spec.Name)...)
 }
 
 // DynamicChild returns the Starter of a dynamic supervisor, to nest it
-// under another supervisor.
+// under another supervisor, which gensim can simulate as well.
 func DynamicChild(spec DynamicSpec) Starter {
-	return StartFunc(func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
-		return StartDynamicLink(ctx, parent, spec)
-	})
+	return gen.ChildOf(dynamicOf(spec), nil, nameOption(spec.Name)...)
+}
+
+func dynamicOf(spec DynamicSpec) sup {
+	b := sup{dynamic: true, max: spec.Intensity, period: spec.Period, maxChildren: spec.MaxChildren}
+	if b.max <= 0 {
+		b.max = DefaultIntensity
+	}
+	if b.period <= 0 {
+		b.period = DefaultPeriod
+	}
+	return b
 }
 
 type (
@@ -100,181 +107,4 @@ func CountChildren(ctx context.Context, caller molecule.Caller, sup molecule.Des
 		return 0, err
 	}
 	return v.(int), nil
-}
-
-type dynamicChild struct {
-	child
-	seq uint64 // start order, to list children stably
-}
-
-type dynamic struct {
-	self     *proc.Self
-	max      int
-	restarts intensity
-	seq      uint64
-	running  map[proc.PID]*dynamicChild
-	retrying map[uint64]*dynamicChild // by seq
-}
-
-// dynamicRetry asks to try again to restart a child, as retry does.
-type dynamicRetry struct{ seq uint64 }
-
-func runDynamic(self *proc.Self, spec DynamicSpec) error {
-	self.TrapExit(true)
-	if spec.Name != nil {
-		if err := spec.Name.Register(self.Node(), self.PID()); err != nil {
-			if pid, ok := spec.Name.WhereIs(self.Node()); ok && pid != self.PID() {
-				err = &molecule.AlreadyStartedError{PID: pid}
-			}
-			self.InitAck(err)
-			return nil
-		}
-	}
-	d := &dynamic{
-		self:     self,
-		max:      spec.MaxChildren,
-		restarts: intensity{max: spec.Intensity, period: spec.Period},
-		running:  make(map[proc.PID]*dynamicChild),
-		retrying: make(map[uint64]*dynamicChild),
-	}
-	if d.restarts.max <= 0 {
-		d.restarts.max = DefaultIntensity
-	}
-	if d.restarts.period <= 0 {
-		d.restarts.period = DefaultPeriod
-	}
-	self.InitAck(nil)
-	return d.loop()
-}
-
-func (d *dynamic) loop() error {
-	for {
-		msg, err := d.self.Receive(context.Background())
-		if err != nil {
-			return err
-		}
-		switch m := msg.(type) {
-		case proc.ExitMsg:
-			if parent := d.self.Parent(); !parent.IsZero() && m.From == parent {
-				d.terminateAll()
-				return m.Reason
-			}
-			c, ok := d.running[m.From]
-			if !ok {
-				continue
-			}
-			delete(d.running, m.From)
-			reportTerminated(d.self, "", m.From, c.spec.Restart, m.Reason)
-			if !shouldRestart(c.spec.Restart, m.Reason) {
-				continue // forgotten: a child is only known by its PID
-			}
-			if err := d.restart(c); err != nil {
-				reportShutdown(d.self, err)
-				d.terminateAll()
-				return err
-			}
-		case dynamicRetry:
-			c, ok := d.retrying[m.seq]
-			if !ok {
-				continue
-			}
-			delete(d.retrying, m.seq)
-			if err := d.restart(c); err != nil {
-				reportShutdown(d.self, err)
-				d.terminateAll()
-				return err
-			}
-		case molecule.CallMsg:
-			if _, ok := m.Req.(stopReq); ok {
-				d.terminateAll()
-				molecule.SendReply(d.self, m.From, nil)
-				return proc.Shutdown
-			}
-			molecule.SendReply(d.self, m.From, d.call(m.Req))
-		}
-	}
-}
-
-func (d *dynamic) call(req any) any {
-	switch r := req.(type) {
-	case startChild:
-		if d.max > 0 && d.count() >= d.max {
-			return startResult{err: ErrMaxChildren}
-		}
-		d.seq++
-		c := &dynamicChild{child: child{spec: r.spec}, seq: d.seq}
-		if err := d.start(c); err != nil {
-			return startResult{err: err}
-		}
-		return startResult{pid: c.pid}
-	case terminateChild:
-		c, ok := d.running[r.pid]
-		if !ok {
-			return ErrNotFound
-		}
-		delete(d.running, r.pid)
-		stopAll(d.self, []*child{&c.child})
-		return nil
-	case countChildren:
-		return d.count()
-	case whichChildren:
-		return d.which()
-	}
-	return nil
-}
-
-// start starts c and records it as running. A child that is ignored is
-// not recorded, and molecule.ErrIgnore is returned.
-func (d *dynamic) start(c *dynamicChild) error {
-	pid, err := c.spec.Start.StartLink(context.Background(), d.self)
-	if err != nil {
-		if !errors.Is(err, molecule.ErrIgnore) {
-			reportStartFailed(d.self, "", err)
-		}
-		return err
-	}
-	c.pid = pid
-	d.running[pid] = c
-	reportStarted(d.self, "", pid)
-	return nil
-}
-
-func (d *dynamic) restart(c *dynamicChild) error {
-	var ok bool
-	if d.restarts, ok = d.restarts.add(time.Now()); !ok {
-		return ErrMaxIntensity
-	}
-	err := d.start(c)
-	if err != nil && !errors.Is(err, molecule.ErrIgnore) {
-		d.retrying[c.seq] = c
-		d.self.Send(d.self.PID(), dynamicRetry{seq: c.seq})
-	}
-	return nil
-}
-
-func (d *dynamic) count() int { return len(d.running) + len(d.retrying) }
-
-func (d *dynamic) sorted() []*dynamicChild {
-	return slices.SortedFunc(maps.Values(d.running), func(a, b *dynamicChild) int {
-		return cmp.Compare(a.seq, b.seq)
-	})
-}
-
-func (d *dynamic) which() []ChildInfo {
-	var infos []ChildInfo
-	for _, c := range d.sorted() {
-		infos = append(infos, ChildInfo{PID: c.pid, Type: c.spec.Type, Restart: c.spec.Restart})
-	}
-	return infos
-}
-
-// terminateAll stops all the children at once.
-func (d *dynamic) terminateAll() {
-	var cs []*child
-	for _, c := range d.sorted() {
-		cs = append(cs, &c.child)
-	}
-	stopAll(d.self, cs)
-	clear(d.running)
-	clear(d.retrying)
 }

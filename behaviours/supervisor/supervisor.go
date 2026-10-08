@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -117,21 +118,43 @@ type ChildInfo struct {
 // StartLink starts a supervisor linked to parent, and its children, and
 // returns once they all have started. ctx bounds the whole start.
 func StartLink(ctx context.Context, parent *proc.Self, spec Spec) (proc.PID, error) {
-	return parent.StartLink(ctx, func(s *proc.Self) error { return run(ctx, s, spec) })
+	if err := validate(spec); err != nil {
+		return proc.PID{}, err
+	}
+	return gen.StartLink(ctx, parent, static(spec), nil, nameOption(spec.Name)...)
 }
 
 // Start starts a supervisor and its children, like StartLink but without
 // a link, e.g. for the top supervisor started from main.
 func Start(ctx context.Context, n *proc.Node, spec Spec) (proc.PID, error) {
-	return n.Start(ctx, func(s *proc.Self) error { return run(ctx, s, spec) })
+	if err := validate(spec); err != nil {
+		return proc.PID{}, err
+	}
+	return gen.Start(ctx, n, static(spec), nil, nameOption(spec.Name)...)
 }
 
 // Child returns the Starter of a supervisor, to nest it under another
-// one.
+// one, which gensim can simulate as well.
 func Child(spec Spec) Starter {
-	return StartFunc(func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
-		return StartLink(ctx, parent, spec)
-	})
+	return gen.ChildOf(static(spec), nil, nameOption(spec.Name)...)
+}
+
+func static(spec Spec) sup {
+	b := sup{strategy: spec.Strategy, max: spec.Intensity, period: spec.Period, specs: spec.Children}
+	if b.max <= 0 {
+		b.max = DefaultIntensity
+	}
+	if b.period <= 0 {
+		b.period = DefaultPeriod
+	}
+	return b
+}
+
+func nameOption(name molecule.Name) []molecule.Option {
+	if name == nil {
+		return nil
+	}
+	return []molecule.Option{molecule.WithName(name)}
 }
 
 type (
@@ -186,225 +209,4 @@ func validate(spec Spec) error {
 		return fmt.Errorf("supervisor: unknown strategy %d", spec.Strategy)
 	}
 	return nil
-}
-
-type child struct {
-	spec ChildSpec
-	pid  proc.PID
-}
-
-type supervisor struct {
-	self     *proc.Self
-	strategy Strategy
-	children []*child
-	restarts intensity
-}
-
-// retry asks the supervisor to try again to restart a child that failed
-// to start during a restart, as OTP does.
-type retry struct{ id string }
-
-func run(ctx context.Context, self *proc.Self, spec Spec) error {
-	self.TrapExit(true)
-	if err := validate(spec); err != nil {
-		self.InitAck(err)
-		return nil
-	}
-	if spec.Name != nil {
-		if err := spec.Name.Register(self.Node(), self.PID()); err != nil {
-			if pid, ok := spec.Name.WhereIs(self.Node()); ok && pid != self.PID() {
-				err = &molecule.AlreadyStartedError{PID: pid}
-			}
-			self.InitAck(err)
-			return nil
-		}
-	}
-
-	s := &supervisor{
-		self:     self,
-		strategy: spec.Strategy,
-		restarts: intensity{max: spec.Intensity, period: spec.Period},
-	}
-	if s.restarts.max <= 0 {
-		s.restarts.max = DefaultIntensity
-	}
-	if s.restarts.period <= 0 {
-		s.restarts.period = DefaultPeriod
-	}
-
-	for _, cs := range spec.Children {
-		c := &child{spec: cs}
-		if err := s.start(ctx, c); err != nil {
-			reportStartFailed(self, cs.ID, err)
-			s.terminateAll()
-			err = &StartError{ID: cs.ID, Reason: err}
-			self.InitAck(err)
-			return err
-		}
-		s.children = append(s.children, c)
-	}
-	self.InitAck(nil)
-	return s.loop()
-}
-
-func (s *supervisor) loop() error {
-	for {
-		msg, err := s.self.Receive(context.Background())
-		if err != nil {
-			return err
-		}
-		switch m := msg.(type) {
-		case proc.ExitMsg:
-			if parent := s.self.Parent(); !parent.IsZero() && m.From == parent {
-				s.terminateAll()
-				return m.Reason
-			}
-			c := s.byPID(m.From)
-			if c == nil {
-				continue // a child already stopped or replaced
-			}
-			reportTerminated(s.self, c.spec.ID, m.From, c.spec.Restart, m.Reason)
-			c.pid = proc.PID{}
-			if err := s.exited(c, m.Reason); err != nil {
-				reportShutdown(s.self, err)
-				s.terminateAll()
-				return err
-			}
-		case retry:
-			c := s.byID(m.id)
-			if c == nil || !c.pid.IsZero() {
-				continue
-			}
-			if err := s.restart(c); err != nil {
-				reportShutdown(s.self, err)
-				s.terminateAll()
-				return err
-			}
-		case molecule.CallMsg:
-			switch m.Req.(type) {
-			case whichChildren:
-				molecule.SendReply(s.self, m.From, s.which())
-			case stopReq:
-				s.terminateAll()
-				molecule.SendReply(s.self, m.From, nil)
-				return proc.Shutdown
-			}
-		}
-	}
-}
-
-// exited handles the exit of child c with reason.
-func (s *supervisor) exited(c *child, reason error) error {
-	if !shouldRestart(c.spec.Restart, reason) {
-		if c.spec.Restart == Temporary {
-			s.remove(c)
-		}
-		return nil
-	}
-	return s.restart(c)
-}
-
-// restart restarts c, which is not running, and the children the strategy
-// involves.
-func (s *supervisor) restart(c *child) error {
-	var ok bool
-	if s.restarts, ok = s.restarts.add(time.Now()); !ok {
-		return ErrMaxIntensity
-	}
-	stop, start := plan(s.strategy, s.index(c), len(s.children))
-	starting := make([]*child, len(start))
-	for j, i := range start {
-		starting[j] = s.children[i]
-	}
-	for _, i := range stop {
-		s.shutdown(s.children[i])
-	}
-	for _, cc := range starting {
-		// A temporary child stopped along with a sibling is not restarted
-		// but forgotten, as in OTP.
-		if cc.spec.Restart == Temporary {
-			s.remove(cc)
-			continue
-		}
-		if !cc.pid.IsZero() {
-			continue
-		}
-		if err := s.start(context.Background(), cc); err != nil {
-			reportStartFailed(s.self, cc.spec.ID, err)
-			// The children after it stay down until the retry.
-			s.self.Send(s.self.PID(), retry{id: cc.spec.ID})
-			return nil
-		}
-	}
-	return nil
-}
-
-func (s *supervisor) start(ctx context.Context, c *child) error {
-	pid, err := c.spec.Start.StartLink(ctx, s.self)
-	switch {
-	case errors.Is(err, molecule.ErrIgnore):
-		c.pid = proc.PID{}
-		return nil
-	case err != nil:
-		return err
-	}
-	c.pid = pid
-	reportStarted(s.self, c.spec.ID, pid)
-	return nil
-}
-
-// shutdown stops c and waits until it is dead. See stopAll.
-func (s *supervisor) shutdown(c *child) {
-	stopAll(s.self, []*child{c})
-}
-
-// terminateAll stops the children in reverse start order.
-func (s *supervisor) terminateAll() {
-	for i := len(s.children) - 1; i >= 0; i-- {
-		s.shutdown(s.children[i])
-	}
-}
-
-func (s *supervisor) which() []ChildInfo {
-	infos := make([]ChildInfo, len(s.children))
-	for i, c := range s.children {
-		infos[i] = ChildInfo{ID: c.spec.ID, PID: c.pid, Type: c.spec.Type, Restart: c.spec.Restart}
-	}
-	return infos
-}
-
-func (s *supervisor) index(c *child) int {
-	for i, cc := range s.children {
-		if cc == c {
-			return i
-		}
-	}
-	return -1
-}
-
-func (s *supervisor) byPID(pid proc.PID) *child {
-	if pid.IsZero() {
-		return nil // children not running have a zero PID
-	}
-	for _, c := range s.children {
-		if c.pid == pid {
-			return c
-		}
-	}
-	return nil
-}
-
-func (s *supervisor) byID(id string) *child {
-	for _, c := range s.children {
-		if c.spec.ID == id {
-			return c
-		}
-	}
-	return nil
-}
-
-func (s *supervisor) remove(c *child) {
-	if i := s.index(c); i >= 0 {
-		s.children = append(s.children[:i:i], s.children[i+1:]...)
-	}
 }

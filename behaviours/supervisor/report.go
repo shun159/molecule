@@ -1,19 +1,21 @@
 package supervisor
 
 import (
-	"context"
 	"log/slog"
 
+	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/proc"
 )
 
 // Supervisor reports, as in OTP: errors when a child terminates
 // abnormally, fails to start, or the supervisor gives up; progress, at
-// debug level, when a child starts.
+// debug level, when a child starts. They are effects, as all a supervisor
+// does.
 
-func report(self *proc.Self, level slog.Level, msg string, attrs ...any) {
-	attrs = append([]any{slog.String("supervisor", self.PID().String())}, attrs...)
-	self.Node().Logger().Log(context.Background(), level, msg, attrs...)
+func report(self proc.PID, level slog.Level, msg string, attrs ...any) []molecule.Effect {
+	attrs = append([]any{slog.String("supervisor", self.String())}, attrs...)
+	return molecule.Do(gen.Log{Level: level, Msg: msg, Attrs: attrs})
 }
 
 func childAttrs(id string, pid proc.PID) []any {
@@ -24,26 +26,29 @@ func childAttrs(id string, pid proc.PID) []any {
 	return attrs
 }
 
-func reportStarted(self *proc.Self, id string, pid proc.PID) {
-	report(self, slog.LevelDebug, "supervisor child started", childAttrs(id, pid)...)
+func reportStarted(self proc.PID, id string, pid proc.PID) []molecule.Effect {
+	return report(self, slog.LevelDebug, "supervisor child started", childAttrs(id, pid)...)
 }
 
-func reportTerminated(self *proc.Self, id string, pid proc.PID, r Restart, reason error) {
+func reportTerminated(self proc.PID, id string, pid proc.PID, r Restart, reason error) []molecule.Effect {
 	if !proc.IsAbnormal(reason) {
-		return
+		return nil
 	}
 	attrs := append(childAttrs(id, pid), slog.String("restart", r.String()), slog.String("reason", reason.Error()))
-	report(self, slog.LevelError, "supervisor child terminated", attrs...)
+	return report(self, slog.LevelError, "supervisor child terminated", attrs...)
 }
 
-func reportStartFailed(self *proc.Self, id string, reason error) {
+func reportStartFailed(self proc.PID, id string, reason error) []molecule.Effect {
+	if id == "" && reason == molecule.ErrIgnore {
+		return nil
+	}
 	attrs := []any{slog.String("reason", reason.Error())}
 	if id != "" {
 		attrs = append(attrs, slog.String("child_id", id))
 	}
-	report(self, slog.LevelError, "supervisor child start failed", attrs...)
+	return report(self, slog.LevelError, "supervisor child start failed", attrs...)
 }
 
-func reportShutdown(self *proc.Self, reason error) {
-	report(self, slog.LevelError, "supervisor shutting down", slog.String("reason", reason.Error()))
+func reportShutdown(self proc.PID, reason error) []molecule.Effect {
+	return report(self, slog.LevelError, "supervisor shutting down", slog.String("reason", reason.Error()))
 }

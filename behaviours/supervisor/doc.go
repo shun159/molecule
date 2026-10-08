@@ -7,9 +7,11 @@
 // parts of it fail.
 //
 // Unlike in OTP, a supervisor has no callback module: what it supervises
-// is given as data, a [Spec]. Its decisions (whether a child is restarted,
-// whether the restart intensity is exceeded, which children to stop and to
-// start again) are pure functions of their inputs.
+// is given as data, a [Spec]. A supervisor is itself a behaviour of gen,
+// pure functions of its state and the messages it gets, whose effects start
+// and stop its children: it runs the same in a process and in gensim,
+// which simulates a whole supervision tree, its children started with
+// genserver.Child, genstatem.Child, [Child] or [DynamicChild].
 //
 // # Supervision principles
 //
@@ -87,7 +89,8 @@
 //
 // # Starting
 //
-// [StartLink] and [Start] return once all the children have started. If a
+// [StartLink] and [Start] return once all the children have started. A
+// spec that is not valid fails them before any process starts. If a
 // child fails to start, the children already started are stopped in
 // reverse order, and the start fails with a [*StartError] wrapping both
 // proc.Shutdown and the reason of the child. If the name is taken, it fails
