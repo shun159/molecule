@@ -20,6 +20,13 @@
 // HandleContinue, a gen.Continue stops the server with
 // [ErrNoHandleContinue].
 //
+// A server embedding [Default] needs no Init starting with the zero
+// state, and no HandleCall or HandleCast it has no use for:
+//
+//	type Log struct{ genserver.Default[[]string] }
+//
+//	func (Log) HandleInfo(log []string, msg any) ([]string, []gen.Effect) { ... }
+//
 // A server takes calls of one type Req and casts of one type Cast; several
 // requests are several types implementing one interface, switched on in the
 // callback. A request of another type, which only gen.Call or gen.SendCast

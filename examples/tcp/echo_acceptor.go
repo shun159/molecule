@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 
+	"github.com/shun159/molecule/genserver"
 	"github.com/shun159/molecule/gentcp"
 	"github.com/shun159/molecule/proc"
 	"github.com/shun159/molecule/supervisor"
@@ -29,6 +30,6 @@ func accept(self *proc.Self, ls *gentcp.ListenSocket) error {
 			supervisor.TerminateChild(ctx, self, connsName, pid)
 			continue
 		}
-		protocolRef(pid).Cast(self, sock)
+		genserver.RefFor(EchoProtocol{}, pid).Cast(self, sock)
 	}
 }

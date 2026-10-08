@@ -3,6 +3,7 @@ package genserver_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"reflect"
 	"testing"
@@ -351,5 +352,45 @@ func TestRefStop(t *testing.T) {
 	}
 	if got := <-rec; got != (stopped{proc.Normal}) {
 		t.Errorf("Terminate got %#v", got)
+	}
+}
+
+// logServer keeps what it is sent, its other callbacks by Default.
+type logServer struct{ genserver.Default[[]string] }
+
+func (logServer) HandleInfo(log []string, msg any) ([]string, []gen.Effect) {
+	return append(log[:len(log):len(log)], fmt.Sprint(msg)), nil
+}
+
+// castOnly takes casts, and no calls.
+type castOnly struct{ genserver.Default[int] }
+
+func (castOnly) HandleCast(n int, by int) (int, []gen.Effect) { return n + by, nil }
+
+func TestDefault(t *testing.T) {
+	n := proc.NewNode("")
+	ctx := context.Background()
+	l, err := genserver.Start(ctx, n, logServer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, _ := l.Dest().WhereIs(n)
+	n.Send(pid, "hello")
+	if s, err := gen.GetState(ctx, n, pid); err != nil || !reflect.DeepEqual(s, []string{"hello"}) {
+		t.Errorf("state %v, %v", s, err)
+	}
+	// It takes no call: one stops it.
+	if _, err := gen.Call(ctx, n, pid, "call"); err == nil {
+		t.Error("call answered")
+	}
+
+	c, err := genserver.Start(ctx, n, castOnly{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Cast(n, 2)
+	cpid, _ := c.Dest().WhereIs(n)
+	if s, err := gen.GetState(ctx, n, cpid); err != nil || s != 2 {
+		t.Errorf("state %v, %v", s, err)
 	}
 }

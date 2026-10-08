@@ -3,13 +3,12 @@ package main
 import (
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/genserver"
-	"github.com/shun159/molecule/proc"
 	"github.com/shun159/molecule/supervisor"
 )
 
 // EchoStats is a gen_server counting connections and echoed bytes. The
 // protocol processes cast events to it; anyone can call it for the totals.
-type EchoStats struct{}
+type EchoStats struct{ genserver.Default[Stats] }
 
 // Stats is both the state of EchoStats and its reply to GetStats.
 type Stats struct {
@@ -46,8 +45,6 @@ func statsChildSpec(id string) supervisor.ChildSpec {
 		Start: genserver.StartLinkFunc(EchoStats{}, gen.WithName(statsName)),
 	}
 }
-
-func (EchoStats) Init(proc.PID) (Stats, []gen.Effect, error) { return Stats{}, nil, nil }
 
 func (EchoStats) HandleCall(s Stats, _ GetStats, from genserver.From[Stats]) (Stats, []gen.Effect) {
 	return s, gen.Do(from.Reply(s))

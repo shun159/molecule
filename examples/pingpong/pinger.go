@@ -6,6 +6,8 @@ import (
 	"io"
 	"time"
 
+	"github.com/shun159/molecule/gen"
+	"github.com/shun159/molecule/genserver"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -15,7 +17,7 @@ import (
 // connects again.
 func pinger(w io.Writer, node string, interval time.Duration) func(*proc.Self) error {
 	return func(self *proc.Self) error {
-		pong := pongRef(node)
+		pong := genserver.RefFor(PongServer{}, gen.Remote{Node: node, Name: string(pongName)})
 		for i := 1; ; i++ {
 			ctx, cancel := context.WithTimeout(context.Background(), interval)
 			rep, err := pong.Call(ctx, self, fmt.Sprintf("ping #%d from %s", i, self.Node().Name()))

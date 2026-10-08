@@ -4,7 +4,6 @@ import (
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/genserver"
 	"github.com/shun159/molecule/gentcp"
-	"github.com/shun159/molecule/proc"
 	"github.com/shun159/molecule/supervisor"
 )
 
@@ -13,7 +12,7 @@ import (
 // mode: a packet arrives as a message, is written back, and the next one
 // is asked for, in one message to the socket. Everything it does is an effect, so it is tested by
 // calling it.
-type EchoProtocol struct{}
+type EchoProtocol struct{ genserver.Default[conn] }
 
 // connsName is the dynamic supervisor of the protocols.
 var connsName = gen.Local("echo_conns")
@@ -33,22 +32,12 @@ func protocolChildSpec() supervisor.ChildSpec {
 	}
 }
 
-func protocolRef(pid proc.PID) genserver.Ref[struct{}, struct{}, gentcp.Socket] {
-	return genserver.RefFor(EchoProtocol{}, pid)
-}
-
 // conn is the state of a connection: whether it was counted as opened,
 // and the bytes echoed, told to echo_stats once at the end rather than
 // on every packet, which would have every connection message it.
 type conn struct {
 	open  bool
 	bytes int
-}
-
-func (EchoProtocol) Init(proc.PID) (conn, []gen.Effect, error) { return conn{}, nil, nil }
-
-func (EchoProtocol) HandleCall(c conn, _ struct{}, _ genserver.From[struct{}]) (conn, []gen.Effect) {
-	return c, nil
 }
 
 // HandleCast takes the socket.

@@ -14,6 +14,8 @@ import (
 // it is gone, its node crashed or cut off, takes over from the last count
 // it got.
 type Worker struct {
+	genserver.Default[work] // it takes no call
+
 	Node    string // its own node
 	Peer    string // the node of the other worker
 	Primary bool
@@ -41,13 +43,9 @@ const workerName = "worker"
 func (w Worker) Init(self proc.PID) (work, []gen.Effect, error) {
 	s := work{self: self, active: w.Primary}
 	if !w.Primary {
-		return s, w.say("standing by"), nil
+		return s, gen.Do(w.say("standing by")), nil
 	}
 	return s, gen.Do(w.next()), nil
-}
-
-func (Worker) HandleCall(s work, _ struct{}, from genserver.From[int]) (work, []gen.Effect) {
-	return s, gen.Do(from.Reply(s.count))
 }
 
 // HandleCast takes a checkpoint of the primary, and watches it.
@@ -60,21 +58,27 @@ func (w Worker) HandleCast(s work, c checkpoint) (work, []gen.Effect) {
 		return s, nil
 	}
 	s.primary = c.From
-	return s, append(w.say(fmt.Sprintf("watching the primary %v", c.From)),
-		gen.Monitor{Target: c.From, Tag: "primary"})
+	return s, gen.Do(
+		w.say(fmt.Sprintf("watching the primary %v", c.From)),
+		gen.Monitor{Target: c.From, Tag: "primary"},
+	)
 }
 
 func (w Worker) HandleInfo(s work, msg any) (work, []gen.Effect) {
 	switch m := msg.(type) {
 	case tick:
 		s.count++
-		return s, append(w.say(fmt.Sprintf("count %d", s.count)),
+		return s, gen.Do(
+			w.say(fmt.Sprintf("count %d", s.count)),
 			gen.Cast{To: gen.Remote{Node: w.Peer, Name: workerName}, Req: checkpoint{s.count, s.self}},
-			w.next())
+			w.next(),
+		)
 	case gen.Down:
 		s.active = true
-		return s, append(w.say(fmt.Sprintf("primary gone (%v): taking over at count %d", m.Reason, s.count)),
-			w.next())
+		return s, gen.Do(
+			w.say(fmt.Sprintf("primary gone (%v): taking over at count %d", m.Reason, s.count)),
+			w.next(),
+		)
 	}
 	return s, nil
 }
@@ -82,6 +86,6 @@ func (w Worker) HandleInfo(s work, msg any) (work, []gen.Effect) {
 func (w Worker) next() gen.Effect { return gen.StartTimer{Key: "tick", After: w.Every, Msg: tick{}} }
 
 // say prints line on the console of the node.
-func (w Worker) say(line string) []gen.Effect {
-	return gen.Do(gen.Send{To: gen.Local(consoleName), Msg: w.Node + ": " + line})
+func (w Worker) say(line string) gen.Effect {
+	return gen.Send{To: gen.Local(consoleName), Msg: w.Node + ": " + line}
 }

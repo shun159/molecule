@@ -12,13 +12,8 @@ import (
 )
 
 // lines is a console of the simulation, keeping the lines.
-type lines struct{}
+type lines struct{ genserver.Default[[]string] }
 
-func (lines) Init(proc.PID) ([]string, []gen.Effect, error) { return nil, nil, nil }
-func (lines) HandleCall(l []string, _ struct{}, _ genserver.From[int]) ([]string, []gen.Effect) {
-	return l, nil
-}
-func (lines) HandleCast(l []string, _ struct{}) ([]string, []gen.Effect) { return l, nil }
 func (lines) HandleInfo(l []string, msg any) ([]string, []gen.Effect) {
 	return append(l[:len(l):len(l)], msg.(string)), nil
 }
@@ -43,9 +38,8 @@ func TestFailover(t *testing.T) {
 	standby := start("a", genserver.Gen(Worker{Node: "a", Peer: "b", Every: every}), workerName)
 
 	s.Advance(time.Second)
-	n, _ := s.Call(standby, struct{}{})
-	if n != 10 {
-		t.Fatalf("standby got count %v, want 10", n)
+	if w, _ := gensim.State[work](s, standby); w.count != 10 {
+		t.Fatalf("standby got count %v, want 10", w.count)
 	}
 	s.Crash("b")
 	s.Advance(time.Second)

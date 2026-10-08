@@ -24,6 +24,32 @@ type Behaviour[S, Req, Rep, Cast any] interface {
 	HandleCast(state S, msg Cast) (S, []gen.Effect)
 }
 
+// Default gives a Behaviour the callbacks it has no use for, embedded in
+// it: Init starts with the zero state, and a server without HandleCall or
+// HandleCast takes no calls or no casts, one stopping it with a
+// BadMessageError, as a request of the wrong type does.
+//
+//	// Log keeps what it is sent.
+//	type Log struct{ genserver.Default[[]string] }
+//
+//	func (Log) HandleInfo(log []string, msg any) ([]string, []gen.Effect) {
+//		return append(slices.Clip(log), fmt.Sprint(msg)), nil
+//	}
+type Default[S any] struct{}
+
+// None is the request, reply or cast type of a server taking none, by
+// Default: no value has it but nil, which no request carries.
+type None interface{ none() }
+
+func (Default[S]) Init(proc.PID) (S, []gen.Effect, error) {
+	var zero S
+	return zero, nil, nil
+}
+
+func (Default[S]) HandleCall(s S, _ None, _ From[None]) (S, []gen.Effect) { return s, nil }
+
+func (Default[S]) HandleCast(s S, _ None) (S, []gen.Effect) { return s, nil }
+
 // InfoHandler handles the messages that are neither calls nor casts, see
 // gen.InfoMsg. Without it, they are dropped.
 type InfoHandler[S any] interface {

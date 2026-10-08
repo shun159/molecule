@@ -73,12 +73,11 @@ func Example() {
 // go. It shows a deferred reply: each From is kept in the state and
 // replied to later.
 type Barrier struct {
-	N int
+	genserver.Default[[]genserver.From[string]] // the callers waiting
+	N                                           int
 }
 
 type Wait struct{}
-
-func (Barrier) Init(proc.PID) ([]genserver.From[string], []gen.Effect, error) { return nil, nil, nil }
 
 func (b Barrier) HandleCall(waiting []genserver.From[string], _ Wait, from genserver.From[string]) ([]genserver.From[string], []gen.Effect) {
 	waiting = append(waiting[:len(waiting):len(waiting)], from)
@@ -90,10 +89,6 @@ func (b Barrier) HandleCall(waiting []genserver.From[string], _ Wait, from gense
 		effs = append(effs, w.Reply("go"))
 	}
 	return nil, effs
-}
-
-func (Barrier) HandleCast(waiting []genserver.From[string], _ struct{}) ([]genserver.From[string], []gen.Effect) {
-	return waiting, nil
 }
 
 func Example_deferredReply() {
