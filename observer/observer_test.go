@@ -3,6 +3,7 @@ package observer_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http/httptest"
 	"strings"
@@ -136,6 +137,18 @@ func TestHandler(t *testing.T) {
 	if s := get(t, h, "/"); !strings.HasPrefix(s, "node obs: ") || !strings.Contains(s, "application app\n") || !strings.Contains(s, "└─ pool") {
 		t.Errorf("/:\n%s", s)
 	}
+	pool := treeOf(t, n, r).Children[2].PID
+	for range 3 {
+		if _, err := supervisor.StartChild(context.Background(), n, pool, supervisor.ChildSpec{Start: genserver.Child(crasher{})}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s := get(t, h, "/tree"); !strings.Contains(s, "   └─ 3 × genserver observer_test.crasher\n") {
+		t.Errorf("/tree:\n%s", s)
+	}
+	if s := get(t, h, "/tree?full"); strings.Count(s, "genserver observer_test.crasher\n") != 5 {
+		t.Errorf("/tree?full:\n%s", s)
+	}
 	if s := get(t, h, "/processes"); !strings.Contains(s, "dynamic supervisor") || !strings.Contains(s, "application master app") {
 		t.Errorf("/processes:\n%s", s)
 	}
@@ -168,5 +181,55 @@ func TestHandler(t *testing.T) {
 	}
 	if root.Stats.Processes == 0 || root.Stats.Spawned < uint64(root.Stats.Processes) {
 		t.Errorf("stats %+v", root.Stats)
+	}
+}
+
+func TestCollapse(t *testing.T) {
+	n := proc.NewNode("")
+	pid := func() proc.PID {
+		return n.Spawn(func(s *proc.Self) error {
+			_, err := s.Receive(context.Background())
+			return err
+		})
+	}
+	leaf := func(label string) observer.Tree { return observer.Tree{PID: pid(), Label: label} }
+	restarted := leaf("m")
+	restarted.Restarts = 1
+	pool := observer.Tree{ID: "pool", PID: pid(), Label: "dynamic supervisor", Children: []observer.Tree{
+		leaf("l"), leaf("l"), leaf("m"), leaf("m"), leaf("m"), restarted, leaf("m"), leaf("m"), leaf("m"),
+	}}
+	top := observer.Tree{PID: pid(), Label: "supervisor", Children: []observer.Tree{pool, {ID: "x", PID: pid()}}}
+	c := pool.Children
+	var b strings.Builder
+	observer.WriteTree(&b, top)
+	want := top.PID.String() + "  supervisor\n" +
+		"├─ pool  " + pool.PID.String() + "  dynamic supervisor\n" +
+		"│  ├─ " + c[0].PID.String() + "  l\n" +
+		"│  ├─ " + c[1].PID.String() + "  l\n" +
+		"│  ├─ 3 × m\n" +
+		"│  ├─ " + c[5].PID.String() + "  m  restarted 1\n" +
+		"│  └─ 3 × m\n" +
+		"└─ x  " + top.Children[1].PID.String() + "\n"
+	if b.String() != want {
+		t.Errorf("tree\n%s\nwant\n%s", b.String(), want)
+	}
+	// Children with IDs, or children of their own, are not alike.
+	named, parents := top, top
+	named.Children, parents.Children = nil, nil
+	for i := range 3 {
+		named.Children = append(named.Children, observer.Tree{ID: fmt.Sprint(i), PID: pid(), Label: "w"})
+		parents.Children = append(parents.Children, observer.Tree{PID: pid(), Label: "s", Children: []observer.Tree{leaf("w")}})
+	}
+	for _, tree := range []observer.Tree{named, parents} {
+		b.Reset()
+		observer.WriteTree(&b, tree)
+		if strings.Contains(b.String(), "×") {
+			t.Errorf("collapsed\n%s", b.String())
+		}
+	}
+	b.Reset()
+	observer.WriteTreeFull(&b, top)
+	if lines := strings.Count(b.String(), "\n"); lines != 12 || !strings.Contains(b.String(), "│  └─ "+c[8].PID.String()+"  m\n") {
+		t.Errorf("full tree\n%s", b.String())
 	}
 }

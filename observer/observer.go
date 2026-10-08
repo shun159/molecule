@@ -82,25 +82,55 @@ func TreeOf(ctx context.Context, n *proc.Node, top proc.PID) (Tree, error) {
 	return t, nil
 }
 
-// WriteTree draws t.
-func WriteTree(w io.Writer, t Tree) error {
+// WriteTree draws t. A run of three or more children alike, the
+// connections of a pool say, is drawn as one line: their count and label.
+// Children are alike when they have no ID, no children, no restarts, and
+// the same label.
+func WriteTree(w io.Writer, t Tree) error { return writeTree(w, t, false) }
+
+// WriteTreeFull draws t, every child on a line of its own.
+func WriteTreeFull(w io.Writer, t Tree) error { return writeTree(w, t, true) }
+
+func writeTree(w io.Writer, t Tree, full bool) error {
 	var b strings.Builder
 	line(&b, t)
-	draw(&b, t.Children, "")
+	draw(&b, t.Children, "", full)
 	_, err := io.WriteString(w, b.String())
 	return err
 }
 
-func draw(b *strings.Builder, children []Tree, prefix string) {
-	for i, c := range children {
+func draw(b *strings.Builder, children []Tree, prefix string, full bool) {
+	for i := 0; i < len(children); {
+		c := children[i]
+		run := 1
+		if !full {
+			for i+run < len(children) && alike(c, children[i+run]) {
+				run++
+			}
+			if run < 3 {
+				run = 1
+			}
+		}
 		branch, next := "├─ ", "│  "
-		if i == len(children)-1 {
+		if i+run == len(children) {
 			branch, next = "└─ ", "   "
 		}
 		b.WriteString(prefix + branch)
-		line(b, c)
-		draw(b, c.Children, prefix+next)
+		if run > 1 {
+			fmt.Fprintf(b, "%d × %s\n", run, cmp.Or(c.Label, "(no label)"))
+		} else {
+			line(b, c)
+			draw(b, c.Children, prefix+next, full)
+		}
+		i += run
 	}
+}
+
+func alike(a, b Tree) bool {
+	plain := func(t Tree) bool {
+		return t.ID == "" && len(t.Children) == 0 && t.Restarts == 0 && !t.PID.IsZero()
+	}
+	return plain(a) && plain(b) && a.Label == b.Label
 }
 
 func line(b *strings.Builder, t Tree) {
@@ -128,7 +158,8 @@ func line(b *strings.Builder, t Tree) {
 //	/processes  the processes, the most behind first
 //	/tree       the trees of apps
 //
-// ?format=json answers in JSON. apps may be nil.
+// ?format=json answers in JSON. The trees as text draw children alike as
+// one line, see WriteTree; ?full draws each. apps may be nil.
 func Handler(n *proc.Node, apps *application.Running) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +171,7 @@ func Handler(n *proc.Node, apps *application.Running) http.Handler {
 		}
 		fmt.Fprintf(w, "node %s: %d processes; %d spawned, %d exited, %d crashed\n\n",
 			n.Name(), st.Processes, st.Spawned, st.Exited, st.Crashed)
-		writeTrees(w, trees)
+		writeTrees(w, trees, r.URL.Query().Has("full"))
 	})
 	mux.HandleFunc("GET /processes", func(w http.ResponseWriter, r *http.Request) {
 		infos := Processes(n)
@@ -156,7 +187,7 @@ func Handler(n *proc.Node, apps *application.Running) http.Handler {
 			reply(w, trees)
 			return
 		}
-		writeTrees(w, trees)
+		writeTrees(w, trees, r.URL.Query().Has("full"))
 	})
 	return mux
 }
@@ -187,13 +218,13 @@ func treesOf(ctx context.Context, n *proc.Node, apps *application.Running) []app
 	return out
 }
 
-func writeTrees(w io.Writer, trees []appTree) {
+func writeTrees(w io.Writer, trees []appTree, full bool) {
 	for _, at := range trees {
 		fmt.Fprintf(w, "application %s\n", at.App)
 		if at.Error != "" {
 			fmt.Fprintf(w, "  %s\n", at.Error)
 		}
-		WriteTree(w, at.Tree)
+		writeTree(w, at.Tree, full)
 		fmt.Fprintln(w)
 	}
 }

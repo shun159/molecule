@@ -4,7 +4,8 @@
 // children.
 //
 // [Processes] and [TreeOf] return them as values, [WriteProcesses] and
-// [WriteTree] write them as text, and [Handler] serves them over HTTP,
+// [WriteTree] write them as text, the many connections of a pool as one
+// line, and [Handler] serves them over HTTP,
 // for a look from outside a running program:
 //
 //	go http.ListenAndServe("127.0.0.1:8080", observer.Handler(n, apps))
