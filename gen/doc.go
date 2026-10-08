@@ -40,7 +40,8 @@
 // call to call. A large state, such as a big struct, makes every call copy
 // it and enlarges the stack of the process; it is better kept small, with
 // large data behind a pointer to something never modified, or in a map or
-// slice copied when changed.
+// slice copied when changed. The state given is not to be written, nor a
+// message once sent: gensim checks it.
 //
 // Handle gets a [Msg]: a [CallMsg], a [CastMsg], an [InfoMsg] for any other
 // message, or a [ContinueMsg]. An InfoMsg also carries the outcome of an

@@ -42,6 +42,8 @@ type Sim struct {
 
 	trace []Event
 
+	noPurity bool
+
 	// CallTimeout bounds the virtual time a Call waits.
 	CallTimeout time.Duration
 	// Loss is the probability that a message between two nodes is lost,
@@ -88,7 +90,13 @@ type watcher struct {
 // link carries the messages from one process to another, in order.
 type link struct {
 	from, to proc.PID
-	queue    []any
+	queue    []flight
+}
+
+// flight is a message in flight, and its fingerprint when sent.
+type flight struct {
+	msg any
+	fp  string
 }
 
 // alias is an alias made by Request or Call.
@@ -387,14 +395,22 @@ func (s *Sim) send(from, to proc.PID, msg any) {
 		s.byLink[key] = l
 		s.links = append(s.links, l)
 	}
-	l.queue = append(l.queue, msg)
+	f := flight{msg: msg}
+	if !s.noPurity {
+		f.fp = fingerprint(msg)
+	}
+	l.queue = append(l.queue, f)
 }
 
 // deliver moves the first message in flight on l to its mailbox.
 func (s *Sim) deliver(l *link) {
-	msg := l.queue[0]
-	l.queue[0] = nil
+	f := l.queue[0]
+	l.queue[0] = flight{}
 	l.queue = l.queue[1:]
+	msg := f.msg
+	if !s.noPurity && fingerprint(msg) != f.fp {
+		panic(&ImpureError{PID: l.from, Msg: msg, What: "changed a message after sending it to " + l.to.String()})
+	}
 	if p := s.byPID[l.to]; p != nil && p.alive {
 		p.mailbox = append(p.mailbox, msg)
 	}
@@ -406,7 +422,17 @@ func (s *Sim) handle(p *process) {
 	p.mailbox[0] = nil
 	p.mailbox = p.mailbox[1:]
 	s.record(Event{Kind: Handled, To: p.pid, Msg: msg})
-	if done, reason := p.runner.Deliver(msg); done {
+	var old any
+	var before string
+	if !s.noPurity {
+		old = p.runner.State()
+		before = fingerprint(old)
+	}
+	done, reason := p.runner.Deliver(msg)
+	if !s.noPurity && fingerprint(old) != before {
+		panic(&ImpureError{PID: p.pid, Msg: msg, What: "changed the state it was given, handling a message"})
+	}
+	if done {
 		s.exit(p, reason)
 	}
 }
@@ -665,7 +691,7 @@ func (e *env) Demonitor(ref proc.Ref) {
 	e.p.mailbox = slices.DeleteFunc(e.p.mailbox, isDown)
 	for _, l := range e.s.links {
 		if l.to == e.p.pid {
-			l.queue = slices.DeleteFunc(l.queue, isDown)
+			l.queue = slices.DeleteFunc(l.queue, func(f flight) bool { return isDown(f.msg) })
 		}
 	}
 }

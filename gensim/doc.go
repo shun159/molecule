@@ -49,6 +49,16 @@
 // and links, monitors and pending requests between them fail with
 // proc.NoConnection, on both sides.
 //
+// # Purity
+//
+// A behaviour must not write the state it is given, nor a message once
+// sent; a slice or a map shared by the state given and the state returned
+// is how it usually happens, unnoticed, as the program still runs. The
+// simulation fingerprints the state a process is given, and each message
+// in flight, through their slices, maps and pointers, and panics with an
+// [ImpureError] when one has changed: at the step that did it, replayed by
+// its seed. WithoutPurityCheck turns this off.
+//
 // # Randomness
 //
 // A behaviour needing random numbers, for a timeout or a choice of peer,

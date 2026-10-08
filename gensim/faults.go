@@ -163,8 +163,8 @@ func (s *Sim) disconnect(x, y string) {
 
 // dropQueue loses what is in flight on l.
 func (s *Sim) dropQueue(l *link) {
-	for _, msg := range l.queue {
-		s.record(Event{Kind: Dropped, From: l.from, To: l.to, Msg: msg})
+	for _, f := range l.queue {
+		s.record(Event{Kind: Dropped, From: l.from, To: l.to, Msg: f.msg})
 	}
 	l.queue = nil
 }
