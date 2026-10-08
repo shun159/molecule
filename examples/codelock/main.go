@@ -17,7 +17,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/genstatem"
 	"github.com/shun159/molecule/proc"
 )
@@ -35,17 +34,18 @@ func run(w io.Writer, openTime time.Duration) error {
 	ctx := context.Background()
 	n := proc.NewNode("codelock@localhost")
 	display := startDisplay(n, w)
-	lock, err := genstatem.Start(ctx, n, CodeLock{Code: []int{1, 2, 3}, OpenTime: openTime, Display: display})
+	pid, err := genstatem.Start(ctx, n, CodeLock{Code: []int{1, 2, 3}, OpenTime: openTime, Display: display})
 	if err != nil {
 		return err
 	}
+	lock := genstatem.NewRef(pid)
 	press := func(buttons ...int) {
 		for _, b := range buttons {
-			gen.SendCast(n, lock, Button{b})
+			lock.Cast(n, Button{b})
 		}
 	}
 	status := func() {
-		v, _ := gen.Call(ctx, n, lock, Status{})
+		v, _ := lock.Call(ctx, n, Status{})
 		show(n, display, fmt.Sprintf("status: %v", v))
 	}
 
@@ -61,9 +61,9 @@ func run(w io.Writer, openTime time.Duration) error {
 
 	// Wait for the lock to have handled all, so that what it sent the
 	// display is in before the sync.
-	gen.Call(ctx, n, lock, Status{})
+	lock.Call(ctx, n, Status{})
 	sync(n, display)
-	shutdown(n, lock, display)
+	shutdown(n, pid, display)
 	return nil
 }
 

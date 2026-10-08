@@ -49,6 +49,10 @@
 //	counter := genserver.RefFor(Counter{}, gen.Local("counter"))
 //	n, err := counter.Call(ctx, caller, Get{})
 //
+// [Ref.SendRequest] calls without waiting, like gen_server:send_request:
+// the reply is taken from the Pending it returns, in a select on its Done,
+// or with Wait.
+//
 // [StartLinkFunc] makes the start function of a supervisor.ChildSpec.
 //
 // # Servers calling servers

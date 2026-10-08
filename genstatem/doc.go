@@ -85,6 +85,16 @@
 // them stops the machine, the start has still succeeded. [Stop] stops a
 // machine normally, and [GetState] returns its state and data.
 //
+// # Clients
+//
+// A [Ref] calls and casts a machine, at a PID or a name, like
+// gen_statem:call, gen_statem:cast and gen_statem:send_request:
+//
+//	lock := genstatem.NewRef(gen.Local("lock"))
+//	lock.Cast(caller, Button{1})
+//	status, err := lock.Call(ctx, caller, Status{})
+//	p := lock.SendRequest(caller, Status{}) // the reply, from p, later
+//
 // # Differences from gen_statem
 //
 // There is no repeat_state, no hibernation, and no code change. States are

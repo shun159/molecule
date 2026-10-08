@@ -63,31 +63,40 @@ func Call(ctx context.Context, caller Caller, to Dest, req any) (any, error) {
 
 // call makes a synchronous request; wrap builds the message to send.
 func call(ctx context.Context, caller Caller, to Dest, wrap func(From) any) (any, error) {
+	a, err := sendCall(caller, to, wrap)
+	if err != nil {
+		return nil, err
+	}
+	defer a.Release()
+	d, _ := caller.(dying)
+	return awaitReply(ctx, d, to, a.C)
+}
+
+// sendCall sends a request, and returns the alias its reply arrives on,
+// or the death of the server: the server is monitored, by the alias,
+// before the request is sent.
+func sendCall(caller Caller, to Dest, wrap func(From) any) (proc.Alias, error) {
 	n := caller.Node()
 	var self proc.PID
 	if p, ok := caller.(interface{ PID() proc.PID }); ok {
 		self = p.PID()
 	}
-	d, _ := caller.(dying)
 	if r, ok := to.(Remote); ok && r.Node != n.Name() {
 		// The name is resolved there, and monitored there first.
 		a := n.MonitorAliasName(r.Node, r.Name)
-		defer a.Release()
 		n.SendName(r.Node, r.Name, wrap(From{PID: self, Tag: a.Ref}))
-		return awaitReply(ctx, d, to, a.C)
+		return a, nil
 	}
 	pid, ok := to.WhereIs(n)
 	if !ok {
-		return nil, &ExitError{To: to, Reason: proc.NoProc}
+		return proc.Alias{}, &ExitError{To: to, Reason: proc.NoProc}
 	}
 	if !self.IsZero() && self == pid {
-		return nil, ErrCallingSelf
+		return proc.Alias{}, ErrCallingSelf
 	}
-
 	a := n.MonitorAlias(pid)
-	defer a.Release()
 	n.Send(pid, wrap(From{PID: self, Tag: a.Ref}))
-	return awaitReply(ctx, d, to, a.C)
+	return a, nil
 }
 
 // dying is a caller that may die while it waits: a process.

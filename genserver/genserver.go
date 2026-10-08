@@ -126,6 +126,13 @@ func (r Ref[Req, Rep, Cast]) Call(ctx context.Context, caller gen.Caller, req Re
 	return rep, nil
 }
 
+// SendRequest calls the server without waiting for the reply, like
+// gen_server:send_request: the reply is taken from the Pending, when
+// there. See gen.Pending.
+func (r Ref[Req, Rep, Cast]) SendRequest(caller gen.Caller, req Req) *gen.Pending[Rep] {
+	return gen.Request[Rep](caller, r.dest, req)
+}
+
 // Cast sends msg to the server without waiting. See gen.SendCast.
 func (r Ref[Req, Rep, Cast]) Cast(caller gen.Caller, msg Cast) {
 	gen.SendCast(caller, r.dest, msg)

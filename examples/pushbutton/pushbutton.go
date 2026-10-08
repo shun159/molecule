@@ -29,11 +29,11 @@ func start(ctx context.Context, n *proc.Node) (proc.PID, error) {
 }
 
 func push(ctx context.Context, n *proc.Node) (any, error) {
-	return gen.Call(ctx, n, name, pushReq{})
+	return genstatem.NewRef(name).Call(ctx, n, pushReq{})
 }
 
 func getCount(ctx context.Context, n *proc.Node) (any, error) {
-	return gen.Call(ctx, n, name, getCountReq{})
+	return genstatem.NewRef(name).Call(ctx, n, getCountReq{})
 }
 
 func stop(ctx context.Context, n *proc.Node) error {

@@ -394,3 +394,28 @@ func TestDefault(t *testing.T) {
 		t.Errorf("state %v, %v", s, err)
 	}
 }
+
+// tally adds the casts it gets, and answers calls with the sum.
+type tally struct{ genserver.Default[int] }
+
+type sum struct{}
+
+func (tally) HandleCall(n int, _ sum, from genserver.From[int]) (int, []gen.Effect) {
+	return n, gen.Do(from.Reply(n))
+}
+
+func (tally) HandleCast(n int, by int) (int, []gen.Effect) { return n + by, nil }
+
+func TestSendRequest(t *testing.T) {
+	n := proc.NewNode("")
+	ctx := context.Background()
+	ref, err := genserver.Start(ctx, n, tally{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref.Cast(n, 3)
+	p := ref.SendRequest(n, sum{})
+	if v, err := p.Wait(ctx); v != 3 || err != nil {
+		t.Errorf("SendRequest: %v, %v", v, err)
+	}
+}

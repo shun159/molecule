@@ -20,7 +20,11 @@
 //   - [ErrCallingSelf] when a process calls itself.
 //
 // [SendCast] sends a request without waiting. A cast to a server that does
-// not exist is dropped.
+// not exist is dropped. [Request] calls without waiting for the reply,
+// which a [Pending] holds when it comes.
+//
+// genserver and genstatem wrap these with the types of their servers;
+// programs use theirs.
 //
 // The server gets a [CallMsg] carrying a [From], and replies with the
 // [Reply] effect, or [SendReply] outside behaviours. From is plain data: the

@@ -413,3 +413,32 @@ func TestInitEventsAfterStart(t *testing.T) {
 }
 
 var errBoom = fmt.Errorf("boom")
+
+func TestRef(t *testing.T) {
+	n := proc.NewNode("")
+	ctx := context.Background()
+	pid, err := genstatem.Start(ctx, n, echoMachine{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := genstatem.NewRef(pid)
+	ref.Cast(n, "cast")
+	if v, err := ref.Call(ctx, n, "call"); err != nil || v != "call" {
+		t.Errorf("Call: %v, %v", v, err)
+	}
+	if v, err := ref.SendRequest(n, "request").Wait(ctx); err != nil || v != "request" {
+		t.Errorf("SendRequest: %v, %v", v, err)
+	}
+}
+
+// echoMachine answers each call with its request.
+type echoMachine struct{}
+
+func (echoMachine) Init(proc.PID) (int, int, []gen.Effect, error) { return 0, 0, nil, nil }
+
+func (echoMachine) HandleEvent(st, d int, ev genstatem.Event) (int, int, []gen.Effect) {
+	if c, ok := ev.(genstatem.Call); ok {
+		return st, d, gen.Do(c.Reply(c.Req))
+	}
+	return st, d, nil
+}

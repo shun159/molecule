@@ -156,6 +156,31 @@ func StartLinkFunc[St comparable, D any](b Behaviour[St, D], opts ...gen.Option)
 	return gen.StartLinkFunc(newAdapter(b), nil, opts...)
 }
 
+// Ref is a handle on a machine, to call and cast it.
+type Ref struct{ dest gen.Dest }
+
+// NewRef makes a Ref to the machine at dest, a PID or a name.
+func NewRef(dest gen.Dest) Ref { return Ref{dest} }
+
+// Dest returns where the machine is.
+func (r Ref) Dest() gen.Dest { return r.dest }
+
+// Call sends req to the machine, as a Call event, and waits for the
+// reply, like gen_statem:call. See gen.Call.
+func (r Ref) Call(ctx context.Context, caller gen.Caller, req any) (any, error) {
+	return gen.Call(ctx, caller, r.dest, req)
+}
+
+// Cast sends msg to the machine, as a Cast event, without waiting, like
+// gen_statem:cast. It never fails.
+func (r Ref) Cast(caller gen.Caller, msg any) { gen.SendCast(caller, r.dest, msg) }
+
+// SendRequest calls the machine without waiting for the reply, like
+// gen_statem:send_request. See gen.Pending.
+func (r Ref) SendRequest(caller gen.Caller, req any) *gen.Pending[any] {
+	return gen.Request[any](caller, r.dest, req)
+}
+
 // Stop stops the machine at to normally, like gen_statem:stop: its
 // Terminate callback runs, and Stop returns once it is dead.
 func Stop(ctx context.Context, caller gen.Caller, to gen.Dest) error {
