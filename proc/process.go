@@ -27,6 +27,8 @@ type process struct {
 	cancel context.CancelCauseFunc
 
 	trapExit atomic.Bool
+	// watchesNodes tells that p monitors nodes, see MonitorNodes.
+	watchesNodes atomic.Bool
 
 	// mu guards links, monitors and the transition to dead, so a link or
 	// a monitor is either established with a live process or reported as
@@ -123,6 +125,9 @@ func (p *process) die(reason error) {
 	// The name goes before anyone is told, so a supervisor reacting to the
 	// death can register a replacement under the same name at once.
 	p.node.unregisterDead(p)
+	if p.watchesNodes.Load() {
+		p.node.nodes.unwatch(p.pid)
+	}
 	for to := range links {
 		p.node.sendExit(p.pid, to, reason, true)
 	}

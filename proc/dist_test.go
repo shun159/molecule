@@ -549,3 +549,29 @@ func TestRemoteMonitorName(t *testing.T) {
 		t.Errorf("got %#v", m)
 	}
 }
+
+func TestMonitorNodes(t *testing.T) {
+	f, nodes := newFakeNet(t, "a", "b", "c")
+	a := nodes[0]
+	ra := f.remotes["a"]
+	ra.NodeUp("b")
+	pa, ca := inbox(a)
+	in(a, pa, func(s *Self) { s.MonitorNodes(true) })
+	if m := next(t, ca); m != (NodeUp{"b"}) {
+		t.Errorf("at once: %#v", m)
+	}
+	ra.NodeUp("c")
+	ra.NodeUp("c") // once only
+	if m := next(t, ca); m != (NodeUp{"c"}) {
+		t.Errorf("got %#v", m)
+	}
+	f.disconnect("a", "b")
+	if m := next(t, ca); m != (NodeDown{"b"}) {
+		t.Errorf("got %#v", m)
+	}
+	ra.NodeDown("b") // down already: nothing
+	nothing(t, ca)
+	in(a, pa, func(s *Self) { s.MonitorNodes(false) })
+	ra.NodeUp("b")
+	nothing(t, ca)
+}

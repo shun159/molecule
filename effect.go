@@ -106,6 +106,14 @@ type TrapExit struct {
 	On bool
 }
 
+// MonitorNodes makes the process monitor the connections of its node to
+// others, or stop, like net_kernel:monitor_nodes: a proc.NodeUp arrives
+// at once for each node connected, then a proc.NodeUp and a
+// proc.NodeDown each time a connection is made and lost.
+type MonitorNodes struct {
+	On bool
+}
+
 // Extension is embedded in the effects of behaviours built on gen, such as
 // the actions of genstatem: an effect type embedding it is an Effect, for
 // the adapter of the behaviour to handle before returning the rest to the
@@ -114,16 +122,17 @@ type Extension struct{}
 
 func (Extension) effect() {}
 
-func (Continue) effect()    {}
-func (Reply) effect()       {}
-func (Send) effect()        {}
-func (Cast) effect()        {}
-func (Stop) effect()        {}
-func (Monitor) effect()     {}
-func (Demonitor) effect()   {}
-func (StartTimer) effect()  {}
-func (CancelTimer) effect() {}
-func (SendRequest) effect() {}
-func (Link) effect()        {}
-func (Unlink) effect()      {}
-func (TrapExit) effect()    {}
+func (Continue) effect()     {}
+func (Reply) effect()        {}
+func (Send) effect()         {}
+func (Cast) effect()         {}
+func (Stop) effect()         {}
+func (Monitor) effect()      {}
+func (Demonitor) effect()    {}
+func (StartTimer) effect()   {}
+func (CancelTimer) effect()  {}
+func (SendRequest) effect()  {}
+func (Link) effect()         {}
+func (Unlink) effect()       {}
+func (TrapExit) effect()     {}
+func (MonitorNodes) effect() {}

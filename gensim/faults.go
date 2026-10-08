@@ -22,8 +22,12 @@ func (s *Sim) Partition(groups ...[]string) {
 					if x == y || s.cuts[[2]string{x, y}] {
 						continue
 					}
+					was := s.connected(x, y)
 					s.cuts[[2]string{x, y}], s.cuts[[2]string{y, x}] = true, true
 					s.record(Event{Kind: Fault, Msg: fmt.Sprintf("partition %s | %s", x, y)})
+					if was {
+						s.nodeEvent(x, y, false)
+					}
 					s.disconnect(x, y)
 				}
 			}
@@ -33,8 +37,16 @@ func (s *Sim) Partition(groups ...[]string) {
 
 // Heal undoes the partitions: all nodes up reach each other again.
 func (s *Sim) Heal() {
-	clear(s.cuts)
+	cut := s.cuts
+	s.cuts = make(map[[2]string]bool)
 	s.record(Event{Kind: Fault, Msg: "heal"})
+	for _, x := range s.nodeNames() {
+		for _, y := range s.nodeNames() {
+			if x < y && cut[[2]string{x, y}] && s.connected(x, y) {
+				s.nodeEvent(x, y, true)
+			}
+		}
+	}
 }
 
 // Crash stops the node name: its processes vanish, without running
@@ -47,6 +59,9 @@ func (s *Sim) Crash(name string) {
 	s.record(Event{Kind: Fault, Msg: "crash " + name})
 	for _, other := range s.nodeNames() {
 		if other != name {
+			if s.connected(name, other) {
+				s.nodeEvent(name, other, false)
+			}
 			s.disconnect(name, other)
 		}
 	}
@@ -86,6 +101,43 @@ func (s *Sim) Restart(name string) {
 	n.creation++
 	n.alloc = proc.NewNode(name, proc.WithCreation(n.creation))
 	n.up = true
+	for _, other := range s.nodeNames() {
+		if other != name && s.connected(name, other) {
+			s.nodeEvent(name, other, true)
+		}
+	}
+}
+
+// connected reports whether the nodes x and y reach each other.
+func (s *Sim) connected(x, y string) bool {
+	nx, ny := s.nodes[x], s.nodes[y]
+	return nx != nil && ny != nil && nx.up && ny.up && !s.cuts[[2]string{x, y}]
+}
+
+// nodeEvent tells the processes of x monitoring nodes that y is up or
+// down, and those of y, that x is.
+func (s *Sim) nodeEvent(x, y string, up bool) {
+	for _, pid := range sortedPIDs(s.nodeWatchers) {
+		p := s.byPID[pid]
+		if p == nil || !p.alive {
+			delete(s.nodeWatchers, pid)
+			continue
+		}
+		var other string
+		switch p.node.name {
+		case x:
+			other = y
+		case y:
+			other = x
+		default:
+			continue
+		}
+		if up {
+			s.deliverLocal(p, proc.NodeUp{Node: other})
+		} else {
+			s.deliverLocal(p, proc.NodeDown{Node: other})
+		}
+	}
 }
 
 // disconnect makes the nodes x and y lose each other.

@@ -33,6 +33,8 @@ type Env interface {
 	// MonitorName monitors the process registered as name on node, as
 	// proc.Self.MonitorName does.
 	MonitorName(node, name string) proc.Ref
+	// MonitorNodes is that of proc.Self.
+	MonitorNodes(on bool)
 	// Link, Unlink and TrapExit are those of proc.Self.
 	Link(pid proc.PID)
 	Unlink(pid proc.PID)

@@ -73,6 +73,7 @@ func (d *Dist) runPeer(self *proc.Self, p *peer) error {
 	})
 	c := &connection{d: d, self: self, p: p, sock: sock, enc: d.cfg.Codec.NewEncoder(), dec: d.cfg.Codec.NewDecoder()}
 	go ticker(d.n, self.PID(), self.Done(), d.cfg.TickTime/ticksPerTime)
+	d.remote.NodeUp(p.node)
 	for _, ref := range waiters {
 		d.n.SendAlias(ref, nil)
 	}

@@ -444,3 +444,19 @@ func TestRemoteNameEffects(t *testing.T) {
 		t.Errorf("log %#v", got)
 	}
 }
+
+func TestMonitorNodes(t *testing.T) {
+	nodes, dists := cluster(t, "secret", "a@test", "b@test")
+	pa, ca := inbox(nodes[0])
+	in(nodes[0], pa, func(s *proc.Self) { s.MonitorNodes(true) })
+	if err := dists[0].Connect(context.Background(), "b@test"); err != nil {
+		t.Fatal(err)
+	}
+	if m := next(t, ca); m != (proc.NodeUp{Node: "b@test"}) {
+		t.Errorf("got %#v", m)
+	}
+	dists[0].Disconnect("b@test")
+	if m := next(t, ca); m != (proc.NodeDown{Node: "b@test"}) {
+		t.Errorf("got %#v", m)
+	}
+}

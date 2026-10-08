@@ -27,9 +27,10 @@ type Sim struct {
 	logger *slog.Logger
 	now    time.Time
 
-	nodes map[string]*node
-	def   *node              // where processes run unless told otherwise
-	cuts  map[[2]string]bool // pairs of nodes that cannot reach each other
+	nodes        map[string]*node
+	nodeWatchers map[proc.PID]bool  // the processes monitoring nodes
+	def          *node              // where processes run unless told otherwise
+	cuts         map[[2]string]bool // pairs of nodes that cannot reach each other
 
 	procs []*process // in creation order
 	byPID map[proc.PID]*process
@@ -120,15 +121,16 @@ func WithLogger(l *slog.Logger) Option { return func(s *Sim) { s.logger = l } }
 // same seed, the same behaviours and the same calls make the same run.
 func New(seed uint64, opts ...Option) *Sim {
 	s := &Sim{
-		rng:         rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)),
-		logger:      slog.New(slog.DiscardHandler),
-		now:         time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC),
-		nodes:       make(map[string]*node),
-		cuts:        make(map[[2]string]bool),
-		byPID:       make(map[proc.PID]*process),
-		byLink:      make(map[[2]proc.PID]*link),
-		aliases:     make(map[proc.Ref]*alias),
-		CallTimeout: DefaultCallTimeout,
+		rng:          rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)),
+		logger:       slog.New(slog.DiscardHandler),
+		now:          time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC),
+		nodes:        make(map[string]*node),
+		nodeWatchers: make(map[proc.PID]bool),
+		cuts:         make(map[[2]string]bool),
+		byPID:        make(map[proc.PID]*process),
+		byLink:       make(map[[2]proc.PID]*link),
+		aliases:      make(map[proc.Ref]*alias),
+		CallTimeout:  DefaultCallTimeout,
 	}
 	s.def = s.nodeNamed(DefaultNode)
 	for _, opt := range opts {
@@ -143,6 +145,12 @@ func (s *Sim) nodeNamed(name string) *node {
 	if n == nil {
 		n = &node{name: name, alloc: proc.NewNode(name, proc.WithCreation(1)), names: make(map[string]proc.PID), up: true, creation: 1}
 		s.nodes[name] = n
+		// A node is connected to the others once it exists.
+		for _, other := range s.nodeNames() {
+			if other != name && s.connected(name, other) {
+				s.nodeEvent(name, other, true)
+			}
+		}
 	}
 	return n
 }
@@ -722,6 +730,22 @@ func (e *env) Unlink(pid proc.PID) {
 }
 
 func (e *env) TrapExit(on bool) { e.p.trap = on }
+
+func (e *env) MonitorNodes(on bool) {
+	if !on {
+		delete(e.s.nodeWatchers, e.p.pid)
+		return
+	}
+	if e.s.nodeWatchers[e.p.pid] {
+		return
+	}
+	e.s.nodeWatchers[e.p.pid] = true
+	for _, other := range e.s.nodeNames() {
+		if other != e.p.node.name && e.s.connected(e.p.node.name, other) {
+			e.s.deliverLocal(e.p, proc.NodeUp{Node: other})
+		}
+	}
+}
 
 func (e *env) Now() time.Time { return e.s.now }
 

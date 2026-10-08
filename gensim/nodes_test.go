@@ -2,6 +2,7 @@ package gensim_test
 
 import (
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -291,5 +292,38 @@ func TestRemoteNameEffects(t *testing.T) {
 				t.Errorf("down %#v", m)
 			}
 		}
+	}
+}
+
+// nodeLog monitors nodes, and keeps what it is told.
+type nodeLog struct{ genserver.Default[[]any] }
+
+func (nodeLog) Init(proc.PID) ([]any, []molecule.Effect, error) {
+	return nil, molecule.Do(molecule.MonitorNodes{On: true}), nil
+}
+
+func (nodeLog) HandleInfo(log []any, msg any) ([]any, []molecule.Effect) {
+	return append(log[:len(log):len(log)], msg), nil
+}
+
+func TestMonitorNodes(t *testing.T) {
+	s := gensim.New(1)
+	spawn(t, s, genserver.Gen(counter{}), gensim.On("b"))
+	w := spawn(t, s, genserver.Gen(nodeLog{}), gensim.On("a"))
+	spawn(t, s, genserver.Gen(counter{}), gensim.On("c"))
+	s.Partition([]string{"a"}, []string{"b"})
+	s.Heal()
+	s.Crash("c")
+	s.Restart("c")
+	s.RunUntilIdle()
+	log, _ := gensim.State[[]any](s, w)
+	want := []any{
+		proc.NodeUp{Node: "b"}, proc.NodeUp{Node: "sim"}, // at once
+		proc.NodeUp{Node: "c"}, // made after
+		proc.NodeDown{Node: "b"}, proc.NodeUp{Node: "b"},
+		proc.NodeDown{Node: "c"}, proc.NodeUp{Node: "c"},
+	}
+	if !slices.Equal(log, want) {
+		t.Errorf("log %#v\nwant %#v", log, want)
 	}
 }

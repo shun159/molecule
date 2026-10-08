@@ -23,6 +23,7 @@ type Node struct {
 
 	dist       atomic.Pointer[Distribution] // nil until Distribute
 	remoteMons remoteMonTable
+	nodes      nodeTable
 
 	regMu sync.Mutex
 	names map[string]PID // guarded by regMu, as is process.name

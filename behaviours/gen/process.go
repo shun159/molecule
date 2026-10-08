@@ -86,6 +86,7 @@ func (e procEnv) MonitorName(node, name string) proc.Ref { return e.self.Monitor
 func (e procEnv) Link(pid proc.PID)                      { e.self.Link(pid) }
 func (e procEnv) Unlink(pid proc.PID)                    { e.self.Unlink(pid) }
 func (e procEnv) TrapExit(on bool)                       { e.self.TrapExit(on) }
+func (e procEnv) MonitorNodes(on bool)                   { e.self.MonitorNodes(on) }
 
 func (e procEnv) Now() time.Time { return time.Now() }
 

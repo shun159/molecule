@@ -348,6 +348,8 @@ func (r *runtime[S]) apply(effs []molecule.Effect) {
 			r.env.Unlink(e.PID)
 		case molecule.TrapExit:
 			r.env.TrapExit(e.On)
+		case molecule.MonitorNodes:
+			r.env.MonitorNodes(e.On)
 		case Performer:
 			e.Perform(r.env)
 		default:

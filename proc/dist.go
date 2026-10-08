@@ -204,12 +204,17 @@ func (r Remote) Down(ref Ref, target PID, reason error) {
 	}
 }
 
+// NodeUp tells that node is connected: the processes monitoring nodes get
+// a NodeUp, unless it was connected already.
+func (r Remote) NodeUp(node string) { r.n.nodes.up(node) }
+
 // NodeDown tells that node is unreachable, its connection lost or never
 // made: the local processes linked to its processes get an exit signal
 // with NoConnection, the monitors of its processes fire with
 // NoConnection, and its monitors of local processes are dropped.
 func (r Remote) NodeDown(node string) {
 	n := r.n
+	n.nodes.down(node)
 	for _, m := range n.remoteMons.takeNode(node) {
 		m.w.notify(n, m.ref, m.target, NoConnection)
 	}
