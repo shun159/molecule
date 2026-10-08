@@ -350,6 +350,12 @@ func (r *runtime[S]) apply(effs []Effect) {
 
 func (r *runtime[S]) monitor(e Monitor) {
 	r.demonitor(e.Tag)
+	if to, ok := e.Target.(Remote); ok && to.Node != r.env.Self().Node() {
+		ref := r.env.MonitorName(to.Node, to.Name)
+		r.monitors[e.Tag] = ref
+		r.tags[ref] = e.Tag
+		return
+	}
 	pid, ok := r.env.Resolve(e.Target)
 	if !ok {
 		r.env.Send(r.env.Self(), downMsg{Down{Tag: e.Tag, Reason: proc.NoProc}})
@@ -383,6 +389,15 @@ func (r *runtime[S]) cancelTimer(key any) {
 }
 
 func (r *runtime[S]) sendRequest(e SendRequest) {
+	if to, ok := e.To.(Remote); ok && to.Node != r.env.Self().Node() {
+		// The name is resolved there, and monitored there first.
+		ref, release := r.env.RequestName(to.Node, to.Name, func(ref proc.Ref, m proc.AliasMsg) any {
+			return answer{ref: ref, m: m}
+		})
+		r.request(e, ref, release)
+		r.env.SendName(to.Node, to.Name, CallMsg{From: From{PID: r.env.Self(), Tag: ref}, Req: e.Req})
+		return
+	}
 	pid, ok := r.env.Resolve(e.To)
 	if !ok {
 		r.env.Send(r.env.Self(), responseMsg{Response{Tag: e.Tag, Err: &ExitError{To: e.To, Reason: proc.NoProc}}})
@@ -391,12 +406,17 @@ func (r *runtime[S]) sendRequest(e SendRequest) {
 	ref, release := r.env.Request(pid, func(ref proc.Ref, m proc.AliasMsg) any {
 		return answer{ref: ref, m: m}
 	})
+	r.request(e, ref, release)
+	r.env.Send(pid, CallMsg{From: From{PID: r.env.Self(), Tag: ref}, Req: e.Req})
+}
+
+// request records the request e, made under ref.
+func (r *runtime[S]) request(e SendRequest, ref proc.Ref, release func()) {
 	req := request{tag: e.Tag, to: e.To, release: release}
 	if e.Timeout > 0 {
 		req.cancel = r.env.SendAfter(e.Timeout, requestTimeout{ref: ref})
 	}
 	r.requests[ref] = req
-	r.env.Send(pid, CallMsg{From: From{PID: r.env.Self(), Tag: ref}, Req: e.Req})
 }
 
 func (r *runtime[S]) endRequest(ref proc.Ref, req request) {

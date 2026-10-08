@@ -240,3 +240,56 @@ func TestRun(t *testing.T) {
 		t.Errorf("Run: %v at %d", err, n)
 	}
 }
+
+// remoteWatcher monitors and requests the counter of b by name.
+type remoteWatcher struct{ genserver.Default[[]any] }
+
+func (remoteWatcher) HandleCast(log []any, _ goNow) ([]any, []gen.Effect) {
+	counter := gen.Remote{Node: "b", Name: "counter"}
+	return log, gen.Do(
+		gen.SendRequest{To: counter, Req: get{}, Tag: "get"},
+		gen.Monitor{Target: counter, Tag: "counter"},
+	)
+}
+
+func (remoteWatcher) HandleInfo(log []any, msg any) ([]any, []gen.Effect) {
+	return append(log[:len(log):len(log)], msg), nil
+}
+
+func TestRemoteNameEffects(t *testing.T) {
+	s := gensim.New(1)
+	c := spawn(t, s, genserver.Gen(counter{}), gensim.On("b"), gensim.Named("counter"))
+	s.Cast(c, add{3})
+	w := spawn(t, s, genserver.Gen(remoteWatcher{}), gensim.On("a"))
+	s.Cast(w, goNow{})
+	s.RunUntilIdle()
+	log, _ := gensim.State[[]any](s, w)
+	if len(log) != 1 || log[0] != (gen.Response{Tag: "get", Value: 3}) {
+		t.Fatalf("log %#v", log)
+	}
+	s.Partition([]string{"a"}, []string{"b"})
+	s.RunUntilIdle()
+	log, _ = gensim.State[[]any](s, w)
+	if len(log) != 2 || log[1] != (gen.Down{Tag: "counter", PID: c, Reason: proc.NoConnection}) {
+		t.Errorf("log %#v", log)
+	}
+	// Cut apart, both fail at once.
+	s.Cast(w, goNow{})
+	s.RunUntilIdle()
+	log, _ = gensim.State[[]any](s, w)
+	if len(log) != 4 {
+		t.Fatalf("log %#v", log)
+	}
+	for _, m := range log[2:] {
+		switch m := m.(type) {
+		case gen.Response:
+			if !errors.Is(m.Err, proc.NoConnection) {
+				t.Errorf("response %#v", m)
+			}
+		case gen.Down:
+			if m.Reason != proc.NoConnection {
+				t.Errorf("down %#v", m)
+			}
+		}
+	}
+}

@@ -237,7 +237,8 @@ func (r Remote) NodeDown(node string) {
 // watcher.
 type remoteMon struct {
 	ref    Ref
-	target PID
+	target PID // only its node, for a monitor of a name
+	name   string
 	w      watcher
 }
 
@@ -248,12 +249,12 @@ type remoteMonTable struct {
 	m  map[Ref]remoteMon
 }
 
-func (t *remoteMonTable) put(ref Ref, target PID, w watcher) {
+func (t *remoteMonTable) put(m remoteMon) {
 	t.mu.Lock()
 	if t.m == nil {
 		t.m = make(map[Ref]remoteMon)
 	}
-	t.m[ref] = remoteMon{ref, target, w}
+	t.m[m.ref] = m
 	t.mu.Unlock()
 }
 
@@ -285,9 +286,16 @@ func (n *Node) monitorRemote(ref Ref, target PID, w watcher) bool {
 	if d == nil {
 		return false
 	}
-	n.remoteMons.put(ref, target, w)
+	n.remoteMons.put(remoteMon{ref: ref, target: target, w: w})
 	d.Monitor(ref, target)
 	return true
+}
+
+// monitorRemoteName starts a monitor of the process registered as name on
+// node, another, for w.
+func (n *Node) monitorRemoteName(d Distribution, ref Ref, node, name string, w watcher) {
+	n.remoteMons.put(remoteMon{ref: ref, target: PID{node: node}, name: name, w: w})
+	d.MonitorName(ref, node, name)
 }
 
 // MonitorAliasName is MonitorAlias for the process registered as name on
@@ -309,10 +317,8 @@ func (n *Node) MonitorAliasName(node, name string) Alias {
 	ref := n.MakeRef()
 	ch := make(chan AliasMsg, 1)
 	n.aliases.put(ref.id, ch)
-	target := PID{node: node}
-	n.remoteMons.put(ref, target, watcher{alias: true})
-	d.MonitorName(ref, node, name)
-	return Alias{Ref: ref, C: ch, n: n, remote: target, remoteName: name}
+	n.monitorRemoteName(d, ref, node, name, watcher{alias: true})
+	return Alias{Ref: ref, C: ch, n: n, remote: PID{node: node}}
 }
 
 // downAlias returns an alias whose process is already dead with reason.
@@ -322,10 +328,17 @@ func (n *Node) downAlias(reason error) Alias {
 	return Alias{Ref: n.MakeRef(), C: ch, n: n}
 }
 
-// demonitorRemote stops the monitor ref of target, of another node.
+// demonitorRemote stops the monitor ref of target, or of a name on its
+// node, of another node.
 func (n *Node) demonitorRemote(ref Ref, target PID) {
-	if _, ok := n.remoteMons.take(ref); ok {
-		if d := n.remote(target); d != nil {
+	m, ok := n.remoteMons.take(ref)
+	if !ok {
+		return
+	}
+	if d := n.remote(target); d != nil {
+		if m.name != "" {
+			d.DemonitorName(ref, target.node, m.name)
+		} else {
 			d.Demonitor(ref, target)
 		}
 	}

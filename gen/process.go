@@ -80,9 +80,11 @@ func (e procEnv) SendAlias(ref proc.Ref, msg any) {
 
 func (e procEnv) Monitor(pid proc.PID) proc.Ref { return e.self.Monitor(pid) }
 func (e procEnv) Demonitor(ref proc.Ref)        { e.self.Demonitor(ref) }
-func (e procEnv) Link(pid proc.PID)             { e.self.Link(pid) }
-func (e procEnv) Unlink(pid proc.PID)           { e.self.Unlink(pid) }
-func (e procEnv) TrapExit(on bool)              { e.self.TrapExit(on) }
+
+func (e procEnv) MonitorName(node, name string) proc.Ref { return e.self.MonitorName(node, name) }
+func (e procEnv) Link(pid proc.PID)                      { e.self.Link(pid) }
+func (e procEnv) Unlink(pid proc.PID)                    { e.self.Unlink(pid) }
+func (e procEnv) TrapExit(on bool)                       { e.self.TrapExit(on) }
 
 func (e procEnv) SendAfter(d time.Duration, msg any) func() {
 	n, self := e.self.Node(), e.self.PID()
@@ -91,8 +93,16 @@ func (e procEnv) SendAfter(d time.Duration, msg any) func() {
 }
 
 func (e procEnv) Request(pid proc.PID, reply func(proc.Ref, proc.AliasMsg) any) (proc.Ref, func()) {
+	return e.request(e.self.Node().MonitorAlias(pid), reply)
+}
+
+func (e procEnv) RequestName(node, name string, reply func(proc.Ref, proc.AliasMsg) any) (proc.Ref, func()) {
+	return e.request(e.self.Node().MonitorAliasName(node, name), reply)
+}
+
+// request hands what arrives on a to the process, as reply makes it.
+func (e procEnv) request(a proc.Alias, reply func(proc.Ref, proc.AliasMsg) any) (proc.Ref, func()) {
 	n, self, dead := e.self.Node(), e.self.PID(), e.self.Done()
-	a := n.MonitorAlias(pid)
 	released := make(chan struct{})
 	go func() {
 		defer a.Release()

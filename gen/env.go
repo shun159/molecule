@@ -29,6 +29,9 @@ type Env interface {
 	// when it exits. Demonitor removes the monitor and its DownMsg.
 	Monitor(pid proc.PID) proc.Ref
 	Demonitor(ref proc.Ref)
+	// MonitorName monitors the process registered as name on node, as
+	// proc.Self.MonitorName does.
+	MonitorName(node, name string) proc.Ref
 	// Link, Unlink and TrapExit are those of proc.Self.
 	Link(pid proc.PID)
 	Unlink(pid proc.PID)
@@ -40,6 +43,9 @@ type Env interface {
 	// alias and the exit of pid arrives, as reply(ref, m). release
 	// deactivates the alias; nothing arrives after it returns.
 	Request(pid proc.PID, reply func(ref proc.Ref, m proc.AliasMsg) any) (ref proc.Ref, release func())
+	// RequestName is Request for the process registered as name on node,
+	// monitored there, as proc.Node.MonitorAliasName does.
+	RequestName(node, name string, reply func(ref proc.Ref, m proc.AliasMsg) any) (ref proc.Ref, release func())
 	// Logger is where reports go.
 	Logger() *slog.Logger
 }

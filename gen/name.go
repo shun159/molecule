@@ -26,10 +26,8 @@ func (l Local) Register(n *proc.Node, pid proc.PID) error { return n.Register(st
 func (l Local) String() string { return string(l) }
 
 // Remote is a name in the registry of a node, which may be another, like
-// {Name, Node} in Erlang. It is resolved there: calls and casts go to
-// whichever process has the name when they arrive. Monitor and
-// SendRequest effects cannot resolve the name of another node, and fail
-// with proc.NoProc.
+// {Name, Node} in Erlang. It is resolved there: calls, casts, requests and
+// monitors go to whichever process has the name when they arrive.
 type Remote struct {
 	Node string
 	Name string

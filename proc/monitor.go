@@ -97,6 +97,38 @@ func (s *Self) Monitor(target PID) Ref {
 	return ref
 }
 
+// MonitorName monitors the process registered as name on node, which may
+// be another, like erlang:monitor(process, {Name, Node}): the process is
+// the one with the name when the monitor reaches node, and the DownMsg
+// carries its PID. If no process has the name, the DownMsg comes at once,
+// with NoProc. A message sent to name after MonitorName finds the monitor
+// in place.
+func (s *Self) MonitorName(node, name string) Ref {
+	p := s.p
+	if node == p.node.name {
+		if pid, ok := p.node.WhereIs(name); ok {
+			return s.Monitor(pid)
+		}
+		ref := p.node.MakeRef()
+		p.mbox.push(DownMsg{Ref: ref, PID: PID{node: node}, Reason: NoProc})
+		return ref
+	}
+	ref := p.node.MakeRef()
+	d := p.node.distribution()
+	if d == nil {
+		p.mbox.push(DownMsg{Ref: ref, PID: PID{node: node}, Reason: NoConnection})
+		return ref
+	}
+	p.mu.Lock()
+	if !p.dead.Load() {
+		target := PID{node: node}
+		p.watch(ref, target)
+		p.node.monitorRemoteName(d, ref, node, name, watcher{pid: p.pid})
+	}
+	p.mu.Unlock()
+	return ref
+}
+
 // Demonitor stops the monitor ref and removes its DownMsg from the mailbox
 // if one was already queued, like erlang:demonitor(Ref, [flush, info]).
 // It reports whether the monitor was still active, i.e. the target had not

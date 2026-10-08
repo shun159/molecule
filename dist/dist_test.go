@@ -389,3 +389,57 @@ func TestRemoteName(t *testing.T) {
 		t.Errorf("call from b: %v, %v", got, err)
 	}
 }
+
+// observer monitors and requests the counter of b by name, and keeps what
+// comes of it.
+type observer struct{ genserver.Default[[]any] }
+
+type watch struct{}
+
+func (observer) HandleCast(log []any, _ watch) ([]any, []gen.Effect) {
+	counter := gen.Remote{Node: "b@test", Name: "counter"}
+	return log, gen.Do(
+		gen.SendRequest{To: counter, Req: "count", Tag: "count"},
+		gen.Monitor{Target: counter, Tag: "counter"},
+	)
+}
+
+func (observer) HandleInfo(log []any, msg any) ([]any, []gen.Effect) {
+	return append(log[:len(log):len(log)], msg), nil
+}
+
+func TestRemoteNameEffects(t *testing.T) {
+	nodes, _ := cluster(t, "secret", "a@test", "b@test")
+	a, b := nodes[0], nodes[1]
+	ctx := context.Background()
+	c, err := genserver.Start(ctx, b, counter{}, gen.WithName(gen.Local("counter")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cpid, _ := c.Dest().WhereIs(b)
+	c.Cast(b, 7)
+	o, err := genserver.Start(ctx, a, observer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opid, _ := o.Dest().WhereIs(a)
+	o.Cast(a, watch{})
+	log := func() []any {
+		s, _ := gen.GetState(ctx, a, opid)
+		return s.([]any)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for len(log()) < 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := log(); len(got) != 1 || got[0] != (gen.Response{Tag: "count", Value: 7}) {
+		t.Fatalf("log %#v", got)
+	}
+	c.Stop(ctx, b)
+	for len(log()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := log(); len(got) != 2 || got[1] != (gen.Down{Tag: "counter", PID: cpid, Reason: proc.Normal}) {
+		t.Errorf("log %#v", got)
+	}
+}

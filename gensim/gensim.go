@@ -632,6 +632,25 @@ func (e *env) Monitor(pid proc.PID) proc.Ref {
 	return ref
 }
 
+// MonitorName monitors the process with name on node, resolved at once.
+func (e *env) MonitorName(node, name string) proc.Ref {
+	if pid, ok := e.s.resolve(gen.Remote{Node: node, Name: name}); ok {
+		return e.Monitor(pid)
+	}
+	ref := e.p.node.alloc.MakeRef()
+	e.s.deliverLocal(e.p, proc.DownMsg{Ref: ref, Reason: e.s.unknownName(e.p.pid, node)})
+	return ref
+}
+
+// unknownName is the reason a name of node is not found from the process
+// from: the node is unreachable, or nothing has the name.
+func (s *Sim) unknownName(from proc.PID, node string) error {
+	if n := s.nodes[node]; n == nil || !n.up || from.Node() != node && s.cuts[[2]string{from.Node(), node}] {
+		return proc.NoConnection
+	}
+	return proc.NoProc
+}
+
 func (e *env) Demonitor(ref proc.Ref) {
 	if target, ok := e.p.watching[ref]; ok {
 		delete(e.p.watching, ref)
@@ -686,6 +705,16 @@ func (e *env) SendAfter(d time.Duration, msg any) func() {
 
 func (e *env) Request(pid proc.PID, reply func(proc.Ref, proc.AliasMsg) any) (proc.Ref, func()) {
 	ref, _ := e.s.newAlias(e.p.pid, pid, reply)
+	return ref, func() { e.s.releaseAlias(ref) }
+}
+
+// RequestName requests the process with name on node, resolved at once.
+func (e *env) RequestName(node, name string, reply func(proc.Ref, proc.AliasMsg) any) (proc.Ref, func()) {
+	if pid, ok := e.s.resolve(gen.Remote{Node: node, Name: name}); ok {
+		return e.Request(pid, reply)
+	}
+	ref, _ := e.s.newAlias(e.p.pid, e.p.pid, reply) // watching itself: never down
+	e.s.answer(ref, e.p.pid, proc.AliasMsg{Down: true, Reason: e.s.unknownName(e.p.pid, node)})
 	return ref, func() { e.s.releaseAlias(ref) }
 }
 

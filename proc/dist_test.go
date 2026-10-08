@@ -498,3 +498,54 @@ func TestRemoteAliasName(t *testing.T) {
 		t.Errorf("got %#v", m)
 	}
 }
+
+func TestRemoteMonitorName(t *testing.T) {
+	f, nodes := newFakeNet(t, "a", "b")
+	a, b := nodes[0], nodes[1]
+	pa, ca := inbox(a)
+	pb, _ := inbox(b)
+	b.Register("server", pb)
+	boom := errors.New("boom")
+
+	var ref Ref
+	in(a, pa, func(s *Self) { ref = s.MonitorName("b", "server") })
+	eventually(t, func() bool { return len(watchers(b, pb)) == 1 })
+	b.lookup(pb).die(boom)
+	if m := next(t, ca); m != (DownMsg{Ref: ref, PID: pb, Reason: boom}) {
+		t.Errorf("got %#v", m)
+	}
+
+	// No process has the name.
+	in(a, pa, func(s *Self) { ref = s.MonitorName("b", "server") })
+	if m := next(t, ca).(DownMsg); m.Ref != ref || m.Reason != NoProc {
+		t.Errorf("got %#v", m)
+	}
+
+	// Demonitored, the monitor is gone at b; the watcher dying too.
+	pb2, _ := inbox(b)
+	b.Register("server", pb2)
+	in(a, pa, func(s *Self) { s.Demonitor(s.MonitorName("b", "server")) })
+	watcher, _ := inbox(a)
+	in(a, watcher, func(s *Self) { s.MonitorName("b", "server") })
+	eventually(t, func() bool { return len(watchers(b, pb2)) == 1 })
+	a.lookup(watcher).die(boom)
+	eventually(t, func() bool { return len(watchers(b, pb2)) == 0 })
+	nothing(t, ca)
+
+	// The node lost.
+	in(a, pa, func(s *Self) { ref = s.MonitorName("b", "server") })
+	eventually(t, func() bool { return len(watchers(b, pb2)) == 1 })
+	f.disconnect("a", "b")
+	if m := next(t, ca).(DownMsg); m.Ref != ref || m.Reason != NoConnection {
+		t.Errorf("got %#v", m)
+	}
+
+	// On its own node, the name is resolved at once.
+	local, _ := inbox(a)
+	a.Register("local", local)
+	in(a, pa, func(s *Self) { ref = s.MonitorName("a", "local") })
+	a.lookup(local).die(boom)
+	if m := next(t, ca); m != (DownMsg{Ref: ref, PID: local, Reason: boom}) {
+		t.Errorf("got %#v", m)
+	}
+}
