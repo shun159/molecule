@@ -24,22 +24,19 @@ type echo struct {
 // connection supervisor takes the listener, whose acceptors start
 // connections under it.
 func startEcho(ctx context.Context, n *proc.Node, addr string) (*echo, error) {
+	l := &listener{}
 	sup, err := supervisor.Start(ctx, n, supervisor.Spec{
 		Strategy:  supervisor.RestForOne,
 		Intensity: 5,
 		Children: []supervisor.ChildSpec{
 			statsChildSpec("echo_stats"),
 			connsChildSpec("echo_conns"),
-			listenerChildSpec("echo_listener", addr, acceptors),
+			l.childSpec("echo_listener", addr, acceptors),
 		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	a, err := listenerAddr(ctx, n)
-	if err != nil {
-		supervisor.Stop(ctx, n, sup)
-		return nil, err
-	}
-	return &echo{sup: sup, addr: a}, nil
+	// The supervisor started the listener, which has its address then.
+	return &echo{sup: sup, addr: l.Addr()}, nil
 }
