@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/shun159/molecule"
-	"github.com/shun159/molecule/genserver"
+	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/proc"
 )
 

@@ -2,8 +2,8 @@ package main
 
 import (
 	"github.com/shun159/molecule"
-	"github.com/shun159/molecule/genserver"
-	"github.com/shun159/molecule/supervisor"
+	"github.com/shun159/molecule/behaviours/genserver"
+	"github.com/shun159/molecule/behaviours/supervisor"
 )
 
 // EchoStats is a gen_server counting connections and echoed bytes. The

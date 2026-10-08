@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/shun159/molecule"
-	"github.com/shun159/molecule/genserver"
+	"github.com/shun159/molecule/behaviours/genserver"
 )
 
 // PongServer is a gen_server answering pings, registered as pong on each

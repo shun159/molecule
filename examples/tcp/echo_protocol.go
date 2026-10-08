@@ -2,9 +2,9 @@ package main
 
 import (
 	"github.com/shun159/molecule"
-	"github.com/shun159/molecule/genserver"
+	"github.com/shun159/molecule/behaviours/genserver"
+	"github.com/shun159/molecule/behaviours/supervisor"
 	"github.com/shun159/molecule/gentcp"
-	"github.com/shun159/molecule/supervisor"
 )
 
 // EchoProtocol is the gen_server of one connection. It gets its socket

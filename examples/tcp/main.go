@@ -21,8 +21,8 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/shun159/molecule/behaviours/supervisor"
 	"github.com/shun159/molecule/proc"
-	"github.com/shun159/molecule/supervisor"
 )
 
 func main() {

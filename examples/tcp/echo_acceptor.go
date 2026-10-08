@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 
-	"github.com/shun159/molecule/genserver"
+	"github.com/shun159/molecule/behaviours/genserver"
+	"github.com/shun159/molecule/behaviours/supervisor"
 	"github.com/shun159/molecule/gentcp"
 	"github.com/shun159/molecule/proc"
-	"github.com/shun159/molecule/supervisor"
 )
 
 // accept is an acceptor: it accepts a connection, starts an echo_protocol

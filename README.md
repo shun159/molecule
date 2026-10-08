@@ -20,17 +20,17 @@ functions, without starting a process.
 
 ## Packages
 
-    molecule        names, calls, casts and effects: the vocabulary of programs
-    proc            processes, links, monitors, names, synchronous start
-    gen             the runtime of behaviours, for those building them
-    genserver       gen_server
-    genstatem       gen_statem
-    supervisor      supervisors, static and dynamic
-    pg              process groups
-    gentcp          TCP sockets owned by processes, like gen_tcp
-    dist            distribution: processes of several nodes, by PID
-    gentcpacceptor  TCP acceptor pool and connection behaviour
-    gensim          deterministic simulation of behaviours
+    molecule                   names, calls, casts and effects: the vocabulary of programs
+    proc                       processes, links, monitors, names, synchronous start
+    behaviours/genserver       gen_server
+    behaviours/genstatem       gen_statem
+    behaviours/supervisor      supervisors, static and dynamic
+    behaviours/gentcpacceptor  TCP acceptor pool and connection behaviour
+    gen                        the runtime of behaviours, for those building them
+    pg                         process groups
+    gentcp                     TCP sockets owned by processes, like gen_tcp
+    dist                       distribution: processes of several nodes, by PID
+    gensim                     deterministic simulation of behaviours
 
 ## Documentation
 

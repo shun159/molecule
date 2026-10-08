@@ -12,7 +12,7 @@ import (
 	"context"
 
 	"github.com/shun159/molecule"
-	"github.com/shun159/molecule/genstatem"
+	"github.com/shun159/molecule/behaviours/genstatem"
 	"github.com/shun159/molecule/proc"
 )
 

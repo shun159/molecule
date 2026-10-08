@@ -2,7 +2,7 @@ package main
 
 import (
 	"github.com/shun159/molecule"
-	"github.com/shun159/molecule/genserver"
+	"github.com/shun159/molecule/behaviours/genserver"
 )
 
 // CalcServer is a gen_server holding a number. It has a bug, of the kind

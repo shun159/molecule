@@ -5,9 +5,9 @@ import (
 	"net"
 	"sync"
 
+	"github.com/shun159/molecule/behaviours/supervisor"
 	"github.com/shun159/molecule/gentcp"
 	"github.com/shun159/molecule/proc"
-	"github.com/shun159/molecule/supervisor"
 )
 
 // The listener owns the listening socket, and runs the acceptors linked

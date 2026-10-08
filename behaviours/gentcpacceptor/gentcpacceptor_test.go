@@ -14,11 +14,11 @@ import (
 	"time"
 
 	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/behaviours/gentcpacceptor"
+	"github.com/shun159/molecule/behaviours/supervisor"
 	"github.com/shun159/molecule/gentcp"
-	"github.com/shun159/molecule/gentcpacceptor"
 	"github.com/shun159/molecule/internal/testlog"
 	"github.com/shun159/molecule/proc"
-	"github.com/shun159/molecule/supervisor"
 )
 
 // lineHandler answers each line: "crash" panics, "quit" stops normally,

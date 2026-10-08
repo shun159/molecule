@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/shun159/molecule"
-	"github.com/shun159/molecule/genserver"
+	"github.com/shun159/molecule/behaviours/genserver"
+	"github.com/shun159/molecule/behaviours/supervisor"
 	"github.com/shun159/molecule/proc"
-	"github.com/shun159/molecule/supervisor"
 )
 
 func (w *world) startDynamic(spec supervisor.DynamicSpec) proc.PID {

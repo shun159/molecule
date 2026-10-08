@@ -8,10 +8,10 @@ import (
 	"sync"
 
 	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/behaviours/supervisor"
 	"github.com/shun159/molecule/gen"
 	"github.com/shun159/molecule/gentcp"
 	"github.com/shun159/molecule/proc"
-	"github.com/shun159/molecule/supervisor"
 )
 
 // DefaultAcceptors is the number of acceptors when Spec.Acceptors is zero.

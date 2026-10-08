@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/shun159/molecule"
-	"github.com/shun159/molecule/genserver"
+	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/gensim"
 	"github.com/shun159/molecule/pg"
 	"github.com/shun159/molecule/proc"
