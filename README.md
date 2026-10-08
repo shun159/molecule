@@ -37,6 +37,6 @@ The package documentation is available through `go doc`. The `examples`
 directory holds small programs: an echo server, a chat server, a server
 crashing and being restarted, a mailbox under load, the code lock and
 push button of the gen_statem documentation, two nodes pinging each
-other, and Raft, tested in a simulation of partitions and crashes.
+other, and a standby node taking over when its primary goes away.
 
 molecule requires Go 1.27.
