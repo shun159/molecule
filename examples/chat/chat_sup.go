@@ -5,9 +5,9 @@ import (
 
 	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/behaviours/supervisor"
+	"github.com/shun159/molecule/dist/pg"
 	"github.com/shun159/molecule/net/gentcp"
 	"github.com/shun159/molecule/net/gentcpacceptor"
-	"github.com/shun159/molecule/pg"
 	"github.com/shun159/molecule/proc"
 )
 

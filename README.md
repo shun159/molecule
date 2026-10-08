@@ -29,7 +29,7 @@ functions, without starting a process.
     net/gentcp                 TCP sockets owned by processes, like gen_tcp
     net/gentcpacceptor         TCP acceptor pool and connection behaviour
     dist                       distribution: processes of several nodes, by PID
-    pg                         process groups
+    dist/pg                    process groups, shared by the nodes
     gensim                     deterministic simulation of behaviours
 
 ## Documentation
