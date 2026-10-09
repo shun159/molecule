@@ -21,5 +21,7 @@
 // returns why; a temporary one is reported, and the others run on.
 //
 // [Start] and [Running.Stop] do the same for a program doing more than
-// waiting.
+// waiting. [Running.Start] starts more applications once others run, for a
+// program with work of its own to do in between: they stop before those
+// started earlier, as if they had been started with them.
 package application

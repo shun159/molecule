@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -42,8 +43,11 @@ const (
 
 // Running are applications started.
 type Running struct {
-	n    *proc.Node
-	apps []*running
+	n *proc.Node
+
+	mu      sync.Mutex
+	apps    []*running
+	stopped bool // no more are started
 
 	once   sync.Once
 	done   chan struct{}
@@ -68,15 +72,57 @@ type (
 // reverse order, and the error returned.
 func Start(ctx context.Context, n *proc.Node, apps ...App) (*Running, error) {
 	r := &Running{n: n, done: make(chan struct{})}
-	for _, app := range apps {
-		a, err := r.start(ctx, app)
-		if err != nil {
-			r.stopAll(context.Background())
-			return nil, fmt.Errorf("application %s: %w", app.Name, err)
-		}
-		r.apps = append(r.apps, a)
+	if err := r.Start(ctx, apps...); err != nil {
+		r.stopAll(context.Background())
+		return nil, err
 	}
 	return r, nil
+}
+
+// ErrStopped is returned by Running.Start once the applications are
+// stopped, or have ended.
+var ErrStopped = errors.New("application: stopped")
+
+// Start starts more applications, in order, after those running: they
+// stop before them, in reverse order, as if they had been started with
+// them. It is for a program that can start some only once others run and
+// it has done work of its own in between. If one fails to start, those
+// this call started are stopped, in reverse order, and the error returned;
+// those started before run on.
+func (r *Running) Start(ctx context.Context, apps ...App) error {
+	var started []*running
+	for _, app := range apps {
+		r.mu.Lock()
+		closed := r.closed()
+		r.mu.Unlock()
+		var a *running
+		err := ErrStopped
+		if !closed {
+			a, err = r.start(ctx, app)
+		}
+		if err == nil {
+			// Checked again: the applications may have stopped meanwhile.
+			r.mu.Lock()
+			if r.closed() {
+				err = ErrStopped
+			} else {
+				r.apps = append(r.apps, a)
+			}
+			r.mu.Unlock()
+			if err != nil {
+				stopApps(context.Background(), r.n, []*running{a})
+			}
+		}
+		if err != nil {
+			r.mu.Lock()
+			r.apps = slices.DeleteFunc(r.apps, func(a *running) bool { return slices.Contains(started, a) })
+			r.mu.Unlock()
+			stopApps(context.Background(), r.n, started)
+			return fmt.Errorf("application %s: %w", app.Name, err)
+		}
+		started = append(started, a)
+	}
+	return nil
 }
 
 // start starts the master of app, which starts its top, linked to it.
@@ -183,6 +229,8 @@ func (r *Running) Err() error {
 
 // Apps returns the names of the applications, in the order they started.
 func (r *Running) Apps() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	var names []string
 	for _, a := range r.apps {
 		names = append(names, a.app.Name)
@@ -192,6 +240,8 @@ func (r *Running) Apps() []string {
 
 // Top returns the top process of the application name.
 func (r *Running) Top(name string) (proc.PID, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, a := range r.apps {
 		if a.app.Name == name {
 			return a.top, true
@@ -208,10 +258,30 @@ func (r *Running) Stop(ctx context.Context) error {
 }
 
 func (r *Running) stopAll(ctx context.Context) error {
+	r.mu.Lock()
+	r.stopped = true
+	apps := slices.Clone(r.apps)
+	r.mu.Unlock()
+	return stopApps(ctx, r.n, apps)
+}
+
+// closed reports whether no more applications are to start: they are
+// stopped, or one permanent has ended. Called with mu held.
+func (r *Running) closed() bool {
+	select {
+	case <-r.done:
+		return true
+	default:
+		return r.stopped
+	}
+}
+
+// stopApps stops apps, in reverse order.
+func stopApps(ctx context.Context, n *proc.Node, apps []*running) error {
 	var errs []error
-	for i := len(r.apps) - 1; i >= 0; i-- {
-		a := r.apps[i]
-		_, err := molecule.Call(ctx, r.n, a.master, stopApp{})
+	for i := len(apps) - 1; i >= 0; i-- {
+		a := apps[i]
+		_, err := molecule.Call(ctx, n, a.master, stopApp{})
 		var exit *molecule.ExitError
 		if err != nil && !errors.As(err, &exit) { // a master gone has nothing to stop
 			errs = append(errs, fmt.Errorf("application %s: %w", a.app.Name, err))
