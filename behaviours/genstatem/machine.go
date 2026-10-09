@@ -89,6 +89,13 @@ func (a adapter[St, D]) Handle(m Machine[St, D], msg gen.Msg) (Machine[St, D], [
 		}
 		ev = Internal{Msg: x.Msg}
 	case gen.InfoMsg:
+		if ab, ok := x.Msg.(molecule.CallAbandoned); ok {
+			if i := slices.IndexFunc(m.postponed, abandoned(ab.From)); i >= 0 {
+				// Never handled, and now never to be: dropped.
+				m.postponed = slices.Delete(slices.Clone(m.postponed), i, i+1)
+				return m, nil
+			}
+		}
 		f, ok := x.Msg.(fired)
 		if !ok {
 			ev = Info{Msg: x.Msg}
@@ -107,6 +114,14 @@ func (a adapter[St, D]) Handle(m Machine[St, D], msg gen.Msg) (Machine[St, D], [
 		}
 	}
 	return a.run(m, []Event{ev})
+}
+
+// abandoned matches the Call from from.
+func abandoned(from molecule.From) func(Event) bool {
+	return func(ev Event) bool {
+		c, ok := ev.(Call)
+		return ok && c.From == from
+	}
 }
 
 // Label tells what the process is: the genstatem and its behaviour.

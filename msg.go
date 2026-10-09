@@ -29,6 +29,16 @@ type Down struct {
 	Reason error
 }
 
+// CallAbandoned tells a server that the caller of From stopped waiting
+// for its reply, before it came: the context of a Call was done, a
+// Pending was cancelled, a SendRequest timed out, or the caller died. It
+// arrives after the call it abandons. A reply to From goes nowhere; a
+// server working for it may stop. genstatem drops a call it abandons that
+// is still postponed; other behaviours get it as an info message.
+type CallAbandoned struct {
+	From From
+}
+
 // Response is the outcome of a SendRequest effect: the reply, or an error
 // as Call would return it.
 type Response struct {
