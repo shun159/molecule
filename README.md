@@ -18,6 +18,61 @@ next state along with effects: replies, sends, timers, monitors. The runtime
 performs the effects. A behaviour is therefore tested by calling its
 functions, without starting a process.
 
+## Example
+
+A counter, as a gen_server. Its state is the count; a cast adds to it, a
+call returns it.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/behaviours/genserver"
+	"github.com/shun159/molecule/proc"
+)
+
+// Counter counts; its state is the count.
+type Counter struct{ genserver.Default[int] }
+
+type Get struct{}
+type Add struct{ N int }
+
+func (Counter) HandleCall(n int, _ Get, from genserver.From[int]) (int, []molecule.Effect) {
+	return n, molecule.Do(from.Reply(n))
+}
+
+func (Counter) HandleCast(n int, a Add) (int, []molecule.Effect) {
+	return n + a.N, nil
+}
+
+func main() {
+	ctx := context.Background()
+	node := proc.NewNode("")
+	counter, err := genserver.Start(ctx, node, Counter{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	counter.Cast(node, Add{2})
+	counter.Cast(node, Add{3})
+	n, err := counter.Call(ctx, node, Get{})
+	fmt.Println(n, err) // 5 <nil>
+}
+```
+
+`Default` supplies the callbacks the counter does not need, Init among
+them: the count starts at zero. The reply is an effect returned by
+HandleCall, not a call made from it, so the callbacks are tested without a
+process:
+
+```go
+n, effs := Counter{}.HandleCast(2, Add{3}) // 5, no effects
+```
+
 ## Packages
 
     molecule                   names, calls, casts and effects: the vocabulary of programs
