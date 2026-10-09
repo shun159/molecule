@@ -75,9 +75,6 @@ n, effs := Counter{}.HandleCast(2, Add{3}) // 5, no effects
 
 ## Limits
 
-Go is not Erlang, and some of what the BEAM guarantees is left to the
-program here:
-
 - Messages are not copied. A pointer, slice or map sent to another
   process is shared with it; send values, or do not touch what was sent.
   Between nodes, messages are encoded and so copied.
