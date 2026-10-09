@@ -46,3 +46,10 @@ type Response struct {
 	Value any
 	Err   error
 }
+
+// AsyncResult is the outcome of an Async effect: what its Run returned.
+type AsyncResult struct {
+	Key   any
+	Value any
+	Err   error
+}

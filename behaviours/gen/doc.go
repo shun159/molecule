@@ -25,8 +25,9 @@
 // Handle gets a [Msg]: a molecule.CallMsg, a molecule.CastMsg, an
 // [InfoMsg] for any other message, or a [ContinueMsg]. An InfoMsg also
 // carries the outcome of an effect: a molecule.Down for a Monitor, a
-// molecule.Response for a SendRequest, the message of a StartTimer, and a
-// proc.ExitMsg when trapping exits, except the one from the parent.
+// molecule.Response for a SendRequest, the message of a StartTimer, a
+// molecule.AsyncResult for an Async, and a proc.ExitMsg when trapping
+// exits, except the one from the parent.
 //
 // Behaviours built on gen define effects of their own by embedding
 // molecule.Extension, and handle them in their adapter before the runtime

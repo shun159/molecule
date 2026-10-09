@@ -60,6 +60,9 @@
 //	StartTimer   have a message arrive after a time, or at one, under a key
 //	CancelTimer  cancel a timer
 //	SendRequest  call a server without waiting; a Response with a tag arrives
+//	Async        run blocking work in a goroutine; an AsyncResult with a key
+//	             arrives
+//	CancelAsync  cancel an Async
 //	Link         link to a process
 //	Unlink       unlink from a process
 //	TrapExit     trap exit signals, or stop trapping them
