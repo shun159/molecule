@@ -100,6 +100,7 @@ n, effs := Counter{}.HandleCast(2, Add{3}) // 5, no effects
     application                applications: trees started and stopped in order
     net/gentcp                 TCP sockets owned by processes, like gen_tcp
     net/gentcpacceptor         TCP acceptor pool and connection behaviour
+    net/genudp                 UDP sockets owned by processes, like gen_udp
     dist                       distribution: processes of several nodes, by PID
     dist/pg                    process groups, shared by the nodes
     gensim                     deterministic simulation of behaviours
