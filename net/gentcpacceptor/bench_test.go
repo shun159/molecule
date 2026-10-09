@@ -326,7 +326,7 @@ func BenchmarkConnect(b *testing.B) {
 						b.Error(err)
 						return
 					}
-					if _, err := conn.Write(buf); err == nil {
+					if _, err = conn.Write(buf); err == nil {
 						_, err = io.ReadFull(conn, buf)
 					}
 					conn.Close()

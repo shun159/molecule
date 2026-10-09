@@ -219,9 +219,9 @@ func (r *runtime[S]) handle(in Msg) (state S, effs []molecule.Effect, err error)
 func (r *runtime[S]) translate(msg any) (Msg, bool) {
 	switch m := msg.(type) {
 	case molecule.CallMsg, molecule.CastMsg:
-		// Already boxed in msg: asserting reuses it, where converting m
-		// would box it again.
-		return msg.(Msg), true
+		// Already boxed in msg: returning it, not m, spares boxing it
+		// again.
+		return msg, true
 	case timeout:
 		t, ok := r.timers[m.key]
 		if !ok || t.gen != m.gen {

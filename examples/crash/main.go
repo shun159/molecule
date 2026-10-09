@@ -51,6 +51,9 @@ func run(w io.Writer, logger *slog.Logger) error {
 	calc.Cast(n, Add{40})
 	calc.Cast(n, Add{2})
 	v, err := calc.Call(ctx, n, Get{})
+	if err != nil {
+		return err
+	}
 	fmt.Fprintf(w, "value: %d\n", v)
 
 	for i := 1; i <= 3; i++ {

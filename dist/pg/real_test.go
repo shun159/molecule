@@ -26,7 +26,6 @@ func TestOverDist(t *testing.T) {
 	}
 	var nodes []*proc.Node
 	var dists []*dist.Dist
-	var members []proc.PID
 	for _, name := range []string{"a@test", "b@test"} {
 		n := proc.NewNode(name)
 		d, err := dist.Start(n, dist.Config{Listen: "127.0.0.1:0", Cookie: "c", Resolve: resolve})
@@ -47,7 +46,7 @@ func TestOverDist(t *testing.T) {
 		if err := pg.Join(ctx, n, molecule.Local("pg"), "g", m); err != nil {
 			t.Fatal(err)
 		}
-		nodes, dists, members = append(nodes, n), append(dists, d), append(members, m)
+		nodes, dists = append(nodes, n), append(dists, d)
 	}
 	count := func(n *proc.Node) int {
 		pids, err := pg.Members(ctx, n, molecule.Local("pg"), "g")
