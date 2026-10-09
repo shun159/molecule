@@ -1,0 +1,21 @@
+# Binaries of go build, and test binaries of go test -c
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+/bin/
+
+# Profiles and coverage
+*.out
+*.prof
+
+# Local workspaces
+go.work
+go.work.sum
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
