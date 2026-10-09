@@ -1,5 +1,7 @@
 # molecule
 
+[![CI](https://github.com/shun159/molecule/actions/workflows/ci.yml/badge.svg)](https://github.com/shun159/molecule/actions/workflows/ci.yml)
+
 molecule is a library for writing Go programs the way Erlang/OTP programs
 are written: processes with mailboxes, links and monitors, behaviours, and
 supervisors.
