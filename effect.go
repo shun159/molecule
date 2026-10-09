@@ -1,6 +1,7 @@
 package molecule
 
 import (
+	"context"
 	"time"
 
 	"github.com/shun159/molecule/proc"
@@ -90,6 +91,26 @@ type SendRequest struct {
 	Timeout time.Duration
 }
 
+// Async runs Run in a goroutine of its own, for work that blocks -- I/O,
+// a call into code outside the processes -- which the callbacks of a
+// behaviour must not do, like a Task of Elixir. Its outcome arrives as an
+// AsyncResult with Key.
+//
+// Run's ctx is done when the async is cancelled: by CancelAsync, by another
+// started under the same Key, or by the behaviour terminating; its outcome
+// is then not delivered, even if Run returned first. A panic in Run is its
+// error, a *proc.PanicError, rather than the end of the program.
+type Async struct {
+	Key any
+	Run func(ctx context.Context) (any, error)
+}
+
+// CancelAsync cancels the async under Key: its ctx is done, and its outcome
+// does not arrive.
+type CancelAsync struct {
+	Key any
+}
+
 // Link links the process with PID.
 type Link struct {
 	PID proc.PID
@@ -144,3 +165,5 @@ func (Unlink) effect()       {}
 func (TrapExit) effect()     {}
 func (MonitorNodes) effect() {}
 func (Exit) effect()         {}
+func (Async) effect()        {}
+func (CancelAsync) effect()  {}

@@ -25,6 +25,13 @@ type (
 	}
 	// requestTimeout ends a SendRequest still waiting.
 	requestTimeout struct{ ref proc.Ref }
+	// asyncDone is the outcome of an Async.
+	asyncDone struct {
+		key   any
+		gen   uint64
+		value any
+		err   error
+	}
 )
 
 // runtime runs a Behaviour and performs its effects through an Env. It
@@ -38,6 +45,8 @@ type runtime[S any] struct {
 	tags     map[proc.Ref]any // ref -> tag
 	timers   map[any]timer    // key -> timer
 	timerGen uint64
+	asyncs   map[any]async // key -> async running
+	asyncGen uint64
 	requests map[proc.Ref]request
 
 	stopping   bool
@@ -58,6 +67,11 @@ type timer struct {
 	msg    any
 }
 
+type async struct {
+	cancel func()
+	gen    uint64
+}
+
 // request is a SendRequest waiting for its answer.
 type request struct {
 	tag     any
@@ -73,6 +87,7 @@ func newRuntime[S any](b Behaviour[S], env Env) *runtime[S] {
 		monitors: make(map[any]proc.Ref),
 		tags:     make(map[proc.Ref]any),
 		timers:   make(map[any]timer),
+		asyncs:   make(map[any]async),
 		requests: make(map[proc.Ref]request),
 	}
 }
@@ -229,6 +244,13 @@ func (r *runtime[S]) translate(msg any) (Msg, bool) {
 		}
 		delete(r.timers, m.key)
 		return InfoMsg{Msg: t.msg}, true
+	case asyncDone:
+		a, ok := r.asyncs[m.key]
+		if !ok || a.gen != m.gen {
+			return nil, false // cancelled, or replaced
+		}
+		delete(r.asyncs, m.key)
+		return InfoMsg{Msg: molecule.AsyncResult{Key: m.key, Value: m.value, Err: m.err}}, true
 	case answer:
 		req, ok := r.requests[m.ref]
 		if !ok {
@@ -283,6 +305,9 @@ func (r *runtime[S]) terminate(state S, reason error) (exit error) {
 func (r *runtime[S]) Abort() {
 	for key := range r.timers {
 		r.cancelTimer(key)
+	}
+	for key := range r.asyncs {
+		r.cancelAsync(key)
 	}
 	for ref, req := range r.requests {
 		r.endRequest(ref, req)
@@ -371,6 +396,10 @@ func (r *runtime[S]) apply(effs []molecule.Effect) {
 			r.cancelTimer(e.Key)
 		case molecule.SendRequest:
 			r.sendRequest(e)
+		case molecule.Async:
+			r.startAsync(e)
+		case molecule.CancelAsync:
+			r.cancelAsync(e.Key)
 		case molecule.Link:
 			r.env.Link(e.PID)
 		case molecule.Unlink:
@@ -441,6 +470,23 @@ func (r *runtime[S]) cancelTimer(key any) {
 	if t, ok := r.timers[key]; ok {
 		t.cancel()
 		delete(r.timers, key)
+	}
+}
+
+func (r *runtime[S]) startAsync(e molecule.Async) {
+	r.cancelAsync(e.Key)
+	r.asyncGen++
+	key, gen := e.Key, r.asyncGen
+	cancel := r.env.Async(e.Run, func(v any, err error) any {
+		return asyncDone{key: key, gen: gen, value: v, err: err}
+	})
+	r.asyncs[e.Key] = async{cancel: cancel, gen: gen}
+}
+
+func (r *runtime[S]) cancelAsync(key any) {
+	if a, ok := r.asyncs[key]; ok {
+		a.cancel()
+		delete(r.asyncs, key)
 	}
 }
 

@@ -28,6 +28,14 @@
 // next timer fires, and the clock moves to it. Call lets time pass while
 // it waits, up to CallTimeout; Advance makes it pass.
 //
+// # Asyncs
+//
+// A molecule.Async runs at once, to completion, at the step performing it,
+// in the goroutine of the simulation; its AsyncResult is then in flight,
+// as a message from the process to itself, delivered at a step the seed
+// chooses. A Run blocking on the world blocks the simulation: in a test, it
+// is a fake.
+//
 // # Faults
 //
 // Exit sends an exit signal to a process, proc.Kill killing it. Links,

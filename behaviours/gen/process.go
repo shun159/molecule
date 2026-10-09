@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -101,6 +102,29 @@ func (e procEnv) SendAfter(d time.Duration, msg any) func() {
 	n, self := e.self.Node(), e.self.PID()
 	t := time.AfterFunc(d, func() { n.Send(self, msg) })
 	return func() { t.Stop() }
+}
+
+// Async runs run in a goroutine, its ctx done with the process too.
+func (e procEnv) Async(run func(context.Context) (any, error), done func(any, error) any) func() {
+	n, self := e.self.Node(), e.self.PID()
+	ctx, cancel := context.WithCancel(e.self.Context())
+	go func() {
+		v, err := RunAsync(ctx, run)
+		if ctx.Err() == nil {
+			n.Send(self, done(v, err))
+		}
+	}()
+	return cancel
+}
+
+// RunAsync runs run with ctx, its panic its error, for Envs.
+func RunAsync(ctx context.Context, run func(context.Context) (any, error)) (v any, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			v, err = nil, &proc.PanicError{Value: p, Stack: debug.Stack()}
+		}
+	}()
+	return run(ctx)
 }
 
 func (e procEnv) Request(pid proc.PID, reply func(proc.Ref, proc.AliasMsg) any) (proc.Ref, func()) {

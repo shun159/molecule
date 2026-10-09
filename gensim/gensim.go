@@ -854,6 +854,15 @@ func (e *env) SendAfter(d time.Duration, msg any) func() {
 	return func() { t.cancelled = true }
 }
 
+// Async runs run at once, to completion, and sends its outcome to the
+// process, in flight as any message: see the package doc.
+func (e *env) Async(run func(context.Context) (any, error), done func(any, error) any) func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	v, err := gen.RunAsync(ctx, run)
+	e.s.send(e.p.pid, e.p.pid, done(v, err))
+	return cancel
+}
+
 func (e *env) Request(pid proc.PID, reply func(proc.Ref, proc.AliasMsg) any) (proc.Ref, func()) {
 	ref, _ := e.s.newAlias(e.p.pid, pid, reply)
 	return ref, func() { e.s.releaseAlias(ref) }

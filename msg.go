@@ -29,6 +29,13 @@ type Down struct {
 	Reason error
 }
 
+// AsyncResult is the outcome of an Async effect: what its Run returned.
+type AsyncResult struct {
+	Key   any
+	Value any
+	Err   error
+}
+
 // Response is the outcome of a SendRequest effect: the reply, or an error
 // as Call would return it.
 type Response struct {
