@@ -36,6 +36,10 @@
 // not exist is dropped. [Request] calls without waiting for the reply,
 // which a [Pending] holds when it comes.
 //
+// A caller that stops waiting before the reply, its context done or itself
+// dead, tells the server with a [CallAbandoned], as do a Pending cancelled
+// and a SendRequest timing out: a server working for a caller may stop.
+//
 // The server gets a [CallMsg] carrying a [From], and replies with the
 // [Reply] effect, or [SendReply] outside behaviours. From is plain data: the
 // PID of the caller and the reference of the alias the reply goes to. Only

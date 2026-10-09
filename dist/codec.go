@@ -50,6 +50,7 @@ func init() {
 	gob.Register(proc.Ref{})
 	gob.Register(molecule.CallMsg{})
 	gob.Register(molecule.CastMsg{})
+	gob.Register(molecule.CallAbandoned{})
 }
 
 // gobCodec is the default Codec, of encoding/gob.

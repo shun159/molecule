@@ -37,32 +37,41 @@ func (e *ExitError) Unwrap() error { return e.Reason }
 // and ctx.Err() if ctx is done first. A caller that is a process stops
 // waiting as soon as it dies itself. A reply sent before the server died
 // is still returned.
+//
+// A caller that stops waiting before the reply -- ctx done, or the caller
+// dead -- tells the server so with a CallAbandoned.
 func Call(ctx context.Context, caller Caller, to Dest, req any) (any, error) {
-	return call(ctx, caller, to, func(f From) any { return CallMsg{From: f, Req: req} })
+	return call(ctx, caller, to, func(f From) any { return CallMsg{From: f, Req: req} }, true)
 }
 
 // CallWith is Call with the message wrap makes of the From, for the
 // runtimes of behaviours with messages of their own, as the system
 // messages of gen, like the label of gen:call in Erlang.
 func CallWith(ctx context.Context, caller Caller, to Dest, wrap func(From) any) (any, error) {
-	return call(ctx, caller, to, wrap)
+	return call(ctx, caller, to, wrap, false)
 }
 
-// call makes a synchronous request; wrap builds the message to send.
-func call(ctx context.Context, caller Caller, to Dest, wrap func(From) any) (any, error) {
-	a, err := sendCall(caller, to, wrap)
+// call makes a synchronous request; wrap builds the message to send. With
+// tell, giving up tells the server.
+func call(ctx context.Context, caller Caller, to Dest, wrap func(From) any, tell bool) (any, error) {
+	a, abandon, err := sendCall(caller, to, wrap)
 	if err != nil {
 		return nil, err
 	}
 	defer a.Release()
 	d, _ := caller.(dying)
-	return awaitReply(ctx, d, to, a.C)
+	v, gaveUp, err := awaitReply(ctx, d, to, a.C)
+	if gaveUp && tell {
+		abandon()
+	}
+	return v, err
 }
 
 // sendCall sends a request, and returns the alias its reply arrives on,
 // or the death of the server: the server is monitored, by the alias,
-// before the request is sent.
-func sendCall(caller Caller, to Dest, wrap func(From) any) (proc.Alias, error) {
+// before the request is sent. abandon tells the server the caller gave
+// up.
+func sendCall(caller Caller, to Dest, wrap func(From) any) (a proc.Alias, abandon func(), err error) {
 	n := caller.Node()
 	var self proc.PID
 	if p, ok := caller.(interface{ PID() proc.PID }); ok {
@@ -71,19 +80,21 @@ func sendCall(caller Caller, to Dest, wrap func(From) any) (proc.Alias, error) {
 	if r, ok := to.(Remote); ok && r.Node != n.Name() {
 		// The name is resolved there, and monitored there first.
 		a := n.MonitorAliasName(r.Node, r.Name)
-		n.SendName(r.Node, r.Name, wrap(From{PID: self, Tag: a.Ref}))
-		return a, nil
+		from := From{PID: self, Tag: a.Ref}
+		n.SendName(r.Node, r.Name, wrap(from))
+		return a, func() { n.SendName(r.Node, r.Name, CallAbandoned{From: from}) }, nil
 	}
 	pid, ok := to.WhereIs(n)
 	if !ok {
-		return proc.Alias{}, &ExitError{To: to, Reason: proc.NoProc}
+		return proc.Alias{}, nil, &ExitError{To: to, Reason: proc.NoProc}
 	}
 	if !self.IsZero() && self == pid {
-		return proc.Alias{}, ErrCallingSelf
+		return proc.Alias{}, nil, ErrCallingSelf
 	}
-	a := n.MonitorAlias(pid)
-	n.Send(pid, wrap(From{PID: self, Tag: a.Ref}))
-	return a, nil
+	a = n.MonitorAlias(pid)
+	from := From{PID: self, Tag: a.Ref}
+	n.Send(pid, wrap(from))
+	return a, func() { n.Send(pid, CallAbandoned{From: from}) }, nil
 }
 
 // dying is a caller that may die while it waits: a process.
@@ -93,8 +104,9 @@ type dying interface {
 }
 
 // awaitReply waits for the reply or the death of the server, both arriving
-// on c, for ctx, or for the death of the caller, whichever comes first.
-func awaitReply(ctx context.Context, caller dying, to Dest, c <-chan proc.AliasMsg) (any, error) {
+// on c, for ctx, or for the death of the caller, whichever comes first. It
+// reports whether the caller gave up: ctx or the caller done first.
+func awaitReply(ctx context.Context, caller dying, to Dest, c <-chan proc.AliasMsg) (v any, gaveUp bool, err error) {
 	var callerDone <-chan struct{}
 	if caller != nil {
 		callerDone = caller.Done()
@@ -102,13 +114,13 @@ func awaitReply(ctx context.Context, caller dying, to Dest, c <-chan proc.AliasM
 	select {
 	case m := <-c:
 		if m.Down {
-			return nil, &ExitError{To: to, Reason: m.Reason}
+			return nil, false, &ExitError{To: to, Reason: m.Reason}
 		}
-		return m.Msg, nil
+		return m.Msg, false, nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, true, ctx.Err()
 	case <-callerDone:
-		return nil, caller.ExitReason()
+		return nil, true, caller.ExitReason()
 	}
 }
 

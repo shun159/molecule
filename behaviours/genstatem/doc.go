@@ -65,6 +65,11 @@
 // inserted with NextEvent is handled next, before anything in the mailbox;
 // several are handled in the order returned.
 //
+// A Call whose caller stops waiting -- see molecule.CallAbandoned -- is
+// dropped if still postponed, never to be handled. Otherwise the
+// CallAbandoned arrives as Info, for a machine working for that caller to
+// stop.
+//
 // On a state change, the state timeout is cancelled, then the actions of the
 // transition run; a state timeout they start is one of the new state. The
 // events then come in this order: the state enter call, the inserted

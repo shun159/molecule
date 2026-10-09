@@ -296,7 +296,8 @@ func (s *Sim) Cast(to molecule.Dest, req any) { s.Send(to, molecule.CastMsg{Req:
 
 // Call calls the server at to and runs the simulation until the reply
 // arrives, as molecule.Call does. Time passes, timers firing, while it waits,
-// up to CallTimeout, after which Call returns context.DeadlineExceeded.
+// up to CallTimeout, after which Call returns context.DeadlineExceeded, the
+// server told with a molecule.CallAbandoned, as molecule.Call does.
 func (s *Sim) Call(to molecule.Dest, req any) (any, error) {
 	pid, ok := s.resolve(to)
 	if !ok {
@@ -313,6 +314,7 @@ func (s *Sim) Call(to molecule.Dest, req any) (any, error) {
 		if !s.fireTimer(deadline) {
 			s.releaseAlias(ref)
 			s.now = deadline
+			s.send(proc.PID{}, pid, molecule.CallAbandoned{From: molecule.From{Tag: ref}})
 			return nil, context.DeadlineExceeded
 		}
 	}

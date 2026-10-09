@@ -246,6 +246,7 @@ func (r *runtime[S]) translate(msg any) (Msg, bool) {
 			return nil, false // answered already
 		}
 		r.endRequest(m.ref, req)
+		r.abandon(req.to, m.ref)
 		return InfoMsg{Msg: molecule.Response{Tag: req.tag, Err: context.DeadlineExceeded}}, true
 	case responseMsg:
 		return InfoMsg{Msg: m.Response}, true
@@ -473,6 +474,17 @@ func (r *runtime[S]) request(e molecule.SendRequest, ref proc.Ref, release func(
 		req.cancel = r.env.SendAfter(e.Timeout, requestTimeout{ref: ref})
 	}
 	r.requests[ref] = req
+}
+
+// abandon tells the server at to that the request made under ref is given
+// up on, as molecule.Call does.
+func (r *runtime[S]) abandon(to molecule.Dest, ref proc.Ref) {
+	msg := molecule.CallAbandoned{From: molecule.From{PID: r.env.Self(), Tag: ref}}
+	if rem, ok := to.(molecule.Remote); ok && rem.Node != r.env.Self().Node() {
+		r.env.SendName(rem.Node, rem.Name, msg)
+	} else if pid, ok := r.env.Resolve(to); ok {
+		r.env.Send(pid, msg)
+	}
 }
 
 func (r *runtime[S]) endRequest(ref proc.Ref, req request) {

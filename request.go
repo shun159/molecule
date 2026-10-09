@@ -43,7 +43,7 @@ var ErrCancelled = errors.New("molecule: request cancelled")
 // and genstatem call it with the type of the reply.
 func Request[Rep any](caller Caller, to Dest, req any) *Pending[Rep] {
 	p := &Pending[Rep]{done: make(chan struct{}), cancel: make(chan struct{})}
-	a, err := sendCall(caller, to, func(f From) any { return CallMsg{From: f, Req: req} })
+	a, abandon, err := sendCall(caller, to, func(f From) any { return CallMsg{From: f, Req: req} })
 	if err != nil {
 		p.err = err
 		close(p.done)
@@ -71,8 +71,10 @@ func Request[Rep any](caller Caller, to Dest, req any) *Pending[Rep] {
 			}
 		case <-p.cancel:
 			p.err = ErrCancelled
+			abandon()
 		case <-callerDone:
 			p.err = d.ExitReason()
+			abandon()
 		}
 	}()
 	return p
@@ -105,8 +107,9 @@ func (p *Pending[Rep]) Wait(ctx context.Context) (Rep, error) {
 	}
 }
 
-// Cancel abandons the request: the reply, should it come, is dropped, and
-// the outcome is ErrCancelled, unless it was there already.
+// Cancel abandons the request: the reply, should it come, is dropped, the
+// server is told with a CallAbandoned, and the outcome is ErrCancelled --
+// unless the outcome was there already.
 func (p *Pending[Rep]) Cancel() {
 	p.once.Do(func() { close(p.cancel) })
 	<-p.done
