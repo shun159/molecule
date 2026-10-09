@@ -227,3 +227,66 @@ func TestRun(t *testing.T) {
 		t.Errorf("events %v", got)
 	}
 }
+
+// Applications started later stop before those started earlier.
+func TestStartLater(t *testing.T) {
+	n := proc.NewNode("")
+	var log events
+	r, err := application.Start(context.Background(), n, app("one", &log, "a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	log.add("work in between")
+	if err := r.Start(context.Background(), app("two", &log, "b"), app("three", &log, "c")); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Apps(); !slices.Equal(got, []string{"one", "two", "three"}) {
+		t.Errorf("Apps %v", got)
+	}
+	if err := r.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"start a", "work in between", "start b", "start c", "stop c", "stop b", "stop a"}
+	if got := log.get(); !slices.Equal(got, want) {
+		t.Errorf("events %v, want %v", got, want)
+	}
+}
+
+// A later start failing stops what it started, and leaves the others.
+func TestStartLaterFails(t *testing.T) {
+	n := proc.NewNode("")
+	var log events
+	r, err := application.Start(context.Background(), n, app("one", &log, "a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop(context.Background())
+	bad := application.App{Name: "bad", Start: supervisor.StartFunc(func(context.Context, *proc.Self) (proc.PID, error) {
+		return proc.PID{}, errors.New("no")
+	})}
+	if err := r.Start(context.Background(), app("two", &log, "b"), bad); err == nil || !strings.Contains(err.Error(), "application bad") {
+		t.Fatalf("Start: %v", err)
+	}
+	if got := log.get(); !slices.Equal(got, []string{"start a", "start b", "stop b"}) {
+		t.Errorf("events %v", got)
+	}
+	if got := r.Apps(); !slices.Equal(got, []string{"one"}) {
+		t.Errorf("Apps %v", got)
+	}
+}
+
+func TestStartAfterStop(t *testing.T) {
+	n := proc.NewNode("")
+	var log events
+	r, err := application.Start(context.Background(), n, app("one", &log, "a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Stop(context.Background())
+	if err := r.Start(context.Background(), app("two", &log, "b")); !errors.Is(err, application.ErrStopped) {
+		t.Fatalf("Start after Stop: %v", err)
+	}
+	if got := log.get(); !slices.Equal(got, []string{"start a", "stop a"}) {
+		t.Errorf("events %v", got)
+	}
+}
