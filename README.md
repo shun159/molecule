@@ -73,6 +73,22 @@ process:
 n, effs := Counter{}.HandleCast(2, Add{3}) // 5, no effects
 ```
 
+## Limits
+
+Go is not Erlang, and some of what the BEAM guarantees is left to the
+program here:
+
+- Messages are not copied. A pointer, slice or map sent to another
+  process is shared with it; send values, or do not touch what was sent.
+  Between nodes, messages are encoded and so copied.
+- Nothing stops a process from sharing memory through other means, such
+  as goroutines, channels or mutexes of its own.
+- A process cannot be stopped from outside. Killed, it is dead at once to
+  the others, but its goroutine runs until it next receives; a process in
+  a loop that never receives runs on.
+- A panic in a goroutine that is not a process ends the whole program.
+- Processes share one heap; there is no limit on the memory of one.
+
 ## Packages
 
     molecule                   names, calls, casts and effects: the vocabulary of programs
