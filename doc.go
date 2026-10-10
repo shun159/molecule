@@ -80,5 +80,6 @@
 // An error from Init fails the start, and the process exits with it; with
 // [ErrIgnore], the start fails but the process exits normally. A start
 // with a name taken fails with an [*AlreadyStartedError]. A behaviour
-// implementing [StatusFormatter] formats the report of its terminating.
+// implementing [StatusFormatter] formats the report of its terminating; one
+// implementing [Clocked] is given the clock of its process.
 package molecule

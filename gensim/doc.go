@@ -26,7 +26,8 @@
 //
 // Time is virtual and passes only when nothing else can happen: then the
 // next timer fires, and the clock moves to it. Call lets time pass while
-// it waits, up to CallTimeout; Advance makes it pass.
+// it waits, up to CallTimeout; Advance makes it pass. A molecule.Clocked
+// behaviour reads this clock, Now, rather than time.Now.
 //
 // # Asyncs
 //

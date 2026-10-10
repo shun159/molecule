@@ -115,6 +115,13 @@ func (r *runtime[S]) init(args any) (state S, effs []molecule.Effect, err error)
 			err = &proc.PanicError{Value: v, Stack: debug.Stack()}
 		}
 	}()
+	if c, ok := any(r.b).(molecule.Clocked); ok {
+		b, ok := c.WithClock(r.env.Now).(Behaviour[S])
+		if !ok {
+			return state, nil, fmt.Errorf("gen: WithClock of %T returned another type of behaviour", r.b)
+		}
+		r.b = b
+	}
 	return r.b.Init(r.env.Self(), args)
 }
 

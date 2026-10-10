@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"time"
 
 	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/behaviours/gen"
@@ -47,6 +48,19 @@ type (
 type adapter[St comparable, D any] struct {
 	b     Behaviour[St, D]
 	enter bool
+}
+
+// WithClock gives the clock to the behaviour, if it is molecule.Clocked.
+func (a adapter[St, D]) WithClock(now func() time.Time) any {
+	c, ok := a.b.(molecule.Clocked)
+	if !ok {
+		return a
+	}
+	b, ok := c.WithClock(now).(Behaviour[St, D])
+	if !ok {
+		return nil // the runtime fails the start
+	}
+	return newAdapter(b)
 }
 
 func newAdapter[St comparable, D any](b Behaviour[St, D]) adapter[St, D] {

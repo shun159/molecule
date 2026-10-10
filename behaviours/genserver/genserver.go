@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/behaviours/gen"
@@ -184,6 +185,19 @@ func Gen[S, Req, Rep, Cast any](b Behaviour[S, Req, Rep, Cast]) gen.Behaviour[S]
 // adapter turns a Behaviour into a gen.Behaviour.
 type adapter[S, Req, Rep, Cast any] struct {
 	b Behaviour[S, Req, Rep, Cast]
+}
+
+// WithClock gives the clock to the behaviour, if it is molecule.Clocked.
+func (a adapter[S, Req, Rep, Cast]) WithClock(now func() time.Time) any {
+	c, ok := a.b.(molecule.Clocked)
+	if !ok {
+		return a
+	}
+	b, ok := c.WithClock(now).(Behaviour[S, Req, Rep, Cast])
+	if !ok {
+		return nil // the runtime fails the start
+	}
+	return adapter[S, Req, Rep, Cast]{b}
 }
 
 func (a adapter[S, Req, Rep, Cast]) Init(self proc.PID, _ any) (S, []molecule.Effect, error) {

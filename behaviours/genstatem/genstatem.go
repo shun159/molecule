@@ -12,7 +12,8 @@ import (
 
 // Behaviour is a state machine with states St and data D.
 //
-// A Behaviour may also implement StateEnterer and Terminator.
+// A Behaviour may also implement StateEnterer and Terminator, and
+// molecule.Clocked, to be given the clock of its process.
 type Behaviour[St comparable, D any] interface {
 	// Init returns the initial state and data. self is the PID of the
 	// machine. Its effects may hold actions: timeouts to start, events to

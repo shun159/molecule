@@ -462,3 +462,31 @@ func TestFormatStatus(t *testing.T) {
 		}
 	}
 }
+
+// clocked answers with the time of the clock it is given.
+type clocked struct {
+	genserver.Default[struct{}]
+	now func() time.Time
+}
+
+func (c clocked) WithClock(now func() time.Time) any { c.now = now; return c }
+
+func (c clocked) HandleCall(st struct{}, _ struct{}, from genserver.From[time.Time]) (struct{}, []molecule.Effect) {
+	return st, molecule.Do(from.Reply(c.now()))
+}
+
+// A Clocked server in a process reads the time.
+func TestClocked(t *testing.T) {
+	n := proc.NewNode("")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := genserver.Start(ctx, n, clocked{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now()
+	got, err := c.Call(ctx, n, struct{}{})
+	if err != nil || got.Before(before) || got.After(time.Now()) {
+		t.Errorf("%v, %v: want the time", got, err)
+	}
+}

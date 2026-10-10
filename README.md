@@ -19,7 +19,9 @@ restart intensity.
 Behaviours are pure. A callback gets the state and a message and returns the
 next state along with effects: replies, sends, timers, monitors. The runtime
 performs the effects. A behaviour is therefore tested by calling its
-functions, without starting a process.
+functions, without starting a process. One that reads the clock is given it
+(`molecule.Clocked`): the real one in a process, a virtual one in a gensim
+simulation.
 
 ## Example
 

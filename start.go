@@ -3,6 +3,7 @@ package molecule
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/shun159/molecule/proc"
 )
@@ -21,6 +22,26 @@ type Status struct {
 // value. The state the behaviour runs with is not changed.
 type StatusFormatter interface {
 	FormatStatus(Status) Status
+}
+
+// Clocked is a Behaviour that reads the clock: the time a callback is
+// handling an event at, to compare against a deadline or to stamp an entry
+// of its state. Before its Init, the runtime gives it the clock of its
+// process -- time.Now in a process, the virtual clock in gensim, so that a
+// simulation runs on simulated time -- and runs the behaviour WithClock
+// returns, which must be of the same Behaviour type, in its place.
+//
+//	type Cache struct {
+//		genserver.Default[entries]
+//		now func() time.Time
+//	}
+//
+//	func (c Cache) WithClock(now func() time.Time) any { c.now = now; return c }
+//
+// The clock is read, as in Erlang a callback reads erlang:monotonic_time:
+// waiting, rather, is a timer's, StartTimer's At an absolute time.
+type Clocked interface {
+	WithClock(now func() time.Time) any
 }
 
 // ErrIgnore, returned by Init, makes Start return it without the process
