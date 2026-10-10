@@ -101,6 +101,7 @@ n, effs := Counter{}.HandleCast(2, Add{3}) // 5, no effects
     net/gentcp                 TCP sockets owned by processes, like gen_tcp
     net/gentcpacceptor         TCP acceptor pool and connection behaviour
     net/genudp                 UDP sockets owned by processes, like gen_udp
+    net/genraw                 raw sockets owned by processes: AF_PACKET, raw ICMPv6, any datagram socket
     dist                       distribution: processes of several nodes, by PID
     dist/pg                    process groups, shared by the nodes
     gensim                     deterministic simulation of behaviours
