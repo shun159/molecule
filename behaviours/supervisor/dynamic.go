@@ -52,10 +52,7 @@ func DynamicChild(spec DynamicSpec) gen.Child {
 }
 
 func dynamicOf(spec DynamicSpec) sup {
-	b := sup{dynamic: true, max: spec.Intensity, period: spec.Period, maxChildren: spec.MaxChildren}
-	if b.max <= 0 {
-		b.max = DefaultIntensity
-	}
+	b := sup{dynamic: true, max: intensity(spec.Intensity), period: spec.Period, maxChildren: spec.MaxChildren}
 	if b.period <= 0 {
 		b.period = DefaultPeriod
 	}

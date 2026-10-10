@@ -28,7 +28,7 @@
 //
 //	Name       registered when the supervisor starts
 //	Strategy   OneForOne, OneForAll or RestForOne
-//	Intensity  restarts allowed within Period; 1 if zero
+//	Intensity  restarts allowed within Period; 1 if zero, none if NoRestarts
 //	Period     5 seconds if zero
 //
 // # Restart strategies

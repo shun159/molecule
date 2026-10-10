@@ -27,6 +27,11 @@ const (
 	DefaultShutdown  = 5 * time.Second
 )
 
+// NoRestarts, as an Intensity, allows no restart, as intensity 0 does in
+// OTP: the first child to need one makes the supervisor give up, exiting
+// with ErrMaxIntensity. (A zero Intensity is DefaultIntensity.)
+const NoRestarts = -1
+
 // ChildType tells workers from supervisors, which changes the default
 // Shutdown.
 type ChildType int
@@ -81,7 +86,8 @@ type Spec struct {
 	Strategy Strategy
 	// If more than Intensity restarts happen within Period, the
 	// supervisor terminates its children and exits with ErrMaxIntensity.
-	// Zero values mean DefaultIntensity and DefaultPeriod.
+	// Zero values mean DefaultIntensity and DefaultPeriod; NoRestarts
+	// allows none.
 	Intensity int
 	Period    time.Duration
 	// Children are started in order, and stopped in reverse order.
@@ -142,14 +148,22 @@ func Child(spec Spec) gen.Child {
 }
 
 func static(spec Spec) sup {
-	b := sup{strategy: spec.Strategy, max: spec.Intensity, period: spec.Period, specs: spec.Children}
-	if b.max <= 0 {
-		b.max = DefaultIntensity
-	}
+	b := sup{strategy: spec.Strategy, max: intensity(spec.Intensity), period: spec.Period, specs: spec.Children}
 	if b.period <= 0 {
 		b.period = DefaultPeriod
 	}
 	return b
+}
+
+// intensity is the number of restarts an Intensity allows within a period.
+func intensity(i int) int {
+	switch {
+	case i == 0:
+		return DefaultIntensity
+	case i < 0:
+		return 0 // NoRestarts
+	}
+	return i
 }
 
 func nameOption(name molecule.Name) []molecule.Option {
