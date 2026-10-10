@@ -5,10 +5,9 @@ import (
 	"errors"
 	"net"
 	"net/netip"
-	"time"
 
 	"github.com/shun159/molecule"
-	"github.com/shun159/molecule/behaviours/gen"
+	"github.com/shun159/molecule/net/internal/dgram"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -18,7 +17,7 @@ type Socket struct {
 	PID       proc.PID
 	LocalAddr netip.AddrPort
 
-	conn *net.UDPConn // nil in a Socket made by hand: sending goes through PID
+	conn dgram.Conn[netip.AddrPort] // nil in a Socket made by hand: sending goes through PID
 }
 
 // Messages a socket sends its owner.
@@ -61,25 +60,19 @@ var (
 	ErrTimeout = errors.New("genudp: timeout")
 )
 
-// Requests to a socket process.
-type (
-	sendReq struct {
-		to     netip.AddrPort
-		data   []byte
-		then   bool // set active after
-		active Active
-	}
-	recvReq      struct{ timeout time.Duration } // 0: none
-	setActiveReq struct{ active Active }
-	controlReq   struct{ owner proc.PID }
-	closeReq     struct{}
-)
+// kind is what genudp makes of the datagram socket core.
+var kind = &dgram.Kind[netip.AddrPort, Socket]{
+	Name:      "genudp",
+	Data:      func(s Socket, from netip.AddrPort, b []byte) any { return DataMsg{s, from, b} },
+	Error:     func(s Socket, err error) any { return ErrorMsg{s, err} },
+	Closed:    func(s Socket) any { return ClosedMsg{s} },
+	Passive:   func(s Socket) any { return PassiveMsg{s} },
+	SendError: func(s Socket, to netip.AddrPort, err error) any { return SendErrorMsg{s, to, err} },
 
-// recvRep is the reply to a Recv.
-type recvRep struct {
-	from netip.AddrPort
-	data []byte
-	err  error
+	ErrClosed:   ErrClosed,
+	ErrNotOwner: ErrNotOwner,
+	ErrActive:   ErrActive,
+	ErrTimeout:  ErrTimeout,
 }
 
 // Send sends data as one datagram to to. It writes in the calling process,
@@ -87,9 +80,9 @@ type recvRep struct {
 // the socket as it was.
 func (s Socket) Send(ctx context.Context, caller molecule.Caller, to netip.AddrPort, data []byte) error {
 	if s.conn == nil {
-		return s.call(ctx, caller, sendReq{to: to, data: data})
+		return dgram.Call(ctx, kind, caller, s.PID, dgram.SendReq[netip.AddrPort]{To: to, Data: data})
 	}
-	return write(s.conn, to, data)
+	return dgram.Write(kind, s.conn, to, data)
 }
 
 // Recv takes the next datagram of a passive socket, and where it came
@@ -97,42 +90,24 @@ func (s Socket) Send(ctx context.Context, caller molecule.Caller, to netip.AddrP
 // ErrTimeout; the socket keeps whatever arrives after. Only the owner may
 // receive.
 func (s Socket) Recv(ctx context.Context, caller molecule.Caller) (netip.AddrPort, []byte, error) {
-	var timeout time.Duration
-	if deadline, ok := ctx.Deadline(); ok {
-		if timeout = time.Until(deadline); timeout <= 0 {
-			return netip.AddrPort{}, nil, ErrTimeout
-		}
-	}
-	// The socket ends the wait: giving up here could lose a datagram it
-	// has just taken for this call.
-	v, err := molecule.Call(context.Background(), caller, s.PID, recvReq{timeout})
-	if err != nil {
-		return netip.AddrPort{}, nil, gone(err)
-	}
-	switch r := v.(type) {
-	case recvRep:
-		return r.from, r.data, r.err
-	case error:
-		return netip.AddrPort{}, nil, r
-	}
-	return netip.AddrPort{}, nil, nil
+	return dgram.Recv(ctx, kind, caller, s.PID)
 }
 
 // SetActive changes the active mode.
 func (s Socket) SetActive(ctx context.Context, caller molecule.Caller, a Active) error {
-	return s.call(ctx, caller, setActiveReq{a})
+	return dgram.Call(ctx, kind, caller, s.PID, dgram.SetActiveReq{Active: a})
 }
 
 // ControllingProcess gives the socket to owner, which gets its messages
 // from then on, like gen_udp:controlling_process. Only the owner may.
 // Messages already sent stay with the previous owner.
 func (s Socket) ControllingProcess(ctx context.Context, caller molecule.Caller, owner proc.PID) error {
-	return s.call(ctx, caller, controlReq{owner})
+	return dgram.Call(ctx, kind, caller, s.PID, dgram.ControlReq{Owner: owner})
 }
 
 // Close closes the socket, and its process exits.
 func (s Socket) Close(ctx context.Context, caller molecule.Caller) error {
-	err := s.call(ctx, caller, closeReq{})
+	err := dgram.Call(ctx, kind, caller, s.PID, dgram.CloseReq{})
 	if err == ErrClosed {
 		return nil // closed already
 	}
@@ -144,10 +119,7 @@ func (s Socket) Close(ctx context.Context, caller molecule.Caller) error {
 // comes back to the behaviour as a SendErrorMsg. Through a Socket made by
 // hand, it goes through the socket process, and a failure is not told.
 func (s Socket) SendEffect(to netip.AddrPort, data []byte) molecule.Effect {
-	if s.conn == nil {
-		return molecule.Send{To: s.PID, Msg: sendReq{to: to, data: data}}
-	}
-	return sendEffect{sock: s, to: to, data: data}
+	return dgram.SendEffect(kind, s, s.PID, s.conn, to, data, false, Passive)
 }
 
 // SendActiveEffect is the effect sending data, then changing the active
@@ -159,69 +131,17 @@ func (s Socket) SendEffect(to netip.AddrPort, data []byte) molecule.Effect {
 //
 // The mode changes even if sending fails.
 func (s Socket) SendActiveEffect(to netip.AddrPort, data []byte, a Active) molecule.Effect {
-	if s.conn == nil {
-		return molecule.Send{To: s.PID, Msg: sendReq{to: to, data: data, then: true, active: a}}
-	}
-	return sendEffect{sock: s, to: to, data: data, then: true, active: a}
+	return dgram.SendEffect(kind, s, s.PID, s.conn, to, data, true, a)
 }
 
 // SetActiveEffect is the effect changing the active mode, for a behaviour.
 func (s Socket) SetActiveEffect(a Active) molecule.Effect {
-	return molecule.Send{To: s.PID, Msg: setActiveReq{a}}
+	return molecule.Send{To: s.PID, Msg: dgram.SetActiveReq{Active: a}}
 }
 
 // CloseEffect is the effect closing the socket, for a behaviour.
 func (s Socket) CloseEffect() molecule.Effect {
-	return molecule.Send{To: s.PID, Msg: closeReq{}}
-}
-
-func (s Socket) call(ctx context.Context, caller molecule.Caller, req any) error {
-	v, err := molecule.Call(ctx, caller, s.PID, req)
-	if err != nil {
-		return gone(err)
-	}
-	err, _ = v.(error)
-	return err
-}
-
-// gone turns the error of a call to a socket whose process is gone into
-// ErrClosed.
-func gone(err error) error {
-	var exit *molecule.ExitError
-	if errors.As(err, &exit) {
-		return ErrClosed
-	}
-	return err
-}
-
-// write sends one datagram. UDP writes are whole and safe from several
-// goroutines at once, so it needs no lock.
-func write(conn *net.UDPConn, to netip.AddrPort, data []byte) error {
-	_, err := conn.WriteToUDPAddrPort(data, to)
-	if errors.Is(err, net.ErrClosed) {
-		return ErrClosed
-	}
-	return err
-}
-
-// sendEffect sends from the process of a behaviour, as Socket.Send does,
-// then changes the active mode if then.
-type sendEffect struct {
-	molecule.Extension
-	sock   Socket
-	to     netip.AddrPort
-	data   []byte
-	then   bool
-	active Active
-}
-
-func (e sendEffect) Perform(env gen.Env) {
-	if err := write(e.sock.conn, e.to, e.data); err != nil {
-		env.Send(env.Self(), SendErrorMsg{e.sock, e.to, err})
-	}
-	if e.then {
-		env.Send(e.sock.PID, setActiveReq{e.active})
-	}
+	return molecule.Send{To: s.PID, Msg: dgram.CloseReq{}}
 }
 
 // Open opens a socket bound to addr, owned by owner, like gen_udp:open. An
@@ -238,14 +158,32 @@ func Open(ctx context.Context, owner *proc.Self, addr string, opts Options) (Soc
 // Start makes a socket of conn, opened by other means, owned by owner. The
 // socket owns conn from then on, and closes it.
 func Start(n *proc.Node, conn *net.UDPConn, owner proc.PID, opts Options) Socket {
-	sock := Socket{conn: conn}
+	sock := Socket{conn: udpConn{conn}}
 	if a, ok := conn.LocalAddr().(*net.UDPAddr); ok {
 		sock.LocalAddr = a.AddrPort()
 	}
 	started := make(chan Socket)
 	sock.PID = n.Spawn(func(s *proc.Self) error {
-		return serve(s, <-started, owner, opts)
+		sock := <-started
+		return dgram.Serve(s, kind, sock.conn, sock, owner, opts.Active, opts.packetSize(), "socket "+sock.LocalAddr.String())
 	})
 	started <- sock
 	return sock
 }
+
+// udpConn is a *net.UDPConn as the core reads it.
+type udpConn struct{ c *net.UDPConn }
+
+// ReadFrom reports an IPv4 sender on a dual-stack socket as IPv4, not as
+// an IPv4-mapped IPv6 address.
+func (u udpConn) ReadFrom(buf []byte) (int, netip.AddrPort, error) {
+	n, from, err := u.c.ReadFromUDPAddrPort(buf)
+	return n, netip.AddrPortFrom(from.Addr().Unmap(), from.Port()), err
+}
+
+func (u udpConn) WriteTo(b []byte, to netip.AddrPort) error {
+	_, err := u.c.WriteToUDPAddrPort(b, to)
+	return err
+}
+
+func (u udpConn) Close() error { return u.c.Close() }
