@@ -20,6 +20,9 @@
 // HandleContinue, a molecule.Continue stops the server with
 // [ErrNoHandleContinue].
 //
+// A server implementing molecule.Clocked is given the clock of its process
+// before Init, to read the time with: time.Now, or gensim's virtual clock.
+//
 // A server implementing molecule.StatusFormatter formats what the report of
 // its terminating tells, like format_status/1: to hide secrets of its
 // state, say.

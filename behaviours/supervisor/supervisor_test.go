@@ -319,6 +319,29 @@ func TestMaxIntensity(t *testing.T) {
 	})
 }
 
+// NoRestarts allows none: the first crash makes the supervisor give up.
+func TestNoRestarts(t *testing.T) {
+	inWorld(t, func(w *world) {
+		sup := w.start(supervisor.Spec{
+			Intensity: supervisor.NoRestarts,
+			Children: []supervisor.ChildSpec{
+				w.worker("a", supervisor.Permanent),
+				w.worker("b", supervisor.Permanent),
+			},
+		})
+		w.expect(started{"a"}, started{"b"})
+
+		down, stop := w.n.Watch(context.Background(), sup)
+		defer stop()
+		w.call(sup, "b", crash{})
+		w.expect(stopped{"b", errBoom}, stopped{"a", proc.Shutdown})
+		<-down.Done()
+		if c := context.Cause(down); c != supervisor.ErrMaxIntensity {
+			t.Errorf("exit reason = %v", c)
+		}
+	})
+}
+
 func TestStartFailure(t *testing.T) {
 	inWorld(t, func(w *world) {
 		var fail atomic.Int32
