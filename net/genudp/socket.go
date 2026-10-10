@@ -165,7 +165,7 @@ func Start(n *proc.Node, conn *net.UDPConn, owner proc.PID, opts Options) Socket
 	started := make(chan Socket)
 	sock.PID = n.Spawn(func(s *proc.Self) error {
 		sock := <-started
-		return dgram.Serve(s, kind, sock.conn, sock, owner, opts.Active, opts.packetSize(), sock.LocalAddr.String())
+		return dgram.Serve(s, kind, sock.conn, sock, owner, opts.Active, opts.packetSize(), "socket "+sock.LocalAddr.String())
 	})
 	started <- sock
 	return sock

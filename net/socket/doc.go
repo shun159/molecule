@@ -1,22 +1,22 @@
 //go:build unix
 
-// Package genraw provides raw sockets owned by processes: any datagram
-// socket a program opens itself, as socket(2) does -- an AF_PACKET socket,
-// a raw ICMPv6 one, or another the net package has no type for -- read and
-// written as datagrams with their addresses, like genudp does for UDP.
+// Package socket provides sockets owned by processes, any a program opens
+// with socket(2) -- an AF_PACKET socket, a raw ICMPv6 one, or another the
+// net package has no type for -- read and written as datagrams with their
+// addresses, as genudp does UDP, and much like the socket module of Erlang.
 //
 // # Opening
 //
 // [Open] opens a socket of a domain, type and protocol, and has setup
 // prepare it before anything is read: socket options, a filter, a bind,
 // whatever its protocol needs, with the syscall or golang.org/x/sys/unix
-// calls the program chooses. genraw knows none of them. The process calling
-// Open becomes the owner of the socket: it receives the datagrams, and the
-// socket closes when it exits. [Start] makes a socket of an fd opened by
-// other means.
+// calls the program chooses. This package knows none of them. The process
+// calling Open becomes the owner of the socket: it receives the datagrams,
+// and the socket closes when it exits. [Start] makes a socket of an fd
+// opened by other means.
 //
-//	sock, err := genraw.Open(self, syscall.AF_INET6, syscall.SOCK_RAW, syscall.IPPROTO_ICMPV6,
-//		func(fd int) error { return syscall.BindToDevice(fd, "eth0") }, genraw.Options{})
+//	sock, err := socket.Open(self, syscall.AF_INET6, syscall.SOCK_RAW, syscall.IPPROTO_ICMPV6,
+//		func(fd int) error { return syscall.BindToDevice(fd, "eth0") }, socket.Options{})
 //
 // Addresses are syscall.Sockaddr values: a *syscall.SockaddrInet6 for a raw
 // IPv6 socket, a *syscall.SockaddrLinklayer for an AF_PACKET one. A received
@@ -36,4 +36,4 @@
 // The socket is read through the runtime's poller, its fd made
 // non-blocking: closing it, as the end of its process does, wakes a read
 // waiting, which close(2) on a blocking fd would not.
-package genraw
+package socket

@@ -60,7 +60,7 @@ type pendingRecv struct {
 // active as active, dropping datagrams larger than max. It closes conn when
 // it ends.
 func Serve[A, S any](self *proc.Self, k *Kind[A, S], conn Conn[A], sock S, owner proc.PID, active Active, max int, label string) error {
-	self.SetLabel(k.Name + " socket " + label)
+	self.SetLabel(k.Name + " " + label)
 	s := &server[A, S]{
 		k:      k,
 		self:   self,

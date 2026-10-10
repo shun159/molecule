@@ -1,6 +1,6 @@
 //go:build linux
 
-package genraw_test
+package socket_test
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule/net/genraw"
+	"github.com/shun159/molecule/net/socket"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -21,7 +21,7 @@ import (
 func TestICMPv6Echo(t *testing.T) {
 	n := proc.NewNode("")
 	inProc(t, n, func(s *proc.Self) {
-		sock, err := genraw.Open(s, syscall.AF_INET6, syscall.SOCK_RAW, syscall.IPPROTO_ICMPV6, func(fd int) error {
+		sock, err := socket.Open(s, syscall.AF_INET6, syscall.SOCK_RAW, syscall.IPPROTO_ICMPV6, func(fd int) error {
 			// Only echo replies (129) pass the filter.
 			var filt syscall.ICMPv6Filter
 			for i := range filt.Data {
@@ -29,7 +29,7 @@ func TestICMPv6Echo(t *testing.T) {
 			}
 			filt.Data[129/32] &^= 1 << (129 % 32)
 			return syscall.SetsockoptICMPv6Filter(fd, syscall.IPPROTO_ICMPV6, syscall.ICMPV6_FILTER, &filt)
-		}, genraw.Options{})
+		}, socket.Options{})
 		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) {
 			t.Skip("no CAP_NET_RAW:", err)
 		}
@@ -68,9 +68,9 @@ func TestPacketSocket(t *testing.T) {
 	n := proc.NewNode("")
 	inProc(t, n, func(s *proc.Self) {
 		proto := int(htons(syscall.ETH_P_IP))
-		sock, err := genraw.Open(s, syscall.AF_PACKET, syscall.SOCK_DGRAM, proto, func(fd int) error {
+		sock, err := socket.Open(s, syscall.AF_PACKET, syscall.SOCK_DGRAM, proto, func(fd int) error {
 			return syscall.Bind(fd, &syscall.SockaddrLinklayer{Protocol: htons(syscall.ETH_P_IP), Ifindex: lo.Index})
-		}, genraw.Options{Active: genraw.Always})
+		}, socket.Options{Active: socket.Always})
 		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) {
 			t.Skip("no CAP_NET_RAW:", err)
 		}
@@ -83,11 +83,11 @@ func TestPacketSocket(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer c.Close()
-		marker := "genraw packet socket"
+		marker := "molecule packet socket"
 		c.Write([]byte(marker))
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
-			m, ok := receive(t, s).(genraw.DataMsg)
+			m, ok := receive(t, s).(socket.DataMsg)
 			if !ok || !strings.Contains(string(m.Bytes), marker) {
 				continue // other traffic on lo
 			}

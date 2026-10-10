@@ -1,6 +1,6 @@
 //go:build unix
 
-package genraw
+package socket
 
 import (
 	"context"
@@ -93,18 +93,18 @@ type (
 // Errors of socket calls.
 var (
 	// ErrClosed: the socket is closed.
-	ErrClosed = errors.New("genraw: closed")
+	ErrClosed = errors.New("socket: closed")
 	// ErrNotOwner: only the owner may receive and give the socket away.
-	ErrNotOwner = errors.New("genraw: not the owner")
+	ErrNotOwner = errors.New("socket: not the owner")
 	// ErrActive: Recv on a socket in an active mode.
-	ErrActive = errors.New("genraw: socket is active")
+	ErrActive = errors.New("socket: socket is active")
 	// ErrTimeout: Recv waited past the deadline of its context.
-	ErrTimeout = errors.New("genraw: timeout")
+	ErrTimeout = errors.New("socket: timeout")
 )
 
-// kind is what genraw makes of the datagram socket core.
+// kind is what socket makes of the datagram socket core.
 var kind = &dgram.Kind[syscall.Sockaddr, Socket]{
-	Name:      "genraw",
+	Name:      "socket",
 	Data:      func(s Socket, from syscall.Sockaddr, b []byte) any { return DataMsg{s, from, b} },
 	Error:     func(s Socket, err error) any { return ErrorMsg{s, err} },
 	Closed:    func(s Socket) any { return ClosedMsg{s} },
@@ -187,7 +187,7 @@ func (s Socket) CloseEffect() molecule.Effect {
 func Open(owner *proc.Self, domain, typ, proto int, setup func(fd int) error, opts Options) (Socket, error) {
 	fd, err := syscall.Socket(domain, typ, proto)
 	if err != nil {
-		return Socket{}, fmt.Errorf("genraw: socket: %w", err)
+		return Socket{}, fmt.Errorf("socket: socket: %w", err)
 	}
 	syscall.CloseOnExec(fd)
 	if setup != nil {
@@ -227,9 +227,9 @@ type rawConn struct {
 func newConn(fd int) (rawConn, error) {
 	if err := syscall.SetNonblock(fd, true); err != nil {
 		syscall.Close(fd)
-		return rawConn{}, fmt.Errorf("genraw: making the socket non-blocking: %w", err)
+		return rawConn{}, fmt.Errorf("socket: making the socket non-blocking: %w", err)
 	}
-	f := os.NewFile(uintptr(fd), "genraw")
+	f := os.NewFile(uintptr(fd), "socket")
 	rc, err := f.SyscallConn()
 	if err != nil {
 		f.Close()

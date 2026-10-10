@@ -1,5 +1,5 @@
 // Package dgram is the core of the datagram sockets owned by processes,
-// genudp's and genraw's: the socket process, reading only while its owner
+// genudp's and socket's: the socket process, reading only while its owner
 // wants a datagram and handing each over itself, and the calls and effects
 // acting on it. A package using it brings the connection, its address type,
 // and the messages and errors it gives its owner.

@@ -1,6 +1,6 @@
 //go:build unix
 
-package genraw_test
+package socket_test
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 
 	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/behaviours/genserver"
-	"github.com/shun159/molecule/net/genraw"
+	"github.com/shun159/molecule/net/socket"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -33,10 +33,10 @@ func inProc(t *testing.T, n *proc.Node, fn func(s *proc.Self)) {
 
 // open opens a UDP socket on the loopback the raw way, owned by s, and a
 // plain peer; it returns the socket's address.
-func open(t *testing.T, s *proc.Self, opts genraw.Options) (genraw.Socket, *syscall.SockaddrInet4, *net.UDPConn) {
+func open(t *testing.T, s *proc.Self, opts socket.Options) (socket.Socket, *syscall.SockaddrInet4, *net.UDPConn) {
 	t.Helper()
 	var addr *syscall.SockaddrInet4
-	sock, err := genraw.Open(s, syscall.AF_INET, syscall.SOCK_DGRAM, 0, func(fd int) error {
+	sock, err := socket.Open(s, syscall.AF_INET, syscall.SOCK_DGRAM, 0, func(fd int) error {
 		if err := syscall.Bind(fd, &syscall.SockaddrInet4{Addr: [4]byte{127, 0, 0, 1}}); err != nil {
 			return err
 		}
@@ -77,7 +77,7 @@ func receive(t *testing.T, s *proc.Self) any {
 	return msg
 }
 
-func awaitExit(t *testing.T, s *proc.Self, sock genraw.Socket) {
+func awaitExit(t *testing.T, s *proc.Self, sock socket.Socket) {
 	t.Helper()
 	ctx, cancel := s.Node().Watch(context.Background(), sock.PID)
 	defer cancel()
@@ -91,7 +91,7 @@ func awaitExit(t *testing.T, s *proc.Self, sock genraw.Socket) {
 func TestRecvAndSend(t *testing.T) {
 	n := proc.NewNode("")
 	inProc(t, n, func(s *proc.Self) {
-		sock, addr, peer := open(t, s, genraw.Options{})
+		sock, addr, peer := open(t, s, socket.Options{})
 		send(t, peer, addr, "ping")
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -116,16 +116,16 @@ func TestRecvAndSend(t *testing.T) {
 func TestActiveN(t *testing.T) {
 	n := proc.NewNode("")
 	inProc(t, n, func(s *proc.Self) {
-		sock, addr, peer := open(t, s, genraw.Options{Active: genraw.N(2)})
+		sock, addr, peer := open(t, s, socket.Options{Active: socket.N(2)})
 		for _, d := range []string{"a", "b"} {
 			send(t, peer, addr, d)
 		}
 		for _, want := range []string{"a", "b"} {
-			if m, ok := receive(t, s).(genraw.DataMsg); !ok || string(m.Bytes) != want {
+			if m, ok := receive(t, s).(socket.DataMsg); !ok || string(m.Bytes) != want {
 				t.Fatalf("got %#v, want DataMsg %q", m, want)
 			}
 		}
-		if m, ok := receive(t, s).(genraw.PassiveMsg); !ok || m.Sock.PID != sock.PID {
+		if m, ok := receive(t, s).(socket.PassiveMsg); !ok || m.Sock.PID != sock.PID {
 			t.Fatalf("got %#v, want PassiveMsg", m)
 		}
 	})
@@ -135,7 +135,7 @@ func TestSetupFails(t *testing.T) {
 	n := proc.NewNode("")
 	inProc(t, n, func(s *proc.Self) {
 		boom := errors.New("boom")
-		if _, err := genraw.Open(s, syscall.AF_INET, syscall.SOCK_DGRAM, 0, func(int) error { return boom }, genraw.Options{}); err != boom {
+		if _, err := socket.Open(s, syscall.AF_INET, syscall.SOCK_DGRAM, 0, func(int) error { return boom }, socket.Options{}); err != boom {
 			t.Errorf("Open = %v, want the setup's error", err)
 		}
 	})
@@ -146,13 +146,13 @@ func TestSetupFails(t *testing.T) {
 func TestCloseWakesReader(t *testing.T) {
 	n := proc.NewNode("")
 	inProc(t, n, func(s *proc.Self) {
-		sock, _, _ := open(t, s, genraw.Options{Active: genraw.Always})
+		sock, _, _ := open(t, s, socket.Options{Active: socket.Always})
 		time.Sleep(20 * time.Millisecond) // the reader waits
 		if err := sock.Close(context.Background(), s); err != nil {
 			t.Fatal(err)
 		}
 		awaitExit(t, s, sock)
-		if err := sock.Send(context.Background(), s, &syscall.SockaddrInet4{Port: 9}, []byte("x")); err != genraw.ErrClosed {
+		if err := sock.Send(context.Background(), s, &syscall.SockaddrInet4{Port: 9}, []byte("x")); err != socket.ErrClosed {
 			t.Errorf("Send after Close = %v, want ErrClosed", err)
 		}
 	})
@@ -165,12 +165,12 @@ type echo struct {
 	to proc.PID
 }
 
-type badSend struct{ sock genraw.Socket }
+type badSend struct{ sock socket.Socket }
 
 func (echo) HandleCast(s struct{}, msg any) (struct{}, []molecule.Effect) {
 	switch m := msg.(type) {
-	case genraw.Socket:
-		return s, molecule.Do(m.SetActiveEffect(genraw.Once))
+	case socket.Socket:
+		return s, molecule.Do(m.SetActiveEffect(socket.Once))
 	case badSend:
 		// An IPv6 address on an IPv4 socket.
 		return s, molecule.Do(m.sock.SendEffect(&syscall.SockaddrInet6{Port: 9}, []byte("x")))
@@ -180,9 +180,9 @@ func (echo) HandleCast(s struct{}, msg any) (struct{}, []molecule.Effect) {
 
 func (e echo) HandleInfo(s struct{}, msg any) (struct{}, []molecule.Effect) {
 	switch m := msg.(type) {
-	case genraw.DataMsg:
-		return s, molecule.Do(m.Sock.SendActiveEffect(m.From, m.Bytes, genraw.Once))
-	case genraw.SendErrorMsg:
+	case socket.DataMsg:
+		return s, molecule.Do(m.Sock.SendActiveEffect(m.From, m.Bytes, socket.Once))
+	case socket.SendErrorMsg:
 		return s, molecule.Do(molecule.Send{To: e.to, Msg: m})
 	}
 	return s, nil
@@ -197,7 +197,7 @@ func TestEffects(t *testing.T) {
 			t.Fatal(err)
 		}
 		pid, _ := srv.Dest().WhereIs(n)
-		sock, addr, peer := open(t, s, genraw.Options{})
+		sock, addr, peer := open(t, s, socket.Options{})
 		if err := sock.ControllingProcess(ctx, s, pid); err != nil {
 			t.Fatal(err)
 		}
@@ -211,7 +211,7 @@ func TestEffects(t *testing.T) {
 			}
 		}
 		srv.Cast(s, badSend{sock})
-		if m, ok := receive(t, s).(genraw.SendErrorMsg); !ok || m.Err == nil {
+		if m, ok := receive(t, s).(socket.SendErrorMsg); !ok || m.Err == nil {
 			t.Fatalf("got %#v, want SendErrorMsg", m)
 		}
 	})
