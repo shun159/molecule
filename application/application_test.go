@@ -111,6 +111,22 @@ func child(t *testing.T, n *proc.Node, r *application.Running, name, id string) 
 	return proc.PID{}
 }
 
+// crash crashes the child id of the application name, once it runs again
+// after its crash before, prev, and waits for it to be down. A process is
+// dead to IsAlive before its supervisor learns of it, so the supervisor may
+// still report prev for a moment: a crash sent there would be lost.
+func crash(t *testing.T, n *proc.Node, r *application.Running, name, id string, prev proc.PID) proc.PID {
+	t.Helper()
+	var c proc.PID
+	eventually(t, id+" restarted", func() bool {
+		c = child(t, n, r, name, id)
+		return c != prev && n.IsAlive(c)
+	})
+	n.Send(c, molecule.CastMsg{Req: "crash"})
+	eventually(t, id+" down", func() bool { return !n.IsAlive(c) })
+	return c
+}
+
 func TestPermanentEnds(t *testing.T) {
 	rec, logger := testlog.New()
 	n := proc.NewNode("", proc.WithLogger(logger))
@@ -120,10 +136,9 @@ func TestPermanentEnds(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Two crashes in a row are one too many: "two" gives up.
+	var b proc.PID
 	for range 2 {
-		b := child(t, n, r, "two", "b")
-		n.Send(b, molecule.CastMsg{Req: "crash"})
-		eventually(t, "b down", func() bool { return !n.IsAlive(b) })
+		b = crash(t, n, r, "two", "b", b)
 	}
 	select {
 	case <-r.Done():
@@ -153,10 +168,9 @@ func TestTemporaryEnds(t *testing.T) {
 	}
 	defer r.Stop(context.Background())
 	top, _ := r.Top("two")
+	var b proc.PID
 	for range 2 {
-		b := child(t, n, r, "two", "b")
-		n.Send(b, molecule.CastMsg{Req: "crash"})
-		eventually(t, "b down", func() bool { return !n.IsAlive(b) })
+		b = crash(t, n, r, "two", "b", b)
 	}
 	eventually(t, "two down", func() bool { return !n.IsAlive(top) })
 	select {
