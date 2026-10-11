@@ -59,9 +59,9 @@ var (
 	// while the previous batch was written and synced: a write is
 	// durable once on disk, at the cost of a sync shared with its batch.
 	SyncEach = Sync{}
-	// SyncNone never syncs but on Close: a write is durable once handed
-	// to the system, which keeps it if the program crashes, but not if
-	// the machine does.
+	// SyncNone never syncs but on Close: a write is durable once copied
+	// into the page cache, through a mapping of the log, without a
+	// system call. It outlives the program, not the machine.
 	SyncNone = Sync{none: true}
 )
 
@@ -130,7 +130,7 @@ func Open[K comparable, V any](dir string, opts Options[K, V]) (*Table[K, V], er
 	t.idx = newIndex[K, V](opts.ReadConcurrency, opts.WriteConcurrency, opts.Shards, &t.live)
 	seq, disk, segs, err := t.recover()
 	if err == nil {
-		t.log, err = startWAL(dir, seq, disk, segs, opts.Sync, opts.SegmentSize, t.maybeCompact)
+		t.log, err = startWAL(dir, seq, disk, segs, opts.Sync, opts.SegmentSize)
 	}
 	if err != nil {
 		unlockDir(lock)
@@ -281,7 +281,11 @@ func (t *Table[K, V]) put(k K, v V) (*batch, error) {
 	if err != nil {
 		return nil, err
 	}
-	return t.idx.put(t.log, k, v, newRec(body))
+	b, err := t.idx.put(t.log, k, v, newRec(body))
+	if err == nil {
+		t.maybeCompact()
+	}
+	return b, err
 }
 
 func (t *Table[K, V]) delete(k K) (*batch, error) {
@@ -292,7 +296,11 @@ func (t *Table[K, V]) delete(k K) (*batch, error) {
 	if err != nil {
 		return nil, err
 	}
-	return t.idx.del(t.log, k, newRec(body))
+	b, err := t.idx.del(t.log, k, newRec(body))
+	if err == nil {
+		t.maybeCompact()
+	}
+	return b, err
 }
 
 func (t *Table[K, V]) buf() *[]byte {
@@ -537,5 +545,5 @@ func (t *Table[K, V]) Close() error {
 	t.compactMu.Lock()
 	defer t.compactMu.Unlock()
 	t.log.close()
-	return errors.Join(t.log.failed, unlockDir(t.lock))
+	return errors.Join(t.log.failure(), unlockDir(t.lock))
 }

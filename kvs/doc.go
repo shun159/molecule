@@ -13,7 +13,9 @@
 // Put and Delete return once the write is durable; readers see it at once,
 // before. Sync says what durable is: on disk, each write synced with the
 // others of its batch, SyncEach, the default; on disk at the next sync of
-// a period, SyncEvery; in the hands of the system, SyncNone.
+// a period, SyncEvery; in the page cache, SyncNone, where a write copies
+// its record into a mapping of the log and Put returns at once: the write
+// outlives the program, not the machine.
 //
 // A behaviour writes with [Table.PutEffect] and [Table.DeleteEffect]: the
 // runtime of the behaviour performs the write, see gen.Performer, and a
@@ -54,6 +56,8 @@
 // it holds. It runs by itself once the log is large enough and mostly
 // writes since overwritten, see Options, or on Compact. Writes go on
 // during it.
+//
+// kvs runs on Linux.
 //
 // Keys and values are encoded for the log by a [Codec]: by default, plainly
 // for strings, byte slices and integers, by MarshalBinary for types with

@@ -6,8 +6,10 @@ import (
 	"maps"
 	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -402,5 +404,35 @@ func TestCodecs(t *testing.T) {
 	big, _ := kvs.DefaultCodec[uint64]().Append(nil, 300)
 	if _, err := u8.Decode(big); err == nil {
 		t.Fatal("300 decoded as a uint8")
+	}
+}
+
+// TestKilled has a child process put with SyncNone and kill itself,
+// without closing the table: what Put returned for is in the log.
+func TestKilled(t *testing.T) {
+	if dir := os.Getenv("KVS_KILLED_DIR"); dir != "" {
+		tab, err := kvs.Open(dir, kvs.Options[int, int]{Sync: kvs.SyncNone})
+		if err != nil {
+			os.Exit(2)
+		}
+		for i := range 10000 {
+			if tab.Put(i, i) != nil {
+				os.Exit(3)
+			}
+		}
+		syscall.Kill(os.Getpid(), syscall.SIGKILL)
+		select {}
+	}
+	dir := t.TempDir()
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestKilled$")
+	cmd.Env = append(os.Environ(), "KVS_KILLED_DIR="+dir)
+	err := cmd.Run()
+	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); !ok || ws.Signal() != syscall.SIGKILL {
+		t.Fatalf("child: %v", err)
+	}
+	tab := open(t, dir, kvs.Options[int, int]{})
+	defer tab.Close()
+	if n := tab.Len(); n != 10000 {
+		t.Fatalf("%d entries after the kill, want 10000", n)
 	}
 }
