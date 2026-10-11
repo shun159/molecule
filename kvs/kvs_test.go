@@ -177,6 +177,33 @@ func TestTornTail(t *testing.T) {
 	}
 }
 
+// TestZeroTail opens a log whose segments end in zeros, as a crash leaves
+// them before they are cut to their records.
+func TestZeroTail(t *testing.T) {
+	dir := t.TempDir()
+	tab := open(t, dir, kvs.Options[string, string]{})
+	tab.Put("a", "1")
+	tab.Close()
+	tab = open(t, dir, kvs.Options[string, string]{})
+	tab.Put("b", "2")
+	tab.Close()
+	for _, seg := range segments(t, dir) {
+		f, _ := os.OpenFile(seg, os.O_WRONLY|os.O_APPEND, 0)
+		f.Write(make([]byte, 4096))
+		f.Close()
+	}
+	tab = open(t, dir, kvs.Options[string, string]{})
+	defer tab.Close()
+	if got, want := contents(tab), map[string]string{"a": "1", "b": "2"}; !maps.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for _, seg := range segments(t, dir) {
+		if fi, _ := os.Stat(seg); fi.Size()%4096 == 0 && fi.Size() > 0 {
+			t.Fatalf("%s not cut: %d bytes", seg, fi.Size())
+		}
+	}
+}
+
 func TestCorrupt(t *testing.T) {
 	dir := t.TempDir()
 	tab := open(t, dir, kvs.Options[string, string]{})

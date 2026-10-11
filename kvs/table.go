@@ -179,7 +179,8 @@ func (t *Table[K, V]) recover() (seq uint64, disk int64, nsegs int, err error) {
 		var last uint64
 		n, err := t.readFile(s.name, base, &last)
 		switch {
-		case err == errTorn && i == len(segs)-1:
+		case err == nil || err == errTorn && i == len(segs)-1:
+			// Cut what follows the records: zeros, or a write cut short.
 			if err := truncate(path, n); err != nil {
 				return 0, 0, 0, err
 			}
@@ -238,6 +239,9 @@ func truncate(path string, n int64) error {
 		return err
 	}
 	defer f.Close()
+	if fi, err := f.Stat(); err != nil || fi.Size() == n {
+		return err
+	}
 	if err := f.Truncate(n); err != nil {
 		return err
 	}

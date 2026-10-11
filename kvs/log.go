@@ -36,6 +36,11 @@ import (
 // A segment is named by the seq of its first record, NNN.log, and a
 // snapshot by the seq it covers, NNN.snap: the segments after it hold the
 // writes since.
+//
+// The segment written to is filled with zeros ahead of its records, a
+// chunk at a time, and cut to its records once done with: a write within
+// the zeros changes no metadata of the file, so that syncing it is syncing
+// its data alone, fdatasync on Linux. A header of zeros ends a segment.
 
 const (
 	opPut byte = 1
@@ -44,7 +49,12 @@ const (
 	headerLen = 8
 	seqLen    = 8
 	maxRecord = 1 << 30
+
+	zeroChunk = 1 << 20
 )
+
+// zeros fills segments ahead of their records.
+var zeros = make([]byte, zeroChunk)
 
 var castagnoli = crc32.MakeTable(crc32.Castagnoli)
 
@@ -121,7 +131,8 @@ type wal struct {
 	// Of the holder of wmu, writing.
 	wmu      sync.Mutex
 	seg      *os.File
-	segBytes int64
+	segBytes int64  // of records
+	zeroed   int64  // the size of seg, zeros after its records
 	written  uint64 // last seq written out
 	spare    []byte
 	failed   error
@@ -268,7 +279,7 @@ func (w *wal) run() {
 				if w.failed == nil {
 					w.syncSeg()
 				}
-				w.seg.Close()
+				w.closeSeg()
 				w.seg = nil
 			}
 			w.wmu.Unlock()
@@ -293,7 +304,7 @@ func (w *wal) flush() {
 		err = ErrClosed
 	}
 	if err == nil {
-		_, err = w.seg.Write(buf)
+		err = w.write(buf)
 		if err == nil {
 			w.written = last
 			w.segBytes += int64(len(buf))
@@ -349,9 +360,31 @@ func (w *wal) pendingLen() int {
 	return len(w.pending)
 }
 
+// write writes buf after the records of the segment, over its zeros.
+func (w *wal) write(buf []byte) error {
+	end := w.segBytes + int64(len(buf))
+	for w.zeroed < end {
+		if _, err := w.seg.WriteAt(zeros, w.zeroed); err != nil {
+			return err
+		}
+		w.zeroed += zeroChunk
+	}
+	_, err := w.seg.WriteAt(buf, w.segBytes)
+	return err
+}
+
 func (w *wal) syncSeg() error {
 	w.syncs.Add(1)
-	return w.seg.Sync()
+	return datasync(w.seg)
+}
+
+// closeSeg cuts the segment to its records, and closes it.
+func (w *wal) closeSeg() error {
+	err := w.seg.Truncate(w.segBytes)
+	if cerr := w.seg.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 func (w *wal) syncUnsynced() {
@@ -397,7 +430,7 @@ func (w *wal) rotate() rotated {
 	if !w.sync.none {
 		err = w.syncSeg()
 	}
-	if cerr := w.seg.Close(); err == nil {
+	if cerr := w.closeSeg(); err == nil {
 		err = cerr
 	}
 	w.seg = nil
@@ -413,7 +446,7 @@ func (w *wal) rotate() rotated {
 }
 
 func (w *wal) newSegment() error {
-	f, err := os.OpenFile(filepath.Join(w.dir, segName(w.written+1)), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(filepath.Join(w.dir, segName(w.written+1)), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
@@ -421,7 +454,7 @@ func (w *wal) newSegment() error {
 		f.Close()
 		return err
 	}
-	w.seg, w.segBytes = f, 0
+	w.seg, w.segBytes, w.zeroed = f, 0, 0
 	w.segments.Add(1)
 	return nil
 }
@@ -526,6 +559,9 @@ func readRecords(r io.Reader, f func(seq uint64, op byte, key, val []byte, size 
 			return off, errTorn
 		}
 		n := binary.LittleEndian.Uint32(hdr[:4])
+		if n == 0 && binary.LittleEndian.Uint32(hdr[4:]) == 0 {
+			return off, nil // the zeros after the records
+		}
 		if n < seqLen+2 || n > maxRecord {
 			return off, errTorn
 		}
