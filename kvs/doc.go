@@ -25,6 +25,12 @@
 //	case kvs.Durable:
 //		return s, molecule.Do(molecule.Reply{To: m.Tag.(molecule.From), Value: ack})
 //
+// A conditional write writes only if the entry is as it requires.
+// [Table.PutIf] and [Table.DeleteIf] compare the revision of the entry,
+// the seq of the write that set it, which [Table.GetRev] returns, as etcd
+// compares the mod revision of a key; [CompareAndSwap] and
+// [CompareAndDelete] compare its value, if comparable.
+//
 // Once a write to the log fails, the table fails every write after: the
 // entries in memory may hold writes the log has not. The program closes
 // it and opens it again, as a supervisor would restart a process.

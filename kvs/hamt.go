@@ -20,13 +20,14 @@ const (
 	hmask = 1<<hbits - 1
 )
 
-// leaf is an entry: a key, its hash and value, and the size of the record
-// that wrote it in the log.
+// leaf is an entry: a key, its hash and value, and the size and seq of
+// the record that wrote it in the log.
 type leaf[K comparable, V any] struct {
 	hash uint64
 	key  K
 	val  V
 	size int64
+	rev  uint64
 }
 
 type hnode[K comparable, V any] struct {

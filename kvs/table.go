@@ -228,7 +228,7 @@ func (t *Table[K, V]) readFile(name string, base uint64, last ...*uint64) (int64
 		if err != nil {
 			return fmt.Errorf("kvs: decoding a value of %s: %w", name, err)
 		}
-		t.idx.load(k, v, size)
+		t.idx.load(k, v, size, seq)
 		return nil
 	})
 }
@@ -249,7 +249,10 @@ func truncate(path string, n int64) error {
 }
 
 // Get returns the value under k.
-func (t *Table[K, V]) Get(k K) (V, bool) { return t.idx.get(k) }
+func (t *Table[K, V]) Get(k K) (V, bool) {
+	v, _, ok := t.idx.get(k)
+	return v, ok
+}
 
 // Len returns the number of entries.
 func (t *Table[K, V]) Len() int { return t.idx.len() }
@@ -257,7 +260,7 @@ func (t *Table[K, V]) Len() int { return t.idx.len() }
 // Put puts v under k, and returns once the write is durable. Readers see
 // it at once, before.
 func (t *Table[K, V]) Put(k K, v V) error {
-	b, err := t.put(k, v)
+	b, err := t.put(k, v, nil)
 	if err != nil {
 		return err
 	}
@@ -267,28 +270,28 @@ func (t *Table[K, V]) Put(k K, v V) error {
 // Delete deletes the entry under k, if any, and returns once the delete
 // is durable.
 func (t *Table[K, V]) Delete(k K) error {
-	b, err := t.delete(k)
+	b, err := t.delete(k, nil)
 	if err != nil {
 		return err
 	}
 	return t.log.wait(b)
 }
 
-func (t *Table[K, V]) put(k K, v V) (*batch, error) {
+func (t *Table[K, V]) put(k K, v V, match matcher[V]) (*batch, error) {
 	bp := t.buf()
 	defer t.bufs.Put(bp)
 	body, err := t.encode(bp, opPut, k, v)
 	if err != nil {
 		return nil, err
 	}
-	b, err := t.idx.put(t.log, k, v, newRec(body))
+	b, err := t.idx.put(t.log, k, v, newRec(body), match)
 	if err == nil {
 		t.maybeCompact()
 	}
 	return b, err
 }
 
-func (t *Table[K, V]) delete(k K) (*batch, error) {
+func (t *Table[K, V]) delete(k K, match matcher[V]) (*batch, error) {
 	bp := t.buf()
 	defer t.bufs.Put(bp)
 	var zero V
@@ -296,7 +299,7 @@ func (t *Table[K, V]) delete(k K) (*batch, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, err := t.idx.del(t.log, k, newRec(body))
+	b, err := t.idx.del(t.log, k, newRec(body), match)
 	if err == nil {
 		t.maybeCompact()
 	}
@@ -462,7 +465,7 @@ func (t *Table[K, V]) compact() error {
 		return cut.err
 	}
 	name := snapName(cut.seq)
-	size, err := t.writeSnapshot(name, cut.seq)
+	size, err := t.writeSnapshot(name)
 	if err != nil {
 		return err
 	}
@@ -489,9 +492,10 @@ func (t *Table[K, V]) compact() error {
 	return nil
 }
 
-// writeSnapshot writes the entries to the snapshot name, as of seq, and
-// returns its size.
-func (t *Table[K, V]) writeSnapshot(name string, seq uint64) (int64, error) {
+// writeSnapshot writes the entries to the snapshot name, and returns its
+// size. Each record has the seq of the write that set its entry, so that
+// revisions outlive compactions.
+func (t *Table[K, V]) writeSnapshot(name string) (int64, error) {
 	path := filepath.Join(t.dir, name)
 	f, err := os.Create(path + ".tmp")
 	if err != nil {
@@ -508,7 +512,7 @@ func (t *Table[K, V]) writeSnapshot(name string, seq uint64) (int64, error) {
 			if body, werr = t.encode(&buf, opPut, l.key, l.val); werr != nil {
 				return false
 			}
-			out = appendRecord(out[:0], newRec(body), seq)
+			out = appendRecord(out[:0], newRec(body), l.rev)
 			if _, werr = w.Write(out); werr != nil {
 				return false
 			}
