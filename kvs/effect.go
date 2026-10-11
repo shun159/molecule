@@ -52,6 +52,9 @@ func (e writeEffect[K, V]) Perform(env gen.Env) {
 	} else {
 		b, err = e.t.put(e.key, e.val)
 	}
+	if err == nil {
+		e.t.log.kickRun()
+	}
 	tag := e.tag
 	if tag == nil {
 		if err != nil {

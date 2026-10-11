@@ -257,8 +257,7 @@ func (t *Table[K, V]) Put(k K, v V) error {
 	if err != nil {
 		return err
 	}
-	<-b.done
-	return b.err
+	return t.log.wait(b)
 }
 
 // Delete deletes the entry under k, if any, and returns once the delete
@@ -268,8 +267,7 @@ func (t *Table[K, V]) Delete(k K) error {
 	if err != nil {
 		return err
 	}
-	<-b.done
-	return b.err
+	return t.log.wait(b)
 }
 
 func (t *Table[K, V]) put(k K, v V) (*batch, error) {

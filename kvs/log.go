@@ -81,10 +81,12 @@ func appendRecord(b []byte, r rec, seq uint64) []byte {
 }
 
 // batch is the records written to the log together: done is closed once
-// they are durable, or failed with err.
+// they are durable, or failed with err. The first writer waiting for it
+// takes lead, and writes it out.
 type batch struct {
 	done chan struct{}
 	err  error
+	lead atomic.Bool
 }
 
 func newBatch() *batch { return &batch{done: make(chan struct{})} }
@@ -93,8 +95,10 @@ func newBatch() *batch { return &batch{done: make(chan struct{})} }
 var finished = func() *batch { b := newBatch(); close(b.done); return b }()
 
 // wal appends records to the segments of a directory. Writers append to
-// pending; the goroutine of run writes it out, syncs, and finishes the
+// pending, and one of those waiting writes it out, syncs, and finishes the
 // batch of those records, while the next pile up: a commit of a group.
+// The goroutine of run writes for those not waiting, effects, and for
+// SyncEvery, whose writers wait for its tick.
 type wal struct {
 	dir     string
 	sync    Sync
@@ -114,7 +118,8 @@ type wal struct {
 	closing chan struct{}
 	done    chan struct{}
 
-	// Of run.
+	// Of the holder of wmu, writing.
+	wmu      sync.Mutex
 	seg      *os.File
 	segBytes int64
 	written  uint64 // last seq written out
@@ -168,7 +173,8 @@ func startWAL(dir string, seq uint64, disk int64, segments int, o Sync, segSize 
 	return w, nil
 }
 
-// append appends r, and returns its seq and the batch it is in.
+// append appends r, and returns its seq and the batch it is in. The
+// writer then waits for the batch, or kicks run to write it.
 func (w *wal) append(r rec) (uint64, *batch, error) {
 	w.mu.Lock()
 	if w.err != nil {
@@ -178,17 +184,40 @@ func (w *wal) append(r rec) (uint64, *batch, error) {
 	}
 	w.seq++
 	seq := w.seq
-	idle := len(w.pending) == 0
 	w.pending = appendRecord(w.pending, r, seq)
 	b := w.batch
 	w.mu.Unlock()
-	if idle {
-		select {
-		case w.kick <- struct{}{}:
-		default:
-		}
-	}
 	return seq, b, nil
+}
+
+// kickRun has run write what is pending.
+func (w *wal) kickRun() {
+	select {
+	case w.kick <- struct{}{}:
+	default:
+	}
+}
+
+// wait returns once b is durable, writing it out if no one else does.
+func (w *wal) wait(b *batch) error {
+	select {
+	case <-b.done:
+		return b.err
+	default:
+	}
+	if w.sync.every > 0 {
+		w.kickRun()
+	} else if b.lead.CompareAndSwap(false, true) {
+		w.wmu.Lock()
+		select {
+		case <-b.done: // written by another
+		default:
+			w.flush()
+		}
+		w.wmu.Unlock()
+	}
+	<-b.done
+	return b.err
 }
 
 // barrier returns the batch the records appended so far are durable with.
@@ -218,13 +247,21 @@ func (w *wal) run() {
 	for {
 		select {
 		case <-w.kick:
+			w.wmu.Lock()
 			w.flush()
+			w.wmu.Unlock()
 		case <-tick:
+			w.wmu.Lock()
 			w.syncUnsynced()
+			w.wmu.Unlock()
 		case reply := <-w.rotates:
+			w.wmu.Lock()
 			w.flush()
-			reply <- w.rotate()
+			r := w.rotate()
+			w.wmu.Unlock()
+			reply <- r
 		case <-w.closing:
+			w.wmu.Lock()
 			w.flush()
 			w.syncUnsynced()
 			if w.seg != nil {
@@ -232,13 +269,15 @@ func (w *wal) run() {
 					w.syncSeg()
 				}
 				w.seg.Close()
+				w.seg = nil
 			}
+			w.wmu.Unlock()
 			return
 		}
 	}
 }
 
-// flush writes out what is pending.
+// flush writes out what is pending, under wmu.
 func (w *wal) flush() {
 	w.mu.Lock()
 	buf, b, last := w.pending, w.batch, w.seq
@@ -250,6 +289,9 @@ func (w *wal) flush() {
 	w.mu.Unlock()
 
 	err := w.failed
+	if err == nil && w.seg == nil {
+		err = ErrClosed
+	}
 	if err == nil {
 		_, err = w.seg.Write(buf)
 		if err == nil {
@@ -331,7 +373,7 @@ func (w *wal) syncUnsynced() {
 
 // finish ends b, with err; after an error, the log fails all writes.
 func (w *wal) finish(b *batch, err error) {
-	if err != nil && w.failed == nil {
+	if err != nil && err != ErrClosed && w.failed == nil {
 		w.failed = fmt.Errorf("kvs: log failed: %w", err)
 		w.mu.Lock()
 		w.err = w.failed

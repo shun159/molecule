@@ -333,3 +333,20 @@ func BenchmarkAll(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkPutSerial puts from one goroutine, unsynced: the latency of a
+// put alone.
+func BenchmarkPutSerial(b *testing.B) {
+	for _, m := range modes {
+		b.Run(m.name, func(b *testing.B) {
+			tab := open(b, benchDir(b), benchOptions(m.read, m.write, kvs.SyncNone))
+			defer tab.Close()
+			r := rand.New(rand.NewPCG(1, 2))
+			for b.Loop() {
+				if err := tab.Put(r.Uint64N(benchKeys), benchVal); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
