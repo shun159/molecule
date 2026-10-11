@@ -350,3 +350,60 @@ func BenchmarkPutSerial(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkOneWriter reads from GOMAXPROCS goroutines while one goroutine
+// puts, unsynced, all along: the reads per op, the puts as a metric.
+func BenchmarkOneWriter(b *testing.B) {
+	for _, m := range modes {
+		b.Run(m.name, func(b *testing.B) {
+			tab := filled(b, m.read, m.write)
+			oneWriter(b, func(k uint64) { tab.Get(k) }, func(k uint64) { tab.Put(k, benchVal) })
+		})
+	}
+	// Baselines: the maps alone, without a log.
+	b.Run("baseline=rwmutex", func(b *testing.B) {
+		var mu sync.RWMutex
+		m := make(map[uint64][]byte, benchKeys)
+		for k := range uint64(benchKeys) {
+			m[k] = benchVal
+		}
+		oneWriter(b, func(k uint64) { mu.RLock(); _ = m[k]; mu.RUnlock() },
+			func(k uint64) { mu.Lock(); m[k] = benchVal; mu.Unlock() })
+	})
+	b.Run("baseline=sync.Map", func(b *testing.B) {
+		var m sync.Map
+		for k := range uint64(benchKeys) {
+			m.Store(k, benchVal)
+		}
+		oneWriter(b, func(k uint64) { m.Load(k) }, func(k uint64) { m.Store(k, benchVal) })
+	})
+}
+
+func oneWriter(b *testing.B, get, put func(uint64)) {
+	stop := make(chan struct{})
+	puts := make(chan int)
+	go func() {
+		r := rand.New(rand.NewPCG(3, 4))
+		n := 0
+		for {
+			select {
+			case <-stop:
+				puts <- n
+				return
+			default:
+			}
+			put(r.Uint64N(benchKeys))
+			n++
+		}
+	}()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		r := rand.New(rand.NewPCG(rand.Uint64(), 0))
+		for pb.Next() {
+			get(r.Uint64N(benchKeys))
+		}
+	})
+	b.StopTimer()
+	close(stop)
+	b.ReportMetric(float64(<-puts)/b.Elapsed().Seconds(), "puts/s")
+}
