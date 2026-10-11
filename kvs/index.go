@@ -11,21 +11,29 @@ import (
 // entries, before letting go: the order of the writes to a key is the
 // same in memory and in the log, and a compaction locking a shard after
 // cutting the log finds every write the log holds up to the cut.
+//
+// A write with a match writes only if match, given the entry of its key,
+// reports true, and fails with ErrConflict otherwise.
 type index[K comparable, V any] interface {
-	get(k K) (V, bool)
+	// get returns the value of k, and the seq of the write that set it.
+	get(k K) (V, uint64, bool)
 	// put sets k to v, written to log by r, unless appending r fails.
-	put(log *wal, k K, v V, r rec) (*batch, error)
+	put(log *wal, k K, v V, r rec, match matcher[V]) (*batch, error)
 	// del deletes k, written to log by r. A key absent writes nothing.
-	del(log *wal, k K, r rec) (*batch, error)
+	del(log *wal, k K, r rec, match matcher[V]) (*batch, error)
 	len() int
 	// eachShard hands each shard in turn to yield, as the entries it holds,
 	// to range over without lock. With cut, they are those it holds
 	// once locked, for a compaction.
 	eachShard(cut bool, yield func(func(func(*leaf[K, V]) bool)) bool)
 	// load sets or deletes entries on opening, without the log.
-	load(k K, v V, size int64)
+	load(k K, v V, size int64, rev uint64)
 	unload(k K)
 }
+
+// matcher tells whether a write is to be made, given the entry of its
+// key, its value and rev if ok: nil for any.
+type matcher[V any] func(v V, rev uint64, ok bool) bool
 
 func newIndex[K comparable, V any](read, write bool, shards int, live *atomic.Int64) index[K, V] {
 	n := 1
@@ -83,6 +91,7 @@ type mapShard[K comparable, V any] struct {
 type entry[V any] struct {
 	val  V
 	size int64
+	rev  uint64
 }
 
 func (x *mapIndex[K, V]) shard(k K) *mapShard[K, V] {
@@ -92,33 +101,41 @@ func (x *mapIndex[K, V]) shard(k K) *mapShard[K, V] {
 	return &x.shards[x.hasher.shard(maphash.Comparable(x.seed, k))]
 }
 
-func (x *mapIndex[K, V]) get(k K) (V, bool) {
+func (x *mapIndex[K, V]) get(k K) (V, uint64, bool) {
 	s := x.shard(k)
 	s.mu.RLock()
 	e, ok := s.m[k]
 	s.mu.RUnlock()
-	return e.val, ok
+	return e.val, e.rev, ok
 }
 
-func (x *mapIndex[K, V]) put(log *wal, k K, v V, r rec) (*batch, error) {
+func (x *mapIndex[K, V]) put(log *wal, k K, v V, r rec, match matcher[V]) (*batch, error) {
 	s := x.shard(k)
 	s.mu.Lock()
-	_, b, err := log.append(r)
+	old, ok := s.m[k]
+	if match != nil && !match(old.val, old.rev, ok) {
+		s.mu.Unlock()
+		return nil, ErrConflict
+	}
+	seq, b, err := log.append(r)
 	if err != nil {
 		s.mu.Unlock()
 		return nil, err
 	}
-	old := s.m[k]
-	s.m[k] = entry[V]{v, r.size()}
+	s.m[k] = entry[V]{v, r.size(), seq}
 	s.mu.Unlock()
 	x.live.Add(r.size() - old.size)
 	return b, nil
 }
 
-func (x *mapIndex[K, V]) del(log *wal, k K, r rec) (*batch, error) {
+func (x *mapIndex[K, V]) del(log *wal, k K, r rec, match matcher[V]) (*batch, error) {
 	s := x.shard(k)
 	s.mu.Lock()
 	old, ok := s.m[k]
+	if match != nil && !match(old.val, old.rev, ok) {
+		s.mu.Unlock()
+		return nil, ErrConflict
+	}
 	if !ok {
 		s.mu.Unlock()
 		return log.barrier()
@@ -151,7 +168,7 @@ func (x *mapIndex[K, V]) eachShard(_ bool, yield func(func(func(*leaf[K, V]) boo
 		s.mu.RLock()
 		ls := make([]leaf[K, V], 0, len(s.m))
 		for k, e := range s.m {
-			ls = append(ls, leaf[K, V]{key: k, val: e.val, size: e.size})
+			ls = append(ls, leaf[K, V]{key: k, val: e.val, size: e.size, rev: e.rev})
 		}
 		s.mu.RUnlock()
 		each := func(f func(*leaf[K, V]) bool) {
@@ -167,10 +184,10 @@ func (x *mapIndex[K, V]) eachShard(_ bool, yield func(func(func(*leaf[K, V]) boo
 	}
 }
 
-func (x *mapIndex[K, V]) load(k K, v V, size int64) {
+func (x *mapIndex[K, V]) load(k K, v V, size int64, rev uint64) {
 	s := x.shard(k)
 	old := s.m[k]
-	s.m[k] = entry[V]{v, size}
+	s.m[k] = entry[V]{v, size, rev}
 	x.live.Add(size - old.size)
 }
 
@@ -201,27 +218,38 @@ type hroot[K comparable, V any] struct {
 	size int
 }
 
-func (x *hamtIndex[K, V]) get(k K) (V, bool) {
+func (x *hamtIndex[K, V]) get(k K) (V, uint64, bool) {
 	h := maphash.Comparable(x.seed, k)
 	l, ok := x.shards[x.hasher.shard(h)].root.Load().n.get(h, k)
 	if !ok {
 		var zero V
-		return zero, false
+		return zero, 0, false
 	}
-	return l.val, true
+	return l.val, l.rev, true
 }
 
-func (x *hamtIndex[K, V]) put(log *wal, k K, v V, r rec) (*batch, error) {
+func (x *hamtIndex[K, V]) put(log *wal, k K, v V, r rec, match matcher[V]) (*batch, error) {
 	h := maphash.Comparable(x.seed, k)
 	s := &x.shards[x.hasher.shard(h)]
 	s.mu.Lock()
-	_, b, err := log.append(r)
+	cur := s.root.Load()
+	if match != nil {
+		var l leaf[K, V]
+		p, ok := cur.n.get(h, k)
+		if ok {
+			l = *p
+		}
+		if !match(l.val, l.rev, ok) {
+			s.mu.Unlock()
+			return nil, ErrConflict
+		}
+	}
+	seq, b, err := log.append(r)
 	if err != nil {
 		s.mu.Unlock()
 		return nil, err
 	}
-	cur := s.root.Load()
-	n, old, replaced := cur.n.set(0, leaf[K, V]{hash: h, key: k, val: v, size: r.size()})
+	n, old, replaced := cur.n.set(0, leaf[K, V]{hash: h, key: k, val: v, size: r.size(), rev: seq})
 	size := cur.size
 	if !replaced {
 		size++
@@ -232,12 +260,16 @@ func (x *hamtIndex[K, V]) put(log *wal, k K, v V, r rec) (*batch, error) {
 	return b, nil
 }
 
-func (x *hamtIndex[K, V]) del(log *wal, k K, r rec) (*batch, error) {
+func (x *hamtIndex[K, V]) del(log *wal, k K, r rec, match matcher[V]) (*batch, error) {
 	h := maphash.Comparable(x.seed, k)
 	s := &x.shards[x.hasher.shard(h)]
 	s.mu.Lock()
 	cur := s.root.Load()
 	n, old, ok := cur.n.del(0, h, k)
+	if match != nil && !match(old.val, old.rev, ok) {
+		s.mu.Unlock()
+		return nil, ErrConflict
+	}
 	if !ok {
 		s.mu.Unlock()
 		return log.barrier()
@@ -277,11 +309,11 @@ func (x *hamtIndex[K, V]) eachShard(cut bool, yield func(func(func(*leaf[K, V]) 
 	}
 }
 
-func (x *hamtIndex[K, V]) load(k K, v V, size int64) {
+func (x *hamtIndex[K, V]) load(k K, v V, size int64, rev uint64) {
 	h := maphash.Comparable(x.seed, k)
 	s := &x.shards[x.hasher.shard(h)]
 	r := s.root.Load() // no reader yet: changed in place
-	old, replaced := r.n.setInPlace(0, leaf[K, V]{hash: h, key: k, val: v, size: size})
+	old, replaced := r.n.setInPlace(0, leaf[K, V]{hash: h, key: k, val: v, size: size, rev: rev})
 	if !replaced {
 		r.size++
 	}

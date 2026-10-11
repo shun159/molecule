@@ -37,27 +37,33 @@ func (t *Table[K, V]) DeleteEffect(k K, tag any) molecule.Effect {
 
 type writeEffect[K comparable, V any] struct {
 	molecule.Extension
-	t   *Table[K, V]
-	del bool
-	key K
-	val V
-	tag any
+	t     *Table[K, V]
+	del   bool
+	key   K
+	val   V
+	tag   any
+	ifRev bool // written only if the revision of the entry is rev
+	rev   uint64
 }
 
 func (e writeEffect[K, V]) Perform(env gen.Env) {
 	var b *batch
 	var err error
+	var match matcher[V]
+	if e.ifRev {
+		match = revIs[V](e.rev)
+	}
 	if e.del {
-		b, err = e.t.delete(e.key)
+		b, err = e.t.delete(e.key, match)
 	} else {
-		b, err = e.t.put(e.key, e.val)
+		b, err = e.t.put(e.key, e.val, match)
 	}
 	if err == nil {
 		e.t.log.kickRun()
 	}
 	tag := e.tag
 	if tag == nil {
-		if err != nil {
+		if err != nil && err != ErrConflict {
 			env.Logger().Error("kvs: write failed", "dir", e.t.dir, "error", err)
 		}
 		return
