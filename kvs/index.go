@@ -337,7 +337,8 @@ func (x *hamtIndex[K, V]) unload(k K) {
 	}
 }
 
-// treeIndex is a B-tree in each shard, in the order of the keys. Without
+// treeIndex is a B-tree in each shard, in the order of the keys, for an
+// OrderedSet. Without
 // ReadConcurrency, a write changes the tree in place, under the lock of
 // the shard, and a range freezes it, taking a new generation, to read it
 // without lock; with it, each write takes a new generation, and a read

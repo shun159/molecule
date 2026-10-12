@@ -1,7 +1,6 @@
 package kvs_test
 
 import (
-	"cmp"
 	"fmt"
 	"maps"
 	"math/rand/v2"
@@ -38,7 +37,7 @@ func TestOrdered(t *testing.T) {
 	for _, m := range modes {
 		t.Run(m.name, func(t *testing.T) {
 			dir := t.TempDir()
-			o := kvs.Options[int, int]{ReadConcurrency: m.read, WriteConcurrency: m.write, Shards: 4, Compare: cmp.Compare[int]}
+			o := kvs.Options[int, int]{ReadConcurrency: m.read, WriteConcurrency: m.write, Shards: 4, Type: kvs.OrderedSet}
 			tab := open(t, dir, o)
 			r := rand.New(rand.NewPCG(1, 1))
 			want := map[int]int{}
@@ -74,7 +73,7 @@ func TestOrdered(t *testing.T) {
 						t.Fatalf("Get(%d) = %d %v, want %d", k, got, ok, v)
 					}
 				}
-				if tab.Len() != len(want) || !tab.Info().Ordered {
+				if tab.Len() != len(want) || tab.Info().Type != kvs.OrderedSet {
 					t.Fatalf("Info = %+v, want %d entries", tab.Info(), len(want))
 				}
 			}
@@ -116,7 +115,7 @@ func TestOrdered(t *testing.T) {
 func TestRangeWhileWriting(t *testing.T) {
 	for _, m := range modes {
 		t.Run(m.name, func(t *testing.T) {
-			o := kvs.Options[int, int]{ReadConcurrency: m.read, WriteConcurrency: m.write, Shards: 4, Compare: cmp.Compare[int], Sync: kvs.SyncNone}
+			o := kvs.Options[int, int]{ReadConcurrency: m.read, WriteConcurrency: m.write, Shards: 4, Type: kvs.OrderedSet, Sync: kvs.SyncNone}
 			tab := open(t, t.TempDir(), o)
 			defer tab.Close()
 			for k := range 1000 {
@@ -164,9 +163,9 @@ func TestRangeWhileWriting(t *testing.T) {
 	}
 }
 
-// Range orders keys of any type by Compare: addresses by netip.Addr.Compare.
+// Range orders addresses by netip.Addr.Compare, found for itself.
 func TestRangeAddrs(t *testing.T) {
-	tab := open(t, t.TempDir(), kvs.Options[netip.Addr, string]{Compare: netip.Addr.Compare})
+	tab := open(t, t.TempDir(), kvs.Options[netip.Addr, string]{Type: kvs.OrderedSet})
 	defer tab.Close()
 	for i := range 20 {
 		ip := netip.AddrFrom4([4]byte{192, 168, 1, byte(250 - 10*i)})
@@ -183,7 +182,7 @@ func TestRangeUnordered(t *testing.T) {
 	defer tab.Close()
 	defer func() {
 		if recover() == nil {
-			t.Fatal("Range of a table without Compare did not panic")
+			t.Fatal("Range of a Set did not panic")
 		}
 	}()
 	tab.Range(0, 1)

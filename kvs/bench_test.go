@@ -1,7 +1,6 @@
 package kvs_test
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"math/rand/v2"
@@ -409,7 +408,7 @@ func oneWriter(b *testing.B, get, put func(uint64)) {
 	b.ReportMetric(float64(<-puts)/b.Elapsed().Seconds(), "puts/s")
 }
 
-// BenchmarkOrdered measures a table with Compare, of benchKeys entries:
+// BenchmarkOrdered measures an OrderedSet of benchKeys entries:
 // parallel gets, puts from one goroutine, unsynced, ranges of 100 entries,
 // and opening, to compare with the benchmarks of the tables without.
 func BenchmarkOrdered(b *testing.B) {
@@ -418,7 +417,7 @@ func BenchmarkOrdered(b *testing.B) {
 		read, write bool
 	}) kvs.Options[uint64, []byte] {
 		o := benchOptions(m.read, m.write, kvs.SyncNone)
-		o.Compare = cmp.Compare[uint64]
+		o.Type = kvs.OrderedSet
 		return o
 	}
 	filledOrdered := func(b *testing.B, o kvs.Options[uint64, []byte]) *kvs.Table[uint64, []byte] {

@@ -8,6 +8,7 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,9 +30,12 @@ type Options[K comparable, V any] struct {
 	// to a power of two: 64 if zero.
 	Shards int
 
-	// Compare orders the keys, as cmp.Compare does, reporting 0 for
-	// equal keys only: if set, the table holds its entries in a B-tree
-	// in each shard, and ranges over them in order, see Range.
+	// Type is Set, the default, or OrderedSet.
+	Type Type
+	// Compare orders the keys of an OrderedSet, as cmp.Compare does,
+	// reporting 0 for equal keys only. If nil, the order of K: by its
+	// method Compare(K) int, if any, as for netip.Addr and time.Time, or
+	// that of its strings, numbers, or arrays of bytes.
 	Compare func(a, b K) int
 
 	// Sync says when a write is durable: SyncEach if zero.
@@ -116,6 +120,17 @@ func Open[K comparable, V any](dir string, opts Options[K, V]) (*Table[K, V], er
 	}
 	if opts.CompactMin <= 0 {
 		opts.CompactMin = 16 << 20
+	}
+	switch {
+	case opts.Type == Set && opts.Compare != nil:
+		return nil, errors.New("kvs: Compare of a Set")
+	case opts.Type == OrderedSet && opts.Compare == nil:
+		var ok bool
+		if opts.Compare, ok = compareOf[K](); !ok {
+			return nil, fmt.Errorf("kvs: no order of %v for an OrderedSet: give Compare", reflect.TypeFor[K]())
+		}
+	case opts.Type != Set && opts.Type != OrderedSet:
+		return nil, fmt.Errorf("kvs: %v", opts.Type)
 	}
 	t := &Table[K, V]{dir: dir, opts: opts, kc: opts.KeyCodec, vc: opts.ValueCodec}
 	if t.kc == nil {
@@ -341,10 +356,10 @@ func (t *Table[K, V]) encode(bp *[]byte, op byte, k K, v V) ([]byte, error) {
 	return b[start:], nil
 }
 
-// All returns the entries, in the order of their keys if the table has
-// Compare. Each shard is ranged over as it was at a moment: without
-// ReadConcurrency, as a copy of it, unless the table has Compare. The
-// table may be written during the range.
+// All returns the entries, in the order of their keys in an OrderedSet.
+// Each shard is ranged over as it was at a moment: in a Set without
+// ReadConcurrency, as a copy of it. The table may be written during the
+// range.
 func (t *Table[K, V]) All() iter.Seq2[K, V] {
 	return t.Select(nil)
 }
@@ -370,14 +385,14 @@ func (t *Table[K, V]) Select(keep func(K, V) bool) iter.Seq2[K, V] {
 }
 
 // Range returns the entries of the keys from lo, up to hi but not hi, in
-// order, as All does. It panics if the table has no Compare.
+// order, as All does. It panics if the table is not an OrderedSet.
 //
 // With WriteConcurrency, it merges the entries of the shards: a range of
 // few entries costs a search in each shard.
 func (t *Table[K, V]) Range(lo, hi K) iter.Seq2[K, V] {
 	x, ok := t.idx.(*treeIndex[K, V])
 	if !ok {
-		panic("kvs: Range of a table without Compare")
+		panic("kvs: Range of a Set")
 	}
 	return func(yield func(K, V) bool) {
 		x.ascend(&lo, &hi, func(l *leaf[K, V]) bool { return yield(l.key, l.val) })
@@ -390,8 +405,7 @@ type Info struct {
 	ReadConcurrency  bool
 	WriteConcurrency bool
 	Shards           int
-	// Ordered tells that the table has Compare.
-	Ordered bool
+	Type             Type
 
 	// Size is the number of entries; LiveBytes, the size of the records
 	// that wrote them, in the log.
@@ -430,7 +444,7 @@ func (t *Table[K, V]) Info() Info {
 		ReadConcurrency:  t.opts.ReadConcurrency,
 		WriteConcurrency: t.opts.WriteConcurrency,
 		Shards:           shards,
-		Ordered:          t.opts.Compare != nil,
+		Type:             t.opts.Type,
 		Size:             t.idx.len(),
 		LiveBytes:        t.live.Load(),
 		DiskBytes:        t.log.disk.Load(),
