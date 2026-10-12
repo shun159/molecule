@@ -8,6 +8,7 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,14 @@ type Options[K comparable, V any] struct {
 	// Shards is the number of shards with WriteConcurrency, rounded up
 	// to a power of two: 64 if zero.
 	Shards int
+
+	// Type is Set, the default, or OrderedSet.
+	Type Type
+	// Compare orders the keys of an OrderedSet, as cmp.Compare does,
+	// reporting 0 for equal keys only. If nil, the order of K: by its
+	// method Compare(K) int, if any, as for netip.Addr and time.Time, or
+	// that of its strings, numbers, or arrays of bytes.
+	Compare func(a, b K) int
 
 	// Sync says when a write is durable: SyncEach if zero.
 	Sync Sync
@@ -112,6 +121,17 @@ func Open[K comparable, V any](dir string, opts Options[K, V]) (*Table[K, V], er
 	if opts.CompactMin <= 0 {
 		opts.CompactMin = 16 << 20
 	}
+	switch {
+	case opts.Type == Set && opts.Compare != nil:
+		return nil, errors.New("kvs: Compare of a Set")
+	case opts.Type == OrderedSet && opts.Compare == nil:
+		var ok bool
+		if opts.Compare, ok = compareOf[K](); !ok {
+			return nil, fmt.Errorf("kvs: no order of %v for an OrderedSet: give Compare", reflect.TypeFor[K]())
+		}
+	case opts.Type != Set && opts.Type != OrderedSet:
+		return nil, fmt.Errorf("kvs: %v", opts.Type)
+	}
 	t := &Table[K, V]{dir: dir, opts: opts, kc: opts.KeyCodec, vc: opts.ValueCodec}
 	if t.kc == nil {
 		t.kc = DefaultCodec[K]()
@@ -127,7 +147,7 @@ func Open[K comparable, V any](dir string, opts Options[K, V]) (*Table[K, V], er
 		return nil, err
 	}
 	t.lock = lock
-	t.idx = newIndex[K, V](opts.ReadConcurrency, opts.WriteConcurrency, opts.Shards, &t.live)
+	t.idx = newIndex[K, V](opts.ReadConcurrency, opts.WriteConcurrency, opts.Shards, opts.Compare, &t.live)
 	seq, disk, segs, err := t.recover()
 	if err == nil {
 		t.log, err = startWAL(dir, seq, disk, segs, opts.Sync, opts.SegmentSize)
@@ -336,9 +356,10 @@ func (t *Table[K, V]) encode(bp *[]byte, op byte, k K, v V) ([]byte, error) {
 	return b[start:], nil
 }
 
-// All returns the entries. Each shard is ranged over as it was at a
-// moment: without ReadConcurrency, as a copy of it. The table may be
-// written during the range.
+// All returns the entries, in the order of their keys in an OrderedSet.
+// Each shard is ranged over as it was at a moment: in a Set without
+// ReadConcurrency, as a copy of it. The table may be written during the
+// range.
 func (t *Table[K, V]) All() iter.Seq2[K, V] {
 	return t.Select(nil)
 }
@@ -347,16 +368,34 @@ func (t *Table[K, V]) All() iter.Seq2[K, V] {
 // as All does.
 func (t *Table[K, V]) Select(keep func(K, V) bool) iter.Seq2[K, V] {
 	return func(yield func(K, V) bool) {
+		f := func(l *leaf[K, V]) bool { return keep != nil && !keep(l.key, l.val) || yield(l.key, l.val) }
+		if x, ok := t.idx.(*treeIndex[K, V]); ok {
+			x.ascend(nil, nil, f)
+			return
+		}
 		t.idx.eachShard(false, func(each func(func(*leaf[K, V]) bool)) bool {
 			ok := true
 			each(func(l *leaf[K, V]) bool {
-				if keep == nil || keep(l.key, l.val) {
-					ok = yield(l.key, l.val)
-				}
+				ok = f(l)
 				return ok
 			})
 			return ok
 		})
+	}
+}
+
+// Range returns the entries of the keys from lo, up to hi but not hi, in
+// order, as All does. It panics if the table is not an OrderedSet.
+//
+// With WriteConcurrency, it merges the entries of the shards: a range of
+// few entries costs a search in each shard.
+func (t *Table[K, V]) Range(lo, hi K) iter.Seq2[K, V] {
+	x, ok := t.idx.(*treeIndex[K, V])
+	if !ok {
+		panic("kvs: Range of a Set")
+	}
+	return func(yield func(K, V) bool) {
+		x.ascend(&lo, &hi, func(l *leaf[K, V]) bool { return yield(l.key, l.val) })
 	}
 }
 
@@ -366,6 +405,7 @@ type Info struct {
 	ReadConcurrency  bool
 	WriteConcurrency bool
 	Shards           int
+	Type             Type
 
 	// Size is the number of entries; LiveBytes, the size of the records
 	// that wrote them, in the log.
@@ -404,6 +444,7 @@ func (t *Table[K, V]) Info() Info {
 		ReadConcurrency:  t.opts.ReadConcurrency,
 		WriteConcurrency: t.opts.WriteConcurrency,
 		Shards:           shards,
+		Type:             t.opts.Type,
 		Size:             t.idx.len(),
 		LiveBytes:        t.live.Load(),
 		DiskBytes:        t.log.disk.Load(),
