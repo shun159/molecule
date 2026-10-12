@@ -460,14 +460,18 @@ func (x *treeIndex[K, V]) len() int {
 	return n
 }
 
-// frozen returns the root of shard i, to read without lock.
-func (x *treeIndex[K, V]) frozen(i int) *bnode[K, V] {
+// frozen returns the root of shard i, to read without lock. With cut, it
+// waits for the write under way, for the writes the log holds to be in
+// the root.
+func (x *treeIndex[K, V]) frozen(i int, cut bool) *bnode[K, V] {
 	s := &x.shards[i]
-	if x.lockless {
+	if x.lockless && !cut {
 		return s.root.Load().n
 	}
 	s.mu.Lock()
-	s.gen++
+	if !x.lockless {
+		s.gen++
+	}
 	n := s.root.Load().n
 	s.mu.Unlock()
 	return n
@@ -475,12 +479,7 @@ func (x *treeIndex[K, V]) frozen(i int) *bnode[K, V] {
 
 func (x *treeIndex[K, V]) eachShard(cut bool, yield func(func(func(*leaf[K, V]) bool)) bool) {
 	for i := range x.shards {
-		if cut && x.lockless {
-			s := &x.shards[i]
-			s.mu.Lock() // for the writes the log holds to be in the root
-			s.mu.Unlock()
-		}
-		root := x.frozen(i)
+		root := x.frozen(i, cut)
 		each := func(f func(*leaf[K, V]) bool) {
 			c := cursor[K, V]{cmp: x.cmp}
 			for c.seek(root, nil); c.cur != nil && f(c.cur); c.next() {
@@ -504,7 +503,7 @@ func (x *treeIndex[K, V]) ascend(lo, hi *K, yield func(*leaf[K, V]) bool) {
 		if hi != nil {
 			c.hi, c.hasHi = *hi, true
 		}
-		if c.seek(x.frozen(i), lo); c.cur != nil {
+		if c.seek(x.frozen(i, false), lo); c.cur != nil {
 			cs = append(cs, c)
 		}
 	}
