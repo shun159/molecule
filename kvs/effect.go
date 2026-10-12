@@ -61,10 +61,15 @@ func (e writeEffect[K, V]) Perform(env gen.Env) {
 	if err == nil {
 		e.t.log.kickRun()
 	}
-	tag := e.tag
+	e.t.deliver(env, e.tag, b, err)
+}
+
+// deliver sends the behaviour of env a Durable with tag once b is
+// durable, or with err at once, if any; with a nil tag, it logs err.
+func (t *Table[K, V]) deliver(env gen.Env, tag any, b *batch, err error) {
 	if tag == nil {
 		if err != nil && err != ErrConflict {
-			env.Logger().Error("kvs: write failed", "dir", e.t.dir, "error", err)
+			env.Logger().Error("kvs: write failed", "dir", t.dir, "error", err)
 		}
 		return
 	}
