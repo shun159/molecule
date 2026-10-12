@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/shun159/molecule"
 	"github.com/shun159/molecule/behaviours/genserver"
@@ -486,4 +487,58 @@ func BenchmarkOrdered(b *testing.B) {
 			}
 		})
 	}
+}
+
+// BenchmarkPutExpiring puts, unsynced, to a table with Expires, from one
+// goroutine and from GOMAXPROCS, to compare with BenchmarkPutSerial and
+// BenchmarkPut: the cost of noting when each entry expires.
+func BenchmarkPutExpiring(b *testing.B) {
+	o := func(m struct {
+		name        string
+		read, write bool
+	}) kvs.Options[uint64, time.Time] {
+		return kvs.Options[uint64, time.Time]{
+			ReadConcurrency: m.read, WriteConcurrency: m.write, Sync: kvs.SyncNone,
+			Expires: func(t time.Time) time.Time { return t },
+		}
+	}
+	exp := time.Now().Add(time.Hour)
+	for _, m := range modes {
+		b.Run("serial/"+m.name, func(b *testing.B) {
+			tab := open(b, benchDir(b), o(m))
+			defer tab.Close()
+			r := rand.New(rand.NewPCG(1, 2))
+			for b.Loop() {
+				tab.Put(r.Uint64N(benchKeys), exp)
+			}
+		})
+	}
+	for _, m := range modes {
+		b.Run("parallel/"+m.name, func(b *testing.B) {
+			tab := open(b, benchDir(b), o(m))
+			defer tab.Close()
+			b.RunParallel(func(pb *testing.PB) {
+				r := rand.New(rand.NewPCG(rand.Uint64(), 0))
+				for pb.Next() {
+					tab.Put(r.Uint64N(benchKeys), exp)
+				}
+			})
+		})
+	}
+	b.Run("expire", func(b *testing.B) {
+		m := modes[2]
+		tab := open(b, benchDir(b), o(m))
+		defer tab.Close()
+		for b.Loop() {
+			b.StopTimer()
+			for k := range uint64(1000) {
+				tab.Put(k, exp)
+			}
+			b.StartTimer()
+			if n, _ := tab.Expire(exp); n != 1000 {
+				b.Fatal(n)
+			}
+		}
+		b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N)/1000, "ns/entry")
+	})
 }

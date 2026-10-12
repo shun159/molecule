@@ -38,6 +38,10 @@ type Options[K comparable, V any] struct {
 	// that of its strings, numbers, or arrays of bytes.
 	Compare func(a, b K) int
 
+	// Expires tells when the entry of a value expires, if ever, with the
+	// zero time: if set, Expire deletes the entries expired.
+	Expires func(V) time.Time
+
 	// Sync says when a write is durable: SyncEach if zero.
 	Sync Sync
 	// SegmentSize is the size past which the log goes on in a new
@@ -100,6 +104,8 @@ type Table[K comparable, V any] struct {
 	compactions atomic.Uint64
 	lastCompact atomic.Int64 // unix nanoseconds
 	compactErr  atomic.Pointer[error]
+
+	exp *expiries[K, V] // with Expires
 }
 
 // Open opens the table of the directory dir, made if missing: it reads the
@@ -155,6 +161,9 @@ func Open[K comparable, V any](dir string, opts Options[K, V]) (*Table[K, V], er
 	if err != nil {
 		unlockDir(lock)
 		return nil, err
+	}
+	if opts.Expires != nil {
+		t.exp = newExpiries(t)
 	}
 	return t, nil
 }
@@ -306,6 +315,7 @@ func (t *Table[K, V]) put(k K, v V, match matcher[V]) (*batch, error) {
 	}
 	b, err := t.idx.put(t.log, k, v, newRec(body), match)
 	if err == nil {
+		t.noteExpiry(k, v)
 		t.maybeCompact()
 	}
 	return b, err

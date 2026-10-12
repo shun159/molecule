@@ -67,6 +67,20 @@
 // ReadConcurrency copies the nodes of its path. With WriteConcurrency, a
 // range merges the shards, and searches each.
 //
+// # Expiry
+//
+// A table with Expires in its Options knows when the entry of each value
+// expires, as a lease does, and [Table.Expire] deletes the entries expired
+// at a time, as conditional deletes: an entry written again meanwhile
+// stays. The table deletes nothing by itself, and reads see an entry
+// expired until then. A behaviour expires them with [Table.ExpireEffect]
+// at the time of its clock, on a timer set by [Table.NextExpiry]:
+//
+//	Expires: func(l Lease) time.Time { return l.Expiry },
+//	...
+//	case tick:
+//		return s, molecule.Do(s.leases.ExpireEffect(s.now(), nil))
+//
 // # The log
 //
 // The log is the files of a directory, which the table holds alone while
