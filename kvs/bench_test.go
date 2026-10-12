@@ -1,6 +1,7 @@
 package kvs_test
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math/rand/v2"
@@ -406,4 +407,84 @@ func oneWriter(b *testing.B, get, put func(uint64)) {
 	b.StopTimer()
 	close(stop)
 	b.ReportMetric(float64(<-puts)/b.Elapsed().Seconds(), "puts/s")
+}
+
+// BenchmarkOrdered measures a table with Compare, of benchKeys entries:
+// parallel gets, puts from one goroutine, unsynced, ranges of 100 entries,
+// and opening, to compare with the benchmarks of the tables without.
+func BenchmarkOrdered(b *testing.B) {
+	ordered := func(m struct {
+		name        string
+		read, write bool
+	}) kvs.Options[uint64, []byte] {
+		o := benchOptions(m.read, m.write, kvs.SyncNone)
+		o.Compare = cmp.Compare[uint64]
+		return o
+	}
+	filledOrdered := func(b *testing.B, o kvs.Options[uint64, []byte]) *kvs.Table[uint64, []byte] {
+		tab := open(b, benchDir(b), o)
+		b.Cleanup(func() { tab.Close() })
+		for _, k := range rand.New(rand.NewPCG(1, 1)).Perm(benchKeys) {
+			tab.Put(uint64(k), benchVal)
+		}
+		return tab
+	}
+	for _, m := range modes {
+		b.Run("get/"+m.name, func(b *testing.B) {
+			tab := filledOrdered(b, ordered(m))
+			b.ResetTimer()
+			b.RunParallel(func(pb *testing.PB) {
+				r := rand.New(rand.NewPCG(rand.Uint64(), 0))
+				for pb.Next() {
+					if _, ok := tab.Get(r.Uint64N(benchKeys)); !ok {
+						b.Error("missing")
+						return
+					}
+				}
+			})
+		})
+	}
+	for _, m := range modes {
+		b.Run("put/"+m.name, func(b *testing.B) {
+			tab := filledOrdered(b, ordered(m))
+			r := rand.New(rand.NewPCG(1, 2))
+			b.ResetTimer()
+			for b.Loop() {
+				tab.Put(r.Uint64N(benchKeys), benchVal)
+			}
+		})
+	}
+	for _, m := range modes {
+		b.Run("range100/"+m.name, func(b *testing.B) {
+			tab := filledOrdered(b, ordered(m))
+			r := rand.New(rand.NewPCG(1, 2))
+			b.ResetTimer()
+			for b.Loop() {
+				lo := r.Uint64N(benchKeys - 100)
+				n := 0
+				for range tab.Range(lo, lo+100) {
+					n++
+				}
+				if n != 100 {
+					b.Fatal(n)
+				}
+			}
+		})
+	}
+	for _, m := range modes {
+		b.Run("open/"+m.name, func(b *testing.B) {
+			dir := benchDir(b)
+			o := ordered(m)
+			tab := open(b, dir, o)
+			for k := range uint64(benchKeys) {
+				tab.Put(k, benchVal)
+			}
+			tab.Close()
+			b.ResetTimer()
+			for b.Loop() {
+				tab := open(b, dir, o)
+				tab.Close()
+			}
+		})
+	}
 }

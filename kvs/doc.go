@@ -51,6 +51,20 @@
 // moment, and may write to the table; without ReadConcurrency, it copies
 // each shard to do so.
 //
+// # Order
+//
+// A table with Compare in its Options holds its entries in the order of
+// their keys, in a B-tree, copied on write, in place of the map or the
+// trie: All goes in that order, and [Table.Range] goes over the keys of an
+// interval. A range copies nothing, in any mode.
+//
+//	leases, err := kvs.Open(dir, kvs.Options[netip.Addr, Lease]{Compare: netip.Addr.Compare})
+//	for ip, lease := range leases.Range(lo, hi) {
+//
+// It costs more than a map: a get searches the tree, and a write with
+// ReadConcurrency copies the nodes of its path. With WriteConcurrency, a
+// range merges the shards, and searches each.
+//
 // # The log
 //
 // The log is the files of a directory, which the table holds alone while
