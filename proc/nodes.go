@@ -51,7 +51,7 @@ func (t *nodeTable) watch(p *process) {
 	t.watchers[p.pid] = p
 	// Under the lock, so that what changes after comes after.
 	for _, node := range slices.Sorted(maps.Keys(t.conn)) {
-		p.mbox.push(NodeUp{node})
+		p.push(NodeUp{node})
 	}
 }
 
@@ -72,7 +72,7 @@ func (t *nodeTable) up(node string) {
 	}
 	t.conn[node] = true
 	for _, p := range t.watchers {
-		p.mbox.push(NodeUp{node})
+		p.push(NodeUp{node})
 	}
 }
 
@@ -84,6 +84,6 @@ func (t *nodeTable) down(node string) {
 	}
 	delete(t.conn, node)
 	for _, p := range t.watchers {
-		p.mbox.push(NodeDown{node})
+		p.push(NodeDown{node})
 	}
 }

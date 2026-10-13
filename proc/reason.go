@@ -29,6 +29,9 @@ var (
 	// NoConnection is the reason delivered when the node of a remote
 	// process cannot be reached.
 	NoConnection = errors.New("noconnection")
+	// MailboxFull is the reason of a process killed for having more
+	// messages waiting than its limit, see Self.SetMaxMessages.
+	MailboxFull = errors.New("mailbox full")
 )
 
 // ExitMsg is delivered to the mailbox of a process that traps exits in

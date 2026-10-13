@@ -62,7 +62,7 @@ func (n *Node) Spawn(fn func(*Self) error) PID {
 // messages to dead, stale or unreachable processes are silently dropped.
 func (n *Node) Send(to PID, msg any) {
 	if p := n.lookup(to); p != nil {
-		p.mbox.push(msg)
+		p.push(msg)
 		return
 	}
 	if d := n.remote(to); d != nil {
