@@ -58,6 +58,12 @@ type (
 		Msg   string
 		Attrs []any
 	}
+	// Emit hands Event to the handler of events of the node, see
+	// proc.WithEvents, as a report is logged.
+	Emit struct {
+		actor.Extension
+		Event any
+	}
 	// AckLater, among the effects of Init, holds back the end of the
 	// start until an Ack: Start returns once the behaviour has started
 	// what it starts, as a supervisor its children.

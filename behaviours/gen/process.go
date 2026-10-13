@@ -153,3 +153,9 @@ func (e procEnv) request(a proc.Alias, reply func(proc.Ref, proc.AliasMsg) any) 
 }
 
 func (e procEnv) Logger() *slog.Logger { return e.self.Node().Logger() }
+
+func (e procEnv) Emit(event any) {
+	if !e.dead() {
+		e.self.Node().Emit(event)
+	}
+}
