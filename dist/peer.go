@@ -74,6 +74,7 @@ func (d *Dist) runPeer(self *proc.Self, p *peer) error {
 
 	sock := gentcp.Start(d.n, conn, self.PID(), gentcp.Options{
 		Packet:      gentcp.Packet4,
+		PacketSize:  d.cfg.MaxFrame,
 		Active:      gentcp.Always,
 		SendTimeout: d.cfg.TickTime,
 	})
@@ -105,6 +106,10 @@ func (d *Dist) runPeer(self *proc.Self, p *peer) error {
 			if !c.tick() {
 				d.n.Logger().Warn("dist: connection silent, dropped", "node", p.node)
 				return c.close()
+			}
+		case gentcp.ErrorMsg:
+			if errors.Is(m.Err, gentcp.ErrPacketTooLarge) {
+				d.n.Logger().Warn("dist: frame past MaxFrame, connection dropped", "node", p.node)
 			}
 		case gentcp.ClosedMsg:
 			return c.close()
