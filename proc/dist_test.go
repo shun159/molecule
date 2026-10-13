@@ -116,8 +116,10 @@ func (d fakeDist) Down(ref Ref, target PID, reason error) {
 // the functions sent to it.
 func inbox(n *Node) (PID, <-chan any) {
 	ch := make(chan any, 16)
+	ready := make(chan struct{})
 	pid := n.Spawn(func(s *Self) error {
 		s.TrapExit(true)
+		close(ready)
 		for {
 			msg, err := s.Receive(context.Background())
 			if err != nil {
@@ -130,6 +132,8 @@ func inbox(n *Node) (PID, <-chan any) {
 			ch <- msg
 		}
 	})
+	// Trapping before an exit signal can come, which would kill it.
+	<-ready
 	return pid, ch
 }
 
