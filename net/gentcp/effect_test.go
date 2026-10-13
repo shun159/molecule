@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/net/gentcp"
 	"github.com/shun159/molecule/proc"
@@ -18,25 +18,25 @@ import (
 // a time.
 type echo struct{}
 
-func (echo) Init(proc.PID) (struct{}, []molecule.Effect, error) { return struct{}{}, nil, nil }
+func (echo) Init(proc.PID) (struct{}, []actor.Effect, error) { return struct{}{}, nil, nil }
 
-func (echo) HandleCall(s struct{}, _ struct{}, _ genserver.From[struct{}]) (struct{}, []molecule.Effect) {
+func (echo) HandleCall(s struct{}, _ struct{}, _ genserver.From[struct{}]) (struct{}, []actor.Effect) {
 	return s, nil
 }
 
-func (echo) HandleCast(s struct{}, sock gentcp.Socket) (struct{}, []molecule.Effect) {
-	return s, []molecule.Effect{sock.SetActiveEffect(gentcp.Once)}
+func (echo) HandleCast(s struct{}, sock gentcp.Socket) (struct{}, []actor.Effect) {
+	return s, []actor.Effect{sock.SetActiveEffect(gentcp.Once)}
 }
 
-func (echo) HandleInfo(s struct{}, msg any) (struct{}, []molecule.Effect) {
+func (echo) HandleInfo(s struct{}, msg any) (struct{}, []actor.Effect) {
 	switch m := msg.(type) {
 	case gentcp.DataMsg:
 		if string(m.Bytes) == "bye\n" {
-			return s, []molecule.Effect{m.Sock.CloseEffect()}
+			return s, []actor.Effect{m.Sock.CloseEffect()}
 		}
-		return s, []molecule.Effect{m.Sock.SendActiveEffect(m.Bytes, gentcp.Once)}
+		return s, []actor.Effect{m.Sock.SendActiveEffect(m.Bytes, gentcp.Once)}
 	case gentcp.ClosedMsg:
-		return s, []molecule.Effect{molecule.Stop{}}
+		return s, []actor.Effect{actor.Stop{}}
 	}
 	return s, nil
 }
@@ -74,18 +74,18 @@ type watch struct {
 	to   proc.PID
 }
 
-func (failing) Init(proc.PID) (proc.PID, []molecule.Effect, error) { return proc.PID{}, nil, nil }
+func (failing) Init(proc.PID) (proc.PID, []actor.Effect, error) { return proc.PID{}, nil, nil }
 
-func (failing) HandleCall(s proc.PID, _ struct{}, _ genserver.From[struct{}]) (proc.PID, []molecule.Effect) {
+func (failing) HandleCall(s proc.PID, _ struct{}, _ genserver.From[struct{}]) (proc.PID, []actor.Effect) {
 	return s, nil
 }
 
-func (failing) HandleCast(_ proc.PID, w watch) (proc.PID, []molecule.Effect) {
-	return w.to, []molecule.Effect{w.sock.SendActiveEffect([]byte("x"), gentcp.Once)}
+func (failing) HandleCast(_ proc.PID, w watch) (proc.PID, []actor.Effect) {
+	return w.to, []actor.Effect{w.sock.SendActiveEffect([]byte("x"), gentcp.Once)}
 }
 
-func (failing) HandleInfo(to proc.PID, msg any) (proc.PID, []molecule.Effect) {
-	return to, []molecule.Effect{molecule.Send{To: to, Msg: msg}}
+func (failing) HandleInfo(to proc.PID, msg any) (proc.PID, []actor.Effect) {
+	return to, []actor.Effect{actor.Send{To: to, Msg: msg}}
 }
 
 // TestSendEffectFailed fails a send made by the runtime of a behaviour: the

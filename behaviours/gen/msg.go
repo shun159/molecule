@@ -1,7 +1,7 @@
 package gen
 
-// Msg is what a Behaviour handles: a molecule.CallMsg, a
-// molecule.CastMsg, an InfoMsg, or a ContinueMsg.
+// Msg is what a Behaviour handles: a actor.CallMsg, a
+// actor.CastMsg, an InfoMsg, or a ContinueMsg.
 type Msg = any
 
 // ContinueMsg carries the Msg of a Continue effect. It is handled right

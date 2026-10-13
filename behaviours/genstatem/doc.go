@@ -9,10 +9,10 @@
 //
 // # Callbacks
 //
-//	Init(self) (St, D, []molecule.Effect, error)          init/1
-//	HandleEvent(St, D, Event) (St, D, []molecule.Effect)  handle_event/4
+//	Init(self) (St, D, []actor.Effect, error)          init/1
+//	HandleEvent(St, D, Event) (St, D, []actor.Effect)  handle_event/4
 //	StateEnter() bool                                state_enter callback mode, optional
-//	Terminate(St, D, error) []molecule.Effect             terminate/3, optional
+//	Terminate(St, D, error) []actor.Effect             terminate/3, optional
 //
 // # States
 //
@@ -27,10 +27,10 @@
 // event to the current state:
 //
 //	type State interface {
-//		handleEvent(ev genstatem.Event, data int) (State, int, []molecule.Effect)
+//		handleEvent(ev genstatem.Event, data int) (State, int, []actor.Effect)
 //	}
 //
-//	func (Pushbutton) HandleEvent(s State, data int, ev genstatem.Event) (State, int, []molecule.Effect) {
+//	func (Pushbutton) HandleEvent(s State, data int, ev genstatem.Event) (State, int, []actor.Effect) {
 //		return s.handleEvent(ev, data)
 //	}
 //
@@ -65,7 +65,7 @@
 // inserted with NextEvent is handled next, before anything in the mailbox;
 // several are handled in the order returned.
 //
-// A Call whose caller stops waiting -- see molecule.CallAbandoned -- is
+// A Call whose caller stops waiting -- see actor.CallAbandoned -- is
 // dropped if still postponed, never to be handled. Otherwise the
 // CallAbandoned arrives as Info, for a machine working for that caller to
 // stop.
@@ -99,12 +99,12 @@
 // A [Ref] calls and casts a machine, at a PID or a name, like
 // gen_statem:call, gen_statem:cast and gen_statem:send_request:
 //
-//	lock := genstatem.NewRef(molecule.Local("lock"))
+//	lock := genstatem.NewRef(actor.Local("lock"))
 //	lock.Cast(caller, Button{1})
 //	status, err := lock.Call(ctx, caller, Status{})
 //	p := lock.SendRequest(caller, Status{}) // the reply, from p, later
 //
-// A machine implementing molecule.StatusFormatter formats what the report of
+// A machine implementing actor.StatusFormatter formats what the report of
 // its terminating tells, like format_status/1; its State is the Machine.
 //
 // # Differences from gen_statem

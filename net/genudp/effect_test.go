@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/net/genudp"
 	"github.com/shun159/molecule/proc"
@@ -17,25 +17,25 @@ import (
 // process in its state what the socket tells it otherwise.
 type upper struct{ to proc.PID }
 
-func (u upper) Init(proc.PID) (struct{}, []molecule.Effect, error) { return struct{}{}, nil, nil }
+func (u upper) Init(proc.PID) (struct{}, []actor.Effect, error) { return struct{}{}, nil, nil }
 
-func (upper) HandleCall(s struct{}, _ struct{}, _ genserver.From[struct{}]) (struct{}, []molecule.Effect) {
+func (upper) HandleCall(s struct{}, _ struct{}, _ genserver.From[struct{}]) (struct{}, []actor.Effect) {
 	return s, nil
 }
 
-func (upper) HandleCast(s struct{}, sock genudp.Socket) (struct{}, []molecule.Effect) {
-	return s, molecule.Do(sock.SetActiveEffect(genudp.Once))
+func (upper) HandleCast(s struct{}, sock genudp.Socket) (struct{}, []actor.Effect) {
+	return s, actor.Do(sock.SetActiveEffect(genudp.Once))
 }
 
-func (u upper) HandleInfo(s struct{}, msg any) (struct{}, []molecule.Effect) {
+func (u upper) HandleInfo(s struct{}, msg any) (struct{}, []actor.Effect) {
 	switch m := msg.(type) {
 	case genudp.DataMsg:
 		if string(m.Bytes) == "huge" {
-			return s, molecule.Do(m.Sock.SendActiveEffect(m.From, make([]byte, 70000), genudp.Once))
+			return s, actor.Do(m.Sock.SendActiveEffect(m.From, make([]byte, 70000), genudp.Once))
 		}
-		return s, molecule.Do(m.Sock.SendActiveEffect(m.From, bytes.ToUpper(m.Bytes), genudp.Once))
+		return s, actor.Do(m.Sock.SendActiveEffect(m.From, bytes.ToUpper(m.Bytes), genudp.Once))
 	case genudp.SendErrorMsg:
-		return s, molecule.Do(molecule.Send{To: u.to, Msg: m})
+		return s, actor.Do(actor.Send{To: u.to, Msg: m})
 	}
 	return s, nil
 }

@@ -8,7 +8,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -26,26 +26,26 @@ func server(s *proc.Self) error {
 			return err
 		}
 		switch m := msg.(type) {
-		case molecule.CastMsg:
+		case actor.CastMsg:
 			state += m.Req.(int)
-		case molecule.CallMsg:
+		case actor.CallMsg:
 			switch req := m.Req.(type) {
 			case echo:
-				molecule.SendReply(s, m.From, req)
+				actor.SendReply(s, m.From, req)
 			case string:
 				switch req {
 				case "get":
-					molecule.SendReply(s, m.From, state)
+					actor.SendReply(s, m.From, state)
 				case "from":
-					molecule.SendReply(s, m.From, m.From)
+					actor.SendReply(s, m.From, m.From)
 				case "crash":
 					return errBoom
 				case "reply-then-crash":
-					molecule.SendReply(s, m.From, "bye")
+					actor.SendReply(s, m.From, "bye")
 					return errBoom
 				case "ignore":
 				case "stop":
-					molecule.SendReply(s, m.From, "ok")
+					actor.SendReply(s, m.From, "ok")
 					return nil
 				}
 			}
@@ -57,13 +57,13 @@ func server(s *proc.Self) error {
 func startServer(t *testing.T, n *proc.Node) proc.PID {
 	t.Helper()
 	pid := n.Spawn(server)
-	t.Cleanup(func() { molecule.Call(context.Background(), n, pid, "stop") })
+	t.Cleanup(func() { actor.Call(context.Background(), n, pid, "stop") })
 	return pid
 }
 
-func call(t *testing.T, caller molecule.Caller, to molecule.Dest, req any) any {
+func call(t *testing.T, caller actor.Caller, to actor.Dest, req any) any {
 	t.Helper()
-	v, err := molecule.Call(context.Background(), caller, to, req)
+	v, err := actor.Call(context.Background(), caller, to, req)
 	if err != nil {
 		t.Fatalf("Call(%v, %v): %v", to, req, err)
 	}
@@ -77,8 +77,8 @@ func TestCallAndCast(t *testing.T) {
 	if v := call(t, n, srv, "get"); v != 0 {
 		t.Errorf("get = %v", v)
 	}
-	molecule.SendCast(n, srv, 5)
-	molecule.SendCast(n, srv, 2)
+	actor.SendCast(n, srv, 5)
+	actor.SendCast(n, srv, 2)
 	if v := call(t, n, srv, "get"); v != 7 {
 		t.Errorf("get after casts = %v", v)
 	}
@@ -88,21 +88,21 @@ func TestCallFrom(t *testing.T) {
 	n := proc.NewNode("")
 	srv := startServer(t, n)
 
-	if from := call(t, n, srv, "from").(molecule.From); !from.PID.IsZero() || from.Tag.IsZero() {
+	if from := call(t, n, srv, "from").(actor.From); !from.PID.IsZero() || from.Tag.IsZero() {
 		t.Errorf("From of a node caller = %+v", from)
 	}
 
 	type result struct {
 		self proc.PID
-		from molecule.From
+		from actor.From
 	}
 	got := make(chan result, 1)
 	n.Spawn(func(s *proc.Self) error {
-		v, err := molecule.Call(context.Background(), s, srv, "from")
+		v, err := actor.Call(context.Background(), s, srv, "from")
 		if err != nil {
 			return err
 		}
-		got <- result{s.PID(), v.(molecule.From)}
+		got <- result{s.PID(), v.(actor.From)}
 		return nil
 	})
 	if r := <-got; r.from.PID != r.self {
@@ -113,23 +113,23 @@ func TestCallFrom(t *testing.T) {
 func TestCallLocalName(t *testing.T) {
 	n := proc.NewNode("")
 	srv := startServer(t, n)
-	if err := molecule.Local("srv").Register(n, srv); err != nil {
+	if err := actor.Local("srv").Register(n, srv); err != nil {
 		t.Fatal(err)
 	}
-	if pid, ok := molecule.Local("srv").WhereIs(n); !ok || pid != srv {
+	if pid, ok := actor.Local("srv").WhereIs(n); !ok || pid != srv {
 		t.Errorf("WhereIs = %v, %v", pid, ok)
 	}
-	molecule.SendCast(n, molecule.Local("srv"), 3)
-	if v := call(t, n, molecule.Local("srv"), "get"); v != 3 {
+	actor.SendCast(n, actor.Local("srv"), 3)
+	if v := call(t, n, actor.Local("srv"), "get"); v != 3 {
 		t.Errorf("get = %v", v)
 	}
 
-	_, err := molecule.Call(context.Background(), n, molecule.Local("nobody"), "get")
-	var ee *molecule.ExitError
-	if !errors.As(err, &ee) || !errors.Is(err, proc.NoProc) || ee.To != molecule.Local("nobody") {
+	_, err := actor.Call(context.Background(), n, actor.Local("nobody"), "get")
+	var ee *actor.ExitError
+	if !errors.As(err, &ee) || !errors.Is(err, proc.NoProc) || ee.To != actor.Local("nobody") {
 		t.Errorf("call to unregistered name: %v", err)
 	}
-	molecule.SendCast(n, molecule.Local("nobody"), 1) // dropped
+	actor.SendCast(n, actor.Local("nobody"), 1) // dropped
 }
 
 func TestCallNoServer(t *testing.T) {
@@ -141,14 +141,14 @@ func TestCallNoServer(t *testing.T) {
 	remote := proc.NewNode("b@host").Spawn(func(*proc.Self) error { return nil })
 
 	for _, tt := range []struct {
-		to   molecule.Dest
+		to   actor.Dest
 		want error
 	}{
 		{dead, proc.NoProc},
 		{proc.PID{}, proc.NoProc},
 		{remote, proc.NoConnection},
 	} {
-		if _, err := molecule.Call(context.Background(), n, tt.to, "get"); !errors.Is(err, tt.want) {
+		if _, err := actor.Call(context.Background(), n, tt.to, "get"); !errors.Is(err, tt.want) {
 			t.Errorf("Call(%v) = %v, want %v", tt.to, err, tt.want)
 		}
 	}
@@ -157,8 +157,8 @@ func TestCallNoServer(t *testing.T) {
 func TestCallServerCrash(t *testing.T) {
 	n := proc.NewNode("")
 	srv := n.Spawn(server)
-	_, err := molecule.Call(context.Background(), n, srv, "crash")
-	var ee *molecule.ExitError
+	_, err := actor.Call(context.Background(), n, srv, "crash")
+	var ee *actor.ExitError
 	if !errors.As(err, &ee) || ee.Reason != errBoom || ee.To != srv {
 		t.Errorf("Call = %v, want an exit with %v", err, errBoom)
 	}
@@ -168,7 +168,7 @@ func TestCallReplyThenCrash(t *testing.T) {
 	n := proc.NewNode("")
 	for range 200 {
 		srv := n.Spawn(server)
-		if v, err := molecule.Call(context.Background(), n, srv, "reply-then-crash"); v != "bye" || err != nil {
+		if v, err := actor.Call(context.Background(), n, srv, "reply-then-crash"); v != "bye" || err != nil {
 			t.Fatalf("Call = %v, %v; want the reply sent before the crash", v, err)
 		}
 	}
@@ -182,7 +182,7 @@ func TestCallTimeout(t *testing.T) {
 		defer cancel()
 
 		start := time.Now()
-		_, err := molecule.Call(ctx, n, srv, "ignore")
+		_, err := actor.Call(ctx, n, srv, "ignore")
 		if err != context.DeadlineExceeded || time.Since(start) != time.Second {
 			t.Errorf("Call = %v after %v", err, time.Since(start))
 		}
@@ -199,11 +199,11 @@ func TestCallSelf(t *testing.T) {
 	n.Spawn(func(s *proc.Self) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, err := molecule.Call(ctx, s, s.PID(), "get")
+		_, err := actor.Call(ctx, s, s.PID(), "get")
 		errc <- err
 		return nil
 	})
-	if err := <-errc; err != molecule.ErrCallingSelf {
+	if err := <-errc; err != actor.ErrCallingSelf {
 		t.Errorf("Call = %v", err)
 	}
 }
@@ -214,7 +214,7 @@ func TestCallerKilled(t *testing.T) {
 		srv := n.Spawn(server)
 		errc := make(chan error, 1)
 		caller := n.Spawn(func(s *proc.Self) error {
-			_, err := molecule.Call(context.Background(), s, srv, "ignore")
+			_, err := actor.Call(context.Background(), s, srv, "ignore")
 			errc <- err
 			return err
 		})
@@ -236,7 +236,7 @@ func TestConcurrentCalls(t *testing.T) {
 		wg.Go(func() {
 			for i := range 100 {
 				want := echo{c*1000 + i}
-				if v, err := molecule.Call(context.Background(), n, srv, want); v != want || err != nil {
+				if v, err := actor.Call(context.Background(), n, srv, want); v != want || err != nil {
 					t.Errorf("got %v, %v; want %v", v, err, want)
 					return
 				}

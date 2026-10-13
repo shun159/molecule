@@ -6,7 +6,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/proc"
 )
@@ -50,9 +50,9 @@ type adapter[St comparable, D any] struct {
 	enter bool
 }
 
-// WithClock gives the clock to the behaviour, if it is molecule.Clocked.
+// WithClock gives the clock to the behaviour, if it is actor.Clocked.
 func (a adapter[St, D]) WithClock(now func() time.Time) any {
-	c, ok := a.b.(molecule.Clocked)
+	c, ok := a.b.(actor.Clocked)
 	if !ok {
 		return a
 	}
@@ -68,16 +68,16 @@ func newAdapter[St comparable, D any](b Behaviour[St, D]) adapter[St, D] {
 	return adapter[St, D]{b: b, enter: ok && e.StateEnter()}
 }
 
-func (a adapter[St, D]) Init(self proc.PID, _ any) (Machine[St, D], []molecule.Effect, error) {
+func (a adapter[St, D]) Init(self proc.PID, _ any) (Machine[St, D], []actor.Effect, error) {
 	state, data, effs, err := a.b.Init(self)
 	if err != nil {
 		return Machine[St, D]{}, nil, err
 	}
 	m := Machine[St, D]{state: state, data: data}
-	var out []molecule.Effect
+	var out []actor.Effect
 	next, postpone, _ := a.actions(&m, effs, &out)
 	if postpone {
-		return m, append(out, molecule.Stop{Reason: ErrInitPostpone}), nil
+		return m, append(out, actor.Stop{Reason: ErrInitPostpone}), nil
 	}
 	if a.enter {
 		if m, out = a.enterState(m, state, out); stops(out) {
@@ -85,17 +85,17 @@ func (a adapter[St, D]) Init(self proc.PID, _ any) (Machine[St, D], []molecule.E
 		}
 	}
 	if len(next) > 0 {
-		out = append(out, molecule.Continue{Msg: initEvents{next}})
+		out = append(out, actor.Continue{Msg: initEvents{next}})
 	}
 	return m, out, nil
 }
 
-func (a adapter[St, D]) Handle(m Machine[St, D], msg gen.Msg) (Machine[St, D], []molecule.Effect) {
+func (a adapter[St, D]) Handle(m Machine[St, D], msg gen.Msg) (Machine[St, D], []actor.Effect) {
 	var ev Event
 	switch x := msg.(type) {
-	case molecule.CallMsg:
+	case actor.CallMsg:
 		ev = Call{From: x.From, Req: x.Req}
-	case molecule.CastMsg:
+	case actor.CastMsg:
 		ev = Cast{Msg: x.Req}
 	case gen.ContinueMsg:
 		if ie, ok := x.Msg.(initEvents); ok {
@@ -103,7 +103,7 @@ func (a adapter[St, D]) Handle(m Machine[St, D], msg gen.Msg) (Machine[St, D], [
 		}
 		ev = Internal{Msg: x.Msg}
 	case gen.InfoMsg:
-		if ab, ok := x.Msg.(molecule.CallAbandoned); ok {
+		if ab, ok := x.Msg.(actor.CallAbandoned); ok {
 			if i := slices.IndexFunc(m.postponed, abandoned(ab.From)); i >= 0 {
 				// Never handled, and now never to be: dropped.
 				m.postponed = slices.Delete(slices.Clone(m.postponed), i, i+1)
@@ -131,7 +131,7 @@ func (a adapter[St, D]) Handle(m Machine[St, D], msg gen.Msg) (Machine[St, D], [
 }
 
 // abandoned matches the Call from from.
-func abandoned(from molecule.From) func(Event) bool {
+func abandoned(from actor.From) func(Event) bool {
 	return func(ev Event) bool {
 		c, ok := ev.(Call)
 		return ok && c.From == from
@@ -142,16 +142,16 @@ func abandoned(from molecule.From) func(Event) bool {
 func (a adapter[St, D]) Label() string { return fmt.Sprintf("genstatem %T", a.b) }
 
 // FormatStatus formats the report of the machine terminating with the
-// FormatStatus of the behaviour, if it has one: see molecule.StatusFormatter.
+// FormatStatus of the behaviour, if it has one: see actor.StatusFormatter.
 // The State is the Machine, with its state and data.
-func (a adapter[St, D]) FormatStatus(st molecule.Status) molecule.Status {
-	if f, ok := a.b.(molecule.StatusFormatter); ok {
+func (a adapter[St, D]) FormatStatus(st actor.Status) actor.Status {
+	if f, ok := a.b.(actor.StatusFormatter); ok {
 		return f.FormatStatus(st)
 	}
 	return st
 }
 
-func (a adapter[St, D]) Terminate(m Machine[St, D], reason error) []molecule.Effect {
+func (a adapter[St, D]) Terminate(m Machine[St, D], reason error) []actor.Effect {
 	t, ok := a.b.(Terminator[St, D])
 	if !ok {
 		return nil
@@ -161,13 +161,13 @@ func (a adapter[St, D]) Terminate(m Machine[St, D], reason error) []molecule.Eff
 
 // run handles the events in order, with those they insert or retry, until
 // none is left or the machine stops.
-func (a adapter[St, D]) run(m Machine[St, D], queue []Event) (Machine[St, D], []molecule.Effect) {
-	var out []molecule.Effect
+func (a adapter[St, D]) run(m Machine[St, D], queue []Event) (Machine[St, D], []actor.Effect) {
+	var out []actor.Effect
 	for len(queue) > 0 {
 		ev := queue[0]
 		queue = queue[1:]
 		if m.eventTimer { // any event cancels the event timeout
-			out = append(out, molecule.CancelTimer{Key: eventTimerKey{}})
+			out = append(out, actor.CancelTimer{Key: eventTimerKey{}})
 			m.eventTimer, m.eventMsg = false, nil
 		}
 
@@ -176,7 +176,7 @@ func (a adapter[St, D]) run(m Machine[St, D], queue []Event) (Machine[St, D], []
 		m.state, m.data = state, data
 		changed := state != old
 		if changed && m.stateTimer {
-			out = append(out, molecule.CancelTimer{Key: stateTimerKey{}})
+			out = append(out, actor.CancelTimer{Key: stateTimerKey{}})
 			m.stateTimer, m.stateMsg = false, nil
 		}
 		next, postpone, repeat := a.actions(&m, effs, &out)
@@ -210,14 +210,14 @@ func (a adapter[St, D]) run(m Machine[St, D], queue []Event) (Machine[St, D], []
 }
 
 // enterState handles the state enter call after a change from old.
-func (a adapter[St, D]) enterState(m Machine[St, D], old St, out []molecule.Effect) (Machine[St, D], []molecule.Effect) {
+func (a adapter[St, D]) enterState(m Machine[St, D], old St, out []actor.Effect) (Machine[St, D], []actor.Effect) {
 	state, data, effs := a.b.HandleEvent(m.state, m.data, Enter[St]{Old: old})
 	if state != m.state {
-		return m, append(out, molecule.Stop{Reason: ErrEnterChangedState})
+		return m, append(out, actor.Stop{Reason: ErrEnterChangedState})
 	}
 	m.data = data
 	if next, postpone, repeat := a.actions(&m, effs, &out); postpone || repeat || len(next) > 0 {
-		return m, append(out, molecule.Stop{Reason: ErrEnterAction})
+		return m, append(out, actor.Stop{Reason: ErrEnterAction})
 	}
 	return m, out
 }
@@ -225,7 +225,7 @@ func (a adapter[St, D]) enterState(m Machine[St, D], old St, out []molecule.Effe
 // actions performs the actions among effs on m, turning timeouts into gen
 // timers, and appends the other effects to out. It returns the events to
 // insert, whether to postpone the event, and whether to repeat the state.
-func (a adapter[St, D]) actions(m *Machine[St, D], effs []molecule.Effect, out *[]molecule.Effect) (next []Event, postpone, repeat bool) {
+func (a adapter[St, D]) actions(m *Machine[St, D], effs []actor.Effect, out *[]actor.Effect) (next []Event, postpone, repeat bool) {
 	for _, e := range effs {
 		switch x := e.(type) {
 		case Postpone:
@@ -235,11 +235,11 @@ func (a adapter[St, D]) actions(m *Machine[St, D], effs []molecule.Effect, out *
 		case RepeatState:
 			repeat = true
 		case StartStateTimeout:
-			*out = append(*out, molecule.StartTimer{Key: stateTimerKey{}, After: x.After, At: x.At, Msg: fired{stateTimerKey{}}})
+			*out = append(*out, actor.StartTimer{Key: stateTimerKey{}, After: x.After, At: x.At, Msg: fired{stateTimerKey{}}})
 			m.stateTimer, m.stateMsg = true, x.Msg
 		case CancelStateTimeout:
 			if m.stateTimer {
-				*out = append(*out, molecule.CancelTimer{Key: stateTimerKey{}})
+				*out = append(*out, actor.CancelTimer{Key: stateTimerKey{}})
 				m.stateTimer, m.stateMsg = false, nil
 			}
 		case UpdateStateTimeout:
@@ -249,7 +249,7 @@ func (a adapter[St, D]) actions(m *Machine[St, D], effs []molecule.Effect, out *
 				next = append(next, StateTimeout{Msg: x.Msg})
 			}
 		case StartEventTimeout:
-			*out = append(*out, molecule.StartTimer{Key: eventTimerKey{}, After: x.After, At: x.At, Msg: fired{eventTimerKey{}}})
+			*out = append(*out, actor.StartTimer{Key: eventTimerKey{}, After: x.After, At: x.At, Msg: fired{eventTimerKey{}}})
 			m.eventTimer, m.eventMsg = true, x.Msg
 		case UpdateEventTimeout:
 			if m.eventTimer {
@@ -259,7 +259,7 @@ func (a adapter[St, D]) actions(m *Machine[St, D], effs []molecule.Effect, out *
 			}
 		case StartTimeout:
 			key := genericTimerKey{x.Name}
-			*out = append(*out, molecule.StartTimer{Key: key, After: x.After, At: x.At, Msg: fired{key}})
+			*out = append(*out, actor.StartTimer{Key: key, After: x.After, At: x.At, Msg: fired{key}})
 			m.generic = with(m.generic, x.Name, x.Msg)
 		case UpdateTimeout:
 			if _, ok := m.generic[x.Name]; ok {
@@ -269,7 +269,7 @@ func (a adapter[St, D]) actions(m *Machine[St, D], effs []molecule.Effect, out *
 			}
 		case CancelTimeout:
 			if _, ok := m.generic[x.Name]; ok {
-				*out = append(*out, molecule.CancelTimer{Key: genericTimerKey{x.Name}})
+				*out = append(*out, actor.CancelTimer{Key: genericTimerKey{x.Name}})
 				m.generic = without(m.generic, x.Name)
 			}
 		default:
@@ -296,7 +296,7 @@ func without(m map[any]any, k any) map[any]any {
 	return c
 }
 
-func isAction(e molecule.Effect) bool {
+func isAction(e actor.Effect) bool {
 	switch e.(type) {
 	case Postpone, NextEvent, RepeatState,
 		StartStateTimeout, CancelStateTimeout, UpdateStateTimeout,
@@ -307,9 +307,9 @@ func isAction(e molecule.Effect) bool {
 	return false
 }
 
-func stops(out []molecule.Effect) bool {
-	return slices.ContainsFunc(out, func(e molecule.Effect) bool {
-		_, ok := e.(molecule.Stop)
+func stops(out []actor.Effect) bool {
+	return slices.ContainsFunc(out, func(e actor.Effect) bool {
+		_, ok := e.(actor.Stop)
 		return ok
 	})
 }

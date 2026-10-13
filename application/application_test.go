@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/application"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/behaviours/supervisor"
@@ -42,14 +42,14 @@ type worker struct {
 	log *events
 }
 
-func (w worker) Init(proc.PID) (struct{}, []molecule.Effect, error) {
+func (w worker) Init(proc.PID) (struct{}, []actor.Effect, error) {
 	w.log.add("start " + w.id)
-	return struct{}{}, molecule.Do(molecule.TrapExit{On: true}), nil
+	return struct{}{}, actor.Do(actor.TrapExit{On: true}), nil
 }
 
-func (worker) HandleCast(struct{}, string) (struct{}, []molecule.Effect) { panic("crash") }
+func (worker) HandleCast(struct{}, string) (struct{}, []actor.Effect) { panic("crash") }
 
-func (w worker) Terminate(_ struct{}, reason error) []molecule.Effect {
+func (w worker) Terminate(_ struct{}, reason error) []actor.Effect {
 	if !proc.IsAbnormal(reason) {
 		w.log.add("stop " + w.id)
 	}
@@ -122,7 +122,7 @@ func crash(t *testing.T, n *proc.Node, r *application.Running, name, id string, 
 		c = child(t, n, r, name, id)
 		return c != prev && n.IsAlive(c)
 	})
-	n.Send(c, molecule.CastMsg{Req: "crash"})
+	n.Send(c, actor.CastMsg{Req: "crash"})
 	eventually(t, id+" down", func() bool { return !n.IsAlive(c) })
 	return c
 }

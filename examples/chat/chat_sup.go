@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/supervisor"
 	"github.com/shun159/molecule/dist/pg"
 	"github.com/shun159/molecule/net/gentcp"
@@ -13,7 +13,7 @@ import (
 
 // scope is the pg scope of the chat, and lobby the group everyone is in.
 var (
-	scope = molecule.Local("chat_pg")
+	scope = actor.Local("chat_pg")
 	lobby = "lobby"
 )
 

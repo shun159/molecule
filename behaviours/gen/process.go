@@ -8,19 +8,19 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/proc"
 )
 
 // run runs b in the current process: it registers the name, starts the
 // runner, acknowledges the start, and feeds the runner the mailbox.
-func run[S any](self *proc.Self, b Behaviour[S], args any, o molecule.StartOptions) error {
+func run[S any](self *proc.Self, b Behaviour[S], args any, o actor.StartOptions) error {
 	self.SetLabel(labelOf(b))
 	self.SetMaxMessages(o.MaxMessages)
 	if o.Name != nil {
 		if err := o.Name.Register(self.Node(), self.PID()); err != nil {
 			if pid, ok := o.Name.WhereIs(self.Node()); ok && pid != self.PID() {
-				err = &molecule.AlreadyStartedError{PID: pid}
+				err = &actor.AlreadyStartedError{PID: pid}
 			}
 			self.InitAck(err)
 			return nil
@@ -30,7 +30,7 @@ func run[S any](self *proc.Self, b Behaviour[S], args any, o molecule.StartOptio
 	r := newRuntime(b, procEnv{self}, o)
 	if err := r.Init(args); err != nil {
 		self.InitAck(err)
-		if errors.Is(err, molecule.ErrIgnore) {
+		if errors.Is(err, actor.ErrIgnore) {
 			return nil
 		}
 		return err
@@ -61,7 +61,7 @@ func (e procEnv) dead() bool { return e.self.ExitReason() != nil }
 func (e procEnv) Self() proc.PID   { return e.self.PID() }
 func (e procEnv) Parent() proc.PID { return e.self.Parent() }
 
-func (e procEnv) Resolve(dest molecule.Dest) (proc.PID, bool) { return dest.WhereIs(e.self.Node()) }
+func (e procEnv) Resolve(dest actor.Dest) (proc.PID, bool) { return dest.WhereIs(e.self.Node()) }
 
 func (e procEnv) Send(to proc.PID, msg any) {
 	if !e.dead() {

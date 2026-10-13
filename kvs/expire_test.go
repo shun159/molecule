@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/gensim"
 	"github.com/shun159/molecule/kvs"
@@ -158,17 +158,17 @@ func TestExpireUnset(t *testing.T) {
 // answering once the deletes are durable.
 type sweeper struct{ tab *kvs.Table[string, expiring] }
 
-func (sweeper) Init(proc.PID) (struct{}, []molecule.Effect, error) { return struct{}{}, nil, nil }
+func (sweeper) Init(proc.PID) (struct{}, []actor.Effect, error) { return struct{}{}, nil, nil }
 
-func (s sweeper) HandleCall(st struct{}, now time.Time, from genserver.From[error]) (struct{}, []molecule.Effect) {
-	return st, molecule.Do(s.tab.ExpireEffect(now, from))
+func (s sweeper) HandleCall(st struct{}, now time.Time, from genserver.From[error]) (struct{}, []actor.Effect) {
+	return st, actor.Do(s.tab.ExpireEffect(now, from))
 }
 
-func (sweeper) HandleCast(st struct{}, _ struct{}) (struct{}, []molecule.Effect) { return st, nil }
+func (sweeper) HandleCast(st struct{}, _ struct{}) (struct{}, []actor.Effect) { return st, nil }
 
-func (sweeper) HandleInfo(st struct{}, msg any) (struct{}, []molecule.Effect) {
+func (sweeper) HandleInfo(st struct{}, msg any) (struct{}, []actor.Effect) {
 	if d, ok := msg.(kvs.Durable); ok {
-		return st, molecule.Do(d.Tag.(genserver.From[error]).Reply(d.Err))
+		return st, actor.Do(d.Tag.(genserver.From[error]).Reply(d.Err))
 	}
 	return st, nil
 }

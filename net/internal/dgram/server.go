@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -51,7 +51,7 @@ type server[A, S any] struct {
 }
 
 type pendingRecv struct {
-	from   molecule.From
+	from   actor.From
 	seq    uint64
 	cancel func()
 }
@@ -86,16 +86,16 @@ func Serve[A, S any](self *proc.Self, k *Kind[A, S], conn Conn[A], sock S, owner
 		}
 		var stop bool
 		switch m := msg.(type) {
-		case molecule.CallMsg:
+		case actor.CallMsg:
 			var reply any
 			var deferred bool
 			reply, deferred, stop = s.handle(m.From, m.Req)
 			if !deferred {
-				molecule.SendReply(self, m.From, reply)
+				actor.SendReply(self, m.From, reply)
 			}
 		case SendReq[A], SetActiveReq, CloseReq:
 			// From the effects of a behaviour, with no one to reply to.
-			_, _, stop = s.handle(molecule.From{}, m)
+			_, _, stop = s.handle(actor.From{}, m)
 		case readFailed:
 			s.mu.Lock()
 			s.failed = m.err
@@ -103,7 +103,7 @@ func Serve[A, S any](self *proc.Self, k *Kind[A, S], conn Conn[A], sock S, owner
 		case recvTimeout:
 			s.mu.Lock()
 			if s.recv != nil && s.recv.seq == m.seq {
-				molecule.SendReply(self, s.recv.from, k.ErrTimeout)
+				actor.SendReply(self, s.recv.from, k.ErrTimeout)
 				s.recv = nil
 			}
 			s.mu.Unlock()
@@ -121,7 +121,7 @@ func Serve[A, S any](self *proc.Self, k *Kind[A, S], conn Conn[A], sock S, owner
 // handle handles a request; requests sent as effects have a zero from. It
 // returns the reply, whether it comes later, and whether the socket is to
 // close.
-func (s *server[A, S]) handle(from molecule.From, req any) (reply any, deferred, stop bool) {
+func (s *server[A, S]) handle(from actor.From, req any) (reply any, deferred, stop bool) {
 	switch r := req.(type) {
 	case SendReq[A]:
 		err := Write(s.k, s.conn, r.To, r.Data)
@@ -223,7 +223,7 @@ func (s *server[A, S]) hand(n *proc.Node, dg datagram[A]) {
 
 func (s *server[A, S]) answer(n *proc.Node, rep RecvRep[A]) {
 	s.recv.cancel()
-	molecule.SendReply(n, s.recv.from, rep)
+	actor.SendReply(n, s.recv.from, rep)
 	s.recv = nil
 }
 

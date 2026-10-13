@@ -8,22 +8,22 @@
 //
 // # Callbacks
 //
-//	Init(self) (S, []molecule.Effect, error)                init/1
-//	HandleCall(S, Req, From[Rep]) (S, []molecule.Effect)    handle_call/3
-//	HandleCast(S, Cast) (S, []molecule.Effect)              handle_cast/2
-//	HandleInfo(S, any) (S, []molecule.Effect)               handle_info/2, optional
-//	HandleContinue(S, any) (S, []molecule.Effect)           handle_continue/2, optional
-//	Terminate(S, error) []molecule.Effect                   terminate/2, optional
+//	Init(self) (S, []actor.Effect, error)                init/1
+//	HandleCall(S, Req, From[Rep]) (S, []actor.Effect)    handle_call/3
+//	HandleCast(S, Cast) (S, []actor.Effect)              handle_cast/2
+//	HandleInfo(S, any) (S, []actor.Effect)               handle_info/2, optional
+//	HandleContinue(S, any) (S, []actor.Effect)           handle_continue/2, optional
+//	Terminate(S, error) []actor.Effect                   terminate/2, optional
 //
 // The optional callbacks are those of [InfoHandler], [ContinueHandler] and
 // [Terminator]. Without HandleInfo, other messages are dropped. Without
-// HandleContinue, a molecule.Continue stops the server with
+// HandleContinue, a actor.Continue stops the server with
 // [ErrNoHandleContinue].
 //
-// A server implementing molecule.Clocked is given the clock of its process
+// A server implementing actor.Clocked is given the clock of its process
 // before Init, to read the time with: time.Now, or gensim's virtual clock.
 //
-// A server implementing molecule.StatusFormatter formats what the report of
+// A server implementing actor.StatusFormatter formats what the report of
 // its terminating tells, like format_status/1: to hide secrets of its
 // state, say.
 //
@@ -32,11 +32,11 @@
 //
 //	type Log struct{ genserver.Default[[]string] }
 //
-//	func (Log) HandleInfo(log []string, msg any) ([]string, []molecule.Effect) { ... }
+//	func (Log) HandleInfo(log []string, msg any) ([]string, []actor.Effect) { ... }
 //
 // A server takes calls of one type Req and casts of one type Cast; several
 // requests are several types implementing one interface, switched on in the
-// callback. A request of another type, which only molecule.Call or molecule.SendCast
+// callback. A request of another type, which only actor.Call or actor.SendCast
 // can send, stops the server with a [*BadMessageError].
 //
 // # Replies
@@ -53,7 +53,7 @@
 // behaviour. For a server registered under a name, [RefFor] makes a Ref
 // from the name, taking the types from the behaviour:
 //
-//	counter := genserver.RefFor(Counter{}, molecule.Local("counter"))
+//	counter := genserver.RefFor(Counter{}, actor.Local("counter"))
 //	n, err := counter.Call(ctx, caller, Get{})
 //
 // [Ref.SendRequest] calls without waiting, like gen_server:send_request:
@@ -66,12 +66,12 @@
 //
 // A callback cannot call another server and wait: it would no longer be a
 // pure function. It returns [Ref.CallEffect] instead, and the reply arrives
-// later as a molecule.Response in HandleInfo, with the tag given. Two servers
+// later as a actor.Response in HandleInfo, with the tag given. Two servers
 // calling each other therefore cannot deadlock. [Ref.CastEffect] casts.
 //
 // # Stopping
 //
-// A server stops when a callback returns molecule.Stop, when a callback panics,
+// A server stops when a callback returns actor.Stop, when a callback panics,
 // when [Ref.Stop] or gen.Terminate is called, and, if it traps exits, when
 // its parent exits. Terminate runs then. See gen for the details.
 //
@@ -81,5 +81,5 @@
 // them:
 //
 //	n, effs := Counter{}.HandleCall(3, Reset{}, from)
-//	// n == 0, effs == molecule.Do(from.Reply(3))
+//	// n == 0, effs == actor.Do(from.Reply(3))
 package genserver

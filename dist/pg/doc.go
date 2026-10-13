@@ -11,7 +11,7 @@
 //
 // # Nodes
 //
-// A scope started under a molecule.Local name shares its groups with the
+// A scope started under a actor.Local name shares its groups with the
 // scopes of the same name on the nodes its node is connected to, as
 // Erlang's pg does: it monitors the nodes, discovers the scope of each
 // node coming up, which tells it its members, then those joining and
@@ -29,7 +29,7 @@
 // [Join], [Leave], [Members] and [Which] are calls, for code that may wait.
 // A behaviour, being pure, does not wait: it returns [JoinEffect],
 // [LeaveEffect] and [SendEffect] instead, and asks for members with
-// molecule.SendRequest and a [MembersRequest], the answer arriving later.
+// actor.SendRequest and a [MembersRequest], the answer arriving later.
 // SendEffect, which Erlang's pg lacks, has the scope send a message to
 // every member of a group, on any node, the way a behaviour broadcasts
 // without knowing the members.

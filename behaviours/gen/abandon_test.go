@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/proc"
 )
@@ -31,12 +31,12 @@ func abandoned(t *testing.T, s *proc.Self) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	msg, err := s.Receive(ctx)
-	call, ok := msg.(molecule.CallMsg)
+	call, ok := msg.(actor.CallMsg)
 	if err != nil || !ok {
 		t.Fatalf("got %#v, %v, want the CallMsg", msg, err)
 	}
 	msg, err = s.Receive(ctx)
-	ab, ok := msg.(molecule.CallAbandoned)
+	ab, ok := msg.(actor.CallAbandoned)
 	if err != nil || !ok || ab.From != call.From {
 		t.Fatalf("got %#v, %v, want the CallAbandoned of %v", msg, err, call.From)
 	}
@@ -63,7 +63,7 @@ func TestCallAbandoned(t *testing.T) {
 		srv := s.Spawn(recorder(s.PID()))
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 		defer cancel()
-		if _, err := molecule.Call(ctx, s, srv, "never answered"); err != context.DeadlineExceeded {
+		if _, err := actor.Call(ctx, s, srv, "never answered"); err != context.DeadlineExceeded {
 			t.Fatalf("Call = %v", err)
 		}
 		abandoned(t, s)
@@ -75,10 +75,10 @@ func TestCallAnsweredNotAbandoned(t *testing.T) {
 	n := proc.NewNode("")
 	inProcess(t, n, func(s *proc.Self) {
 		srv := n.Spawn(server)
-		if _, err := molecule.Call(context.Background(), s, srv, echo{1}); err != nil {
+		if _, err := actor.Call(context.Background(), s, srv, echo{1}); err != nil {
 			t.Fatal(err)
 		}
-		molecule.Call(context.Background(), s, srv, "stop")
+		actor.Call(context.Background(), s, srv, "stop")
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
 		if msg, err := s.Receive(ctx); err == nil {
@@ -91,7 +91,7 @@ func TestRequestCancelAbandoned(t *testing.T) {
 	n := proc.NewNode("")
 	inProcess(t, n, func(s *proc.Self) {
 		srv := s.Spawn(recorder(s.PID()))
-		p := molecule.Request[any](s, srv, "never answered")
+		p := actor.Request[any](s, srv, "never answered")
 		time.Sleep(10 * time.Millisecond)
 		p.Cancel()
 		abandoned(t, s)
@@ -101,14 +101,14 @@ func TestRequestCancelAbandoned(t *testing.T) {
 // requester sends a request with a timeout to the PID cast to it.
 type requester struct{}
 
-func (requester) Init(proc.PID) (struct{}, []molecule.Effect, error) { return struct{}{}, nil, nil }
+func (requester) Init(proc.PID) (struct{}, []actor.Effect, error) { return struct{}{}, nil, nil }
 
-func (requester) HandleCall(s struct{}, _ struct{}, _ genserver.From[struct{}]) (struct{}, []molecule.Effect) {
+func (requester) HandleCall(s struct{}, _ struct{}, _ genserver.From[struct{}]) (struct{}, []actor.Effect) {
 	return s, nil
 }
 
-func (requester) HandleCast(s struct{}, to proc.PID) (struct{}, []molecule.Effect) {
-	return s, molecule.Do(molecule.SendRequest{To: to, Req: "never answered", Tag: "t", Timeout: 20 * time.Millisecond})
+func (requester) HandleCast(s struct{}, to proc.PID) (struct{}, []actor.Effect) {
+	return s, actor.Do(actor.SendRequest{To: to, Req: "never answered", Tag: "t", Timeout: 20 * time.Millisecond})
 }
 
 func TestSendRequestTimeoutAbandoned(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/proc"
 )
@@ -13,17 +13,17 @@ import (
 // Behaviour is a state machine with states St and data D.
 //
 // A Behaviour may also implement StateEnterer and Terminator, and
-// molecule.Clocked, to be given the clock of its process.
+// actor.Clocked, to be given the clock of its process.
 type Behaviour[St comparable, D any] interface {
 	// Init returns the initial state and data. self is the PID of the
 	// machine. Its effects may hold actions: timeouts to start, events to
 	// insert, handled once Start has returned.
-	Init(self proc.PID) (St, D, []molecule.Effect, error)
+	Init(self proc.PID) (St, D, []actor.Effect, error)
 	// HandleEvent handles one event, and returns the next state and data.
 	// A state different from state, by ==, is a state change: the state
 	// timeout is cancelled, postponed events are retried, and with state
 	// enter calls, Enter is handled first.
-	HandleEvent(state St, data D, ev Event) (St, D, []molecule.Effect)
+	HandleEvent(state St, data D, ev Event) (St, D, []actor.Effect)
 }
 
 // StateEnterer is implemented by machines wanting state enter calls, like
@@ -38,7 +38,7 @@ type StateEnterer interface {
 // Terminator is called when the machine stops, see gen.Behaviour. Actions
 // it returns are ignored.
 type Terminator[St comparable, D any] interface {
-	Terminate(state St, data D, reason error) []molecule.Effect
+	Terminate(state St, data D, reason error) []actor.Effect
 }
 
 // Errors stopping a machine misusing actions.
@@ -53,12 +53,12 @@ var (
 type Event interface{ event() }
 
 type (
-	// Call is a request from molecule.Call, to answer with Reply.
+	// Call is a request from actor.Call, to answer with Reply.
 	Call struct {
-		From molecule.From
+		From actor.From
 		Req  any
 	}
-	// Cast is a request from molecule.SendCast.
+	// Cast is a request from actor.SendCast.
 	Cast struct{ Msg any }
 	// Info is any other message.
 	Info struct{ Msg any }
@@ -76,7 +76,7 @@ type (
 		Msg  any
 	}
 	// Internal is an event inserted with NextEvent, or the Msg of a
-	// molecule.Continue.
+	// actor.Continue.
 	Internal struct{ Msg any }
 )
 
@@ -90,45 +90,45 @@ func (Timeout) event()      {}
 func (Internal) event()     {}
 
 // Reply is the effect answering the call.
-func (c Call) Reply(v any) molecule.Effect { return molecule.Reply{To: c.From, Value: v} }
+func (c Call) Reply(v any) actor.Effect { return actor.Reply{To: c.From, Value: v} }
 
 // Actions, the transition actions of gen_statem. They are effects, to
 // return among the others.
 type (
 	// Postpone keeps the event to handle again after the next state
 	// change.
-	Postpone struct{ molecule.Extension }
+	Postpone struct{ actor.Extension }
 	// NextEvent inserts Event to handle next, before anything in the
 	// mailbox. Several are handled in the order returned.
 	NextEvent struct {
-		molecule.Extension
+		actor.Extension
 		Event Event
 	}
 	// RepeatState, the state unchanged, has its enter call run again, as
 	// repeat_state does. Postponed events wait for a change still.
-	RepeatState struct{ molecule.Extension }
+	RepeatState struct{ actor.Extension }
 	// StartStateTimeout makes StateTimeout{Msg} arrive after After, or at
 	// At if set, like {abs, true}, unless the state changes first. It
 	// replaces a running one.
 	StartStateTimeout struct {
-		molecule.Extension
+		actor.Extension
 		After time.Duration
 		At    time.Time
 		Msg   any
 	}
 	// CancelStateTimeout cancels the state timeout.
-	CancelStateTimeout struct{ molecule.Extension }
+	CancelStateTimeout struct{ actor.Extension }
 	// UpdateStateTimeout changes the Msg of the running state timeout,
 	// without restarting it, like {state_timeout, update, Msg}. With none
 	// running, StateTimeout{Msg} is handled next, as if one fired.
 	UpdateStateTimeout struct {
-		molecule.Extension
+		actor.Extension
 		Msg any
 	}
 	// StartEventTimeout makes EventTimeout{Msg} arrive after After, or at
 	// At if set, unless another event arrives first.
 	StartEventTimeout struct {
-		molecule.Extension
+		actor.Extension
 		After time.Duration
 		At    time.Time
 		Msg   any
@@ -137,14 +137,14 @@ type (
 	// which the event being handled has cancelled, unless started by the
 	// same callback.
 	UpdateEventTimeout struct {
-		molecule.Extension
+		actor.Extension
 		Msg any
 	}
 	// StartTimeout makes Timeout{Name, Msg} arrive after After, or at At
 	// if set, whatever happens meanwhile. It replaces a running one of the
 	// same Name.
 	StartTimeout struct {
-		molecule.Extension
+		actor.Extension
 		Name  any
 		After time.Duration
 		At    time.Time
@@ -152,13 +152,13 @@ type (
 	}
 	// UpdateTimeout is UpdateStateTimeout for the generic timeout Name.
 	UpdateTimeout struct {
-		molecule.Extension
+		actor.Extension
 		Name any
 		Msg  any
 	}
 	// CancelTimeout cancels the generic timeout Name.
 	CancelTimeout struct {
-		molecule.Extension
+		actor.Extension
 		Name any
 	}
 )
@@ -170,56 +170,56 @@ func Gen[St comparable, D any](b Behaviour[St, D]) gen.Behaviour[Machine[St, D]]
 }
 
 // Start starts b in a new process, like gen_statem:start.
-func Start[St comparable, D any](ctx context.Context, n *proc.Node, b Behaviour[St, D], opts ...molecule.Option) (proc.PID, error) {
+func Start[St comparable, D any](ctx context.Context, n *proc.Node, b Behaviour[St, D], opts ...actor.Option) (proc.PID, error) {
 	return gen.Start(ctx, n, newAdapter(b), nil, opts...)
 }
 
 // StartLink starts b in a new process linked to parent, like
 // gen_statem:start_link.
-func StartLink[St comparable, D any](ctx context.Context, parent *proc.Self, b Behaviour[St, D], opts ...molecule.Option) (proc.PID, error) {
+func StartLink[St comparable, D any](ctx context.Context, parent *proc.Self, b Behaviour[St, D], opts ...actor.Option) (proc.PID, error) {
 	return gen.StartLink(ctx, parent, newAdapter(b), nil, opts...)
 }
 
 // Child returns b as a child to start, the Start of a
 // supervisor.ChildSpec, which gensim can simulate as well.
-func Child[St comparable, D any](b Behaviour[St, D], opts ...molecule.Option) gen.Child {
+func Child[St comparable, D any](b Behaviour[St, D], opts ...actor.Option) gen.Child {
 	return gen.ChildOf(newAdapter(b), nil, opts...)
 }
 
 // Ref is a handle on a machine, to call and cast it.
-type Ref struct{ dest molecule.Dest }
+type Ref struct{ dest actor.Dest }
 
 // NewRef makes a Ref to the machine at dest, a PID or a name.
-func NewRef(dest molecule.Dest) Ref { return Ref{dest} }
+func NewRef(dest actor.Dest) Ref { return Ref{dest} }
 
 // Dest returns where the machine is.
-func (r Ref) Dest() molecule.Dest { return r.dest }
+func (r Ref) Dest() actor.Dest { return r.dest }
 
 // Call sends req to the machine, as a Call event, and waits for the
-// reply, like gen_statem:call. See molecule.Call.
-func (r Ref) Call(ctx context.Context, caller molecule.Caller, req any) (any, error) {
-	return molecule.Call(ctx, caller, r.dest, req)
+// reply, like gen_statem:call. See actor.Call.
+func (r Ref) Call(ctx context.Context, caller actor.Caller, req any) (any, error) {
+	return actor.Call(ctx, caller, r.dest, req)
 }
 
 // Cast sends msg to the machine, as a Cast event, without waiting, like
 // gen_statem:cast. It never fails.
-func (r Ref) Cast(caller molecule.Caller, msg any) { molecule.SendCast(caller, r.dest, msg) }
+func (r Ref) Cast(caller actor.Caller, msg any) { actor.SendCast(caller, r.dest, msg) }
 
 // SendRequest calls the machine without waiting for the reply, like
-// gen_statem:send_request. See molecule.Pending.
-func (r Ref) SendRequest(caller molecule.Caller, req any) *molecule.Pending[any] {
-	return molecule.Request[any](caller, r.dest, req)
+// gen_statem:send_request. See actor.Pending.
+func (r Ref) SendRequest(caller actor.Caller, req any) *actor.Pending[any] {
+	return actor.Request[any](caller, r.dest, req)
 }
 
 // Stop stops the machine at to normally, like gen_statem:stop: its
 // Terminate callback runs, and Stop returns once it is dead.
-func Stop(ctx context.Context, caller molecule.Caller, to molecule.Dest) error {
+func Stop(ctx context.Context, caller actor.Caller, to actor.Dest) error {
 	return gen.Terminate(ctx, caller, to, nil)
 }
 
 // GetState returns the state and data of the machine at to, like
 // sys:get_state.
-func GetState[St comparable, D any](ctx context.Context, caller molecule.Caller, to molecule.Dest) (St, D, error) {
+func GetState[St comparable, D any](ctx context.Context, caller actor.Caller, to actor.Dest) (St, D, error) {
 	v, err := gen.GetState(ctx, caller, to)
 	m, ok := v.(Machine[St, D])
 	if err == nil && !ok {

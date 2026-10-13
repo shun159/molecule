@@ -23,7 +23,7 @@
 // A server answers once what it answered is safe:
 //
 //	case kvs.Durable:
-//		return s, molecule.Do(molecule.Reply{To: m.Tag.(molecule.From), Value: ack})
+//		return s, actor.Do(actor.Reply{To: m.Tag.(actor.From), Value: ack})
 //
 // A conditional write writes only if the entry is as it requires.
 // [Table.PutIf] and [Table.DeleteIf] compare the revision of the entry,
@@ -79,7 +79,7 @@
 //	Expires: func(l Lease) time.Time { return l.Expiry },
 //	...
 //	case tick:
-//		return s, molecule.Do(s.leases.ExpireEffect(s.now(), nil))
+//		return s, actor.Do(s.leases.ExpireEffect(s.now(), nil))
 //
 // # The log
 //

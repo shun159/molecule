@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/gensim"
 	"github.com/shun159/molecule/kvs"
@@ -22,20 +22,20 @@ type put struct {
 	V int
 }
 
-func (keeper) Init(proc.PID) (struct{}, []molecule.Effect, error) { return struct{}{}, nil, nil }
+func (keeper) Init(proc.PID) (struct{}, []actor.Effect, error) { return struct{}{}, nil, nil }
 
-func (k keeper) HandleCall(s struct{}, req put, from genserver.From[error]) (struct{}, []molecule.Effect) {
+func (k keeper) HandleCall(s struct{}, req put, from genserver.From[error]) (struct{}, []actor.Effect) {
 	if req.V < 0 {
-		return s, molecule.Do(k.tab.DeleteEffect(req.K, from))
+		return s, actor.Do(k.tab.DeleteEffect(req.K, from))
 	}
-	return s, molecule.Do(k.tab.PutEffect(req.K, req.V, from))
+	return s, actor.Do(k.tab.PutEffect(req.K, req.V, from))
 }
 
-func (keeper) HandleCast(s struct{}, _ struct{}) (struct{}, []molecule.Effect) { return s, nil }
+func (keeper) HandleCast(s struct{}, _ struct{}) (struct{}, []actor.Effect) { return s, nil }
 
-func (keeper) HandleInfo(s struct{}, msg any) (struct{}, []molecule.Effect) {
+func (keeper) HandleInfo(s struct{}, msg any) (struct{}, []actor.Effect) {
 	if d, ok := msg.(kvs.Durable); ok {
-		return s, molecule.Do(d.Tag.(genserver.From[error]).Reply(d.Err))
+		return s, actor.Do(d.Tag.(genserver.From[error]).Reply(d.Err))
 	}
 	return s, nil
 }

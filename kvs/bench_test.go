@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/kvs"
 	"github.com/shun159/molecule/proc"
@@ -228,17 +228,17 @@ func BenchmarkMixed(b *testing.B) {
 // the put is durable.
 type writer struct{ tab *kvs.Table[uint64, []byte] }
 
-func (writer) Init(proc.PID) (struct{}, []molecule.Effect, error) { return struct{}{}, nil, nil }
+func (writer) Init(proc.PID) (struct{}, []actor.Effect, error) { return struct{}{}, nil, nil }
 
-func (w writer) HandleCall(s struct{}, k uint64, from genserver.From[error]) (struct{}, []molecule.Effect) {
-	return s, molecule.Do(w.tab.PutEffect(k, benchVal, from))
+func (w writer) HandleCall(s struct{}, k uint64, from genserver.From[error]) (struct{}, []actor.Effect) {
+	return s, actor.Do(w.tab.PutEffect(k, benchVal, from))
 }
 
-func (writer) HandleCast(s struct{}, _ struct{}) (struct{}, []molecule.Effect) { return s, nil }
+func (writer) HandleCast(s struct{}, _ struct{}) (struct{}, []actor.Effect) { return s, nil }
 
-func (writer) HandleInfo(s struct{}, msg any) (struct{}, []molecule.Effect) {
+func (writer) HandleInfo(s struct{}, msg any) (struct{}, []actor.Effect) {
 	if d, ok := msg.(kvs.Durable); ok {
-		return s, molecule.Do(d.Tag.(genserver.From[error]).Reply(d.Err))
+		return s, actor.Do(d.Tag.(genserver.From[error]).Reply(d.Err))
 	}
 	return s, nil
 }

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/proc"
 )
@@ -34,17 +34,17 @@ type checkpoint struct{ Count int }
 
 type tick struct{}
 
-const workerName = molecule.Local("worker")
+const workerName = actor.Local("worker")
 
-func (w Worker) Init(proc.PID) (work, []molecule.Effect, error) {
+func (w Worker) Init(proc.PID) (work, []actor.Effect, error) {
 	if !w.Primary {
-		return work{}, molecule.Do(w.say("standing by")), nil
+		return work{}, actor.Do(w.say("standing by")), nil
 	}
-	return work{active: true}, molecule.Do(w.next()), nil
+	return work{active: true}, actor.Do(w.next()), nil
 }
 
 // HandleCast takes a checkpoint of the primary, and watches it.
-func (w Worker) HandleCast(s work, c checkpoint) (work, []molecule.Effect) {
+func (w Worker) HandleCast(s work, c checkpoint) (work, []actor.Effect) {
 	if s.active {
 		return s, nil
 	}
@@ -53,24 +53,24 @@ func (w Worker) HandleCast(s work, c checkpoint) (work, []molecule.Effect) {
 		return s, nil
 	}
 	s.watching = true
-	return s, molecule.Do(
+	return s, actor.Do(
 		w.say("watching the primary on "+w.Peer),
-		molecule.Monitor{Target: workerName.At(w.Peer), Tag: "primary"},
+		actor.Monitor{Target: workerName.At(w.Peer), Tag: "primary"},
 	)
 }
 
-func (w Worker) HandleInfo(s work, msg any) (work, []molecule.Effect) {
+func (w Worker) HandleInfo(s work, msg any) (work, []actor.Effect) {
 	switch m := msg.(type) {
 	case tick:
 		s.count++
-		return s, molecule.Do(
+		return s, actor.Do(
 			w.say(fmt.Sprintf("count %d", s.count)),
-			molecule.Cast{To: workerName.At(w.Peer), Req: checkpoint{s.count}},
+			actor.Cast{To: workerName.At(w.Peer), Req: checkpoint{s.count}},
 			w.next(),
 		)
-	case molecule.Down:
+	case actor.Down:
 		s.active = true
-		return s, molecule.Do(
+		return s, actor.Do(
 			w.say(fmt.Sprintf("primary gone (%v): taking over at count %d", m.Reason, s.count)),
 			w.next(),
 		)
@@ -78,11 +78,11 @@ func (w Worker) HandleInfo(s work, msg any) (work, []molecule.Effect) {
 	return s, nil
 }
 
-func (w Worker) next() molecule.Effect {
-	return molecule.StartTimer{Key: "tick", After: w.Every, Msg: tick{}}
+func (w Worker) next() actor.Effect {
+	return actor.StartTimer{Key: "tick", After: w.Every, Msg: tick{}}
 }
 
 // say prints line on the console of the node.
-func (w Worker) say(line string) molecule.Effect {
-	return molecule.Send{To: molecule.Local(consoleName), Msg: w.Node + ": " + line}
+func (w Worker) say(line string) actor.Effect {
+	return actor.Send{To: actor.Local(consoleName), Msg: w.Node + ": " + line}
 }

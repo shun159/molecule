@@ -1,4 +1,4 @@
-package molecule
+package actor
 
 import "github.com/shun159/molecule/proc"
 

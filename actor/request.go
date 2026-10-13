@@ -1,4 +1,4 @@
-package molecule
+package actor
 
 import (
 	"context"
@@ -33,10 +33,10 @@ type Pending[Rep any] struct {
 }
 
 // ErrNotDone is the error of Result before Done.
-var ErrNotDone = errors.New("molecule: no reply yet")
+var ErrNotDone = errors.New("actor: no reply yet")
 
 // ErrCancelled is the outcome of a Pending cancelled.
-var ErrCancelled = errors.New("molecule: request cancelled")
+var ErrCancelled = errors.New("actor: request cancelled")
 
 // Request sends req to the server at to, as Call does, without waiting
 // for the reply. Behaviours return a SendRequest effect instead; genserver
@@ -65,7 +65,7 @@ func Request[Rep any](caller Caller, to Dest, req any) *Pending[Rep] {
 			case m.Msg != nil:
 				rep, ok := m.Msg.(Rep)
 				if !ok {
-					p.err = fmt.Errorf("molecule: reply of type %T, want %T", m.Msg, p.rep)
+					p.err = fmt.Errorf("actor: reply of type %T, want %T", m.Msg, p.rep)
 				}
 				p.rep = rep
 			}

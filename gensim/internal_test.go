@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/proc"
 )
@@ -13,23 +13,23 @@ import (
 // cancels a timer, and requests from itself.
 type echo struct{}
 
-func (echo) Init(proc.PID, any) (proc.PID, []molecule.Effect, error) { return proc.PID{}, nil, nil }
+func (echo) Init(proc.PID, any) (proc.PID, []actor.Effect, error) { return proc.PID{}, nil, nil }
 
-func (echo) Handle(self proc.PID, msg gen.Msg) (proc.PID, []molecule.Effect) {
+func (echo) Handle(self proc.PID, msg gen.Msg) (proc.PID, []actor.Effect) {
 	switch m := msg.(type) {
-	case molecule.CallMsg:
-		return self, molecule.Do(molecule.Reply{To: m.From, Value: m.Req})
-	case molecule.CastMsg:
-		return self, molecule.Do(
-			molecule.StartTimer{Key: "t", After: time.Second, Msg: "tick"},
-			molecule.CancelTimer{Key: "t"},
-			molecule.SendRequest{To: m.Req.(proc.PID), Req: "ping", Tag: "r"},
+	case actor.CallMsg:
+		return self, actor.Do(actor.Reply{To: m.From, Value: m.Req})
+	case actor.CastMsg:
+		return self, actor.Do(
+			actor.StartTimer{Key: "t", After: time.Second, Msg: "tick"},
+			actor.CancelTimer{Key: "t"},
+			actor.SendRequest{To: m.Req.(proc.PID), Req: "ping", Tag: "r"},
 		)
 	}
 	return self, nil
 }
 
-func (echo) Terminate(proc.PID, error) []molecule.Effect { return nil }
+func (echo) Terminate(proc.PID, error) []actor.Effect { return nil }
 
 // TestNoLeftovers checks that answered aliases and cancelled timers leave
 // nothing behind: no alias kept, no timer firing, no extra message.

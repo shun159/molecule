@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -20,7 +20,7 @@ type Env interface {
 	Self() proc.PID
 	Parent() proc.PID
 	// Resolve finds the process at dest.
-	Resolve(dest molecule.Dest) (proc.PID, bool)
+	Resolve(dest actor.Dest) (proc.PID, bool)
 	// Send sends msg to the process to.
 	Send(to proc.PID, msg any)
 	// SendName sends msg to the process registered as name on node.
@@ -90,6 +90,6 @@ type Runner interface {
 
 // NewRunner returns a runner of b acting on env, as started with opts.
 // The options of the process, Name and MaxMessages, are the driver's.
-func NewRunner[S any](b Behaviour[S], env Env, opts ...molecule.Option) Runner {
+func NewRunner[S any](b Behaviour[S], env Env, opts ...actor.Option) Runner {
 	return newRuntime(b, env, newOptions(opts))
 }

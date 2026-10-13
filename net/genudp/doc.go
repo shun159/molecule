@@ -64,5 +64,5 @@
 // message:
 //
 //	case genudp.DataMsg:
-//		return s, molecule.Do(m.Sock.SendActiveEffect(m.From, reply, genudp.Once))
+//		return s, actor.Do(m.Sock.SendActiveEffect(m.From, reply, genudp.Once))
 package genudp

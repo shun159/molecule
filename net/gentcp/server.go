@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -72,7 +72,7 @@ type direct struct {
 }
 
 type pendingRecv struct {
-	from   molecule.From
+	from   actor.From
 	length int
 	seq    uint64
 	cancel func()
@@ -124,10 +124,10 @@ func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Opt
 				}
 			}
 			s.mu.Unlock()
-		case molecule.CallMsg:
+		case actor.CallMsg:
 			reply, deferred, stop := s.handle(m.From, m.Req)
 			if !deferred {
-				molecule.SendReply(self, m.From, reply)
+				actor.SendReply(self, m.From, reply)
 			}
 			if stop {
 				return nil
@@ -136,12 +136,12 @@ func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Opt
 			s.fail(m.err)
 		case sendReq, setActiveReq, closeReq:
 			// From the effects of a behaviour, with no one to reply to.
-			if _, _, stop := s.handle(molecule.From{}, m); stop {
+			if _, _, stop := s.handle(actor.From{}, m); stop {
 				return nil
 			}
 		case recvTimeout:
 			if s.recv != nil && s.recv.seq == m.seq {
-				molecule.SendReply(self, s.recv.from, ErrTimeout)
+				actor.SendReply(self, s.recv.from, ErrTimeout)
 				s.recv = nil
 			}
 		case proc.DownMsg:
@@ -154,7 +154,7 @@ func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Opt
 
 // handle handles a request; requests sent as effects have a zero from. It returns the reply,
 // whether it comes later, and whether the socket is to close.
-func (s *server) handle(from molecule.From, req any) (reply any, deferred, stop bool) {
+func (s *server) handle(from actor.From, req any) (reply any, deferred, stop bool) {
 	switch r := req.(type) {
 	case sendReq:
 		err := s.send(r.data)
@@ -328,7 +328,7 @@ func (s *server) closing() bool {
 
 func (s *server) answer(v any) {
 	s.recv.cancel()
-	molecule.SendReply(s.self, s.recv.from, v)
+	actor.SendReply(s.self, s.recv.from, v)
 	s.recv = nil
 }
 

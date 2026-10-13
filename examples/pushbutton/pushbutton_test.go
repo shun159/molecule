@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genstatem"
 	"github.com/shun159/molecule/proc"
 )
@@ -23,16 +23,16 @@ func TestRun(t *testing.T) {
 
 // The state functions are pure: each is tested as a plain function.
 func TestStateFunctions(t *testing.T) {
-	from := molecule.From{}
+	from := actor.From{}
 	call := func(req any) genstatem.Event { return genstatem.Call{From: from, Req: req} }
-	reply := func(v any) []molecule.Effect { return molecule.Do(molecule.Reply{To: from, Value: v}) }
+	reply := func(v any) []actor.Effect { return actor.Do(actor.Reply{To: from, Value: v}) }
 
 	for _, tt := range []struct {
 		state State
 		ev    genstatem.Event
 		next  State
 		data  int
-		effs  []molecule.Effect
+		effs  []actor.Effect
 	}{
 		{off{}, call(pushReq{}), on{}, 1, reply("on")},
 		{on{}, call(pushReq{}), off{}, 0, reply("off")},

@@ -7,7 +7,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/proc"
 )
@@ -42,7 +42,7 @@ const (
 )
 
 // Starter starts a child linked to parent and returns its PID, once it has
-// started. It returns molecule.ErrIgnore for a child that is not to run,
+// started. It returns actor.ErrIgnore for a child that is not to run,
 // which the supervisor keeps without a process. genserver.Child,
 // genstatem.Child, Child and DynamicChild make one, which gensim can
 // simulate as well; StartFunc makes one of any function.
@@ -82,7 +82,7 @@ func (c ChildSpec) shutdown() time.Duration {
 // Spec describes a supervisor.
 type Spec struct {
 	// Name, if set, is registered before the children start.
-	Name     molecule.Name
+	Name     actor.Name
 	Strategy Strategy
 	// If more than Intensity restarts happen within Period, the
 	// supervisor terminates its children and exits with ErrMaxIntensity.
@@ -166,11 +166,11 @@ func intensity(i int) int {
 	return i
 }
 
-func nameOption(name molecule.Name) []molecule.Option {
+func nameOption(name actor.Name) []actor.Option {
 	if name == nil {
 		return nil
 	}
-	return []molecule.Option{molecule.WithName(name)}
+	return []actor.Option{actor.WithName(name)}
 }
 
 type (
@@ -181,15 +181,15 @@ type (
 // Stop stops the supervisor at sup, static or dynamic, as its parent
 // exiting would: its children are stopped, then it exits with
 // proc.Shutdown. It returns once the supervisor is dead.
-func Stop(ctx context.Context, caller molecule.Caller, sup molecule.Dest) error {
+func Stop(ctx context.Context, caller actor.Caller, sup actor.Dest) error {
 	n := caller.Node()
 	pid, ok := sup.WhereIs(n)
 	if !ok {
-		return &molecule.ExitError{To: sup, Reason: proc.NoProc}
+		return &actor.ExitError{To: sup, Reason: proc.NoProc}
 	}
 	down, release := n.Watch(ctx, pid)
 	defer release()
-	if _, err := molecule.Call(ctx, caller, pid, stopReq{}); err != nil {
+	if _, err := actor.Call(ctx, caller, pid, stopReq{}); err != nil {
 		return err
 	}
 	<-down.Done()
@@ -198,8 +198,8 @@ func Stop(ctx context.Context, caller molecule.Caller, sup molecule.Dest) error 
 
 // WhichChildren returns the children of the supervisor at sup, in start
 // order.
-func WhichChildren(ctx context.Context, caller molecule.Caller, sup molecule.Dest) ([]ChildInfo, error) {
-	v, err := molecule.Call(ctx, caller, sup, whichChildren{})
+func WhichChildren(ctx context.Context, caller actor.Caller, sup actor.Dest) ([]ChildInfo, error) {
+	v, err := actor.Call(ctx, caller, sup, whichChildren{})
 	if err != nil {
 		return nil, err
 	}

@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/supervisor"
 	"github.com/shun159/molecule/proc"
 )
@@ -151,7 +151,7 @@ func (r *Running) start(ctx context.Context, app App) (*running, error) {
 // master watches the top of an application until it ends, or stops it
 // when asked.
 func (r *Running) master(self *proc.Self, a *running, top proc.PID) error {
-	var stoppers []molecule.From
+	var stoppers []actor.From
 	for {
 		msg, err := self.Receive(context.Background())
 		if err != nil {
@@ -164,13 +164,13 @@ func (r *Running) master(self *proc.Self, a *running, top proc.PID) error {
 			}
 			if stoppers != nil {
 				for _, from := range stoppers {
-					molecule.SendReply(self, from, nil)
+					actor.SendReply(self, from, nil)
 				}
 				return nil
 			}
 			r.ended(a, m.Reason)
 			return nil
-		case molecule.CallMsg:
+		case actor.CallMsg:
 			if _, ok := m.Req.(stopApp); !ok {
 				continue
 			}
@@ -281,8 +281,8 @@ func stopApps(ctx context.Context, n *proc.Node, apps []*running) error {
 	var errs []error
 	for i := len(apps) - 1; i >= 0; i-- {
 		a := apps[i]
-		_, err := molecule.Call(ctx, n, a.master, stopApp{})
-		var exit *molecule.ExitError
+		_, err := actor.Call(ctx, n, a.master, stopApp{})
+		var exit *actor.ExitError
 		if err != nil && !errors.As(err, &exit) { // a master gone has nothing to stop
 			errs = append(errs, fmt.Errorf("application %s: %w", a.app.Name, err))
 		}

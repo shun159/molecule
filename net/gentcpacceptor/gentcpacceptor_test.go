@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/supervisor"
 	"github.com/shun159/molecule/internal/testlog"
 	"github.com/shun159/molecule/net/gentcp"
@@ -26,18 +26,18 @@ import (
 // for these small writes on loopback.
 type lineHandler struct{}
 
-func (lineHandler) Init(proc.PID, gentcp.Socket) (struct{}, []molecule.Effect, error) {
+func (lineHandler) Init(proc.PID, gentcp.Socket) (struct{}, []actor.Effect, error) {
 	return struct{}{}, nil, nil
 }
 
-func (lineHandler) HandleData(s struct{}, sock gentcp.Socket, b []byte) (struct{}, []molecule.Effect) {
+func (lineHandler) HandleData(s struct{}, sock gentcp.Socket, b []byte) (struct{}, []actor.Effect) {
 	switch strings.TrimSpace(string(b)) {
 	case "crash":
 		panic("crash requested")
 	case "quit":
-		return s, molecule.Do(sock.SendEffect([]byte("bye\n")), molecule.Stop{})
+		return s, actor.Do(sock.SendEffect([]byte("bye\n")), actor.Stop{})
 	}
-	return s, molecule.Do(sock.SendEffect(b))
+	return s, actor.Do(sock.SendEffect(b))
 }
 
 func start[S any](t *testing.T, spec gentcpacceptor.Spec, b gentcpacceptor.Behaviour[S]) (*proc.Node, *gentcpacceptor.Listener) {
@@ -207,11 +207,11 @@ func TestStop(t *testing.T) {
 // refuser fails Init, which must close the connection.
 type refuser struct{}
 
-func (refuser) Init(proc.PID, gentcp.Socket) (struct{}, []molecule.Effect, error) {
+func (refuser) Init(proc.PID, gentcp.Socket) (struct{}, []actor.Effect, error) {
 	return struct{}{}, nil, errors.New("go away")
 }
 
-func (refuser) HandleData(s struct{}, _ gentcp.Socket, _ []byte) (struct{}, []molecule.Effect) {
+func (refuser) HandleData(s struct{}, _ gentcp.Socket, _ []byte) (struct{}, []actor.Effect) {
 	return s, nil
 }
 
@@ -226,11 +226,11 @@ func TestInitError(t *testing.T) {
 // greeter tells the peer its own address, which Init gets with the socket.
 type greeter struct{}
 
-func (greeter) Init(_ proc.PID, sock gentcp.Socket) (struct{}, []molecule.Effect, error) {
-	return struct{}{}, molecule.Do(sock.SendEffect([]byte(sock.RemoteAddr.String() + "\n"))), nil
+func (greeter) Init(_ proc.PID, sock gentcp.Socket) (struct{}, []actor.Effect, error) {
+	return struct{}{}, actor.Do(sock.SendEffect([]byte(sock.RemoteAddr.String() + "\n"))), nil
 }
 
-func (greeter) HandleData(s struct{}, _ gentcp.Socket, _ []byte) (struct{}, []molecule.Effect) {
+func (greeter) HandleData(s struct{}, _ gentcp.Socket, _ []byte) (struct{}, []actor.Effect) {
 	return s, nil
 }
 
@@ -278,20 +278,20 @@ func TestConnectionResetNotReported(t *testing.T) {
 // peer is done sending.
 type counter struct{}
 
-func (counter) Init(proc.PID, gentcp.Socket) (int, []molecule.Effect, error) { return 0, nil, nil }
+func (counter) Init(proc.PID, gentcp.Socket) (int, []actor.Effect, error) { return 0, nil, nil }
 
-func (counter) HandleData(n int, _ gentcp.Socket, line []byte) (int, []molecule.Effect) {
+func (counter) HandleData(n int, _ gentcp.Socket, line []byte) (int, []actor.Effect) {
 	if !strings.HasSuffix(string(line), "\n") {
 		panic("not a line")
 	}
 	return n + 1, nil
 }
 
-func (counter) HandleClosed(n int, sock gentcp.Socket, err error) (int, []molecule.Effect) {
+func (counter) HandleClosed(n int, sock gentcp.Socket, err error) (int, []actor.Effect) {
 	if err != nil {
-		return n, molecule.Do(molecule.Stop{Reason: err})
+		return n, actor.Do(actor.Stop{Reason: err})
 	}
-	return n, molecule.Do(sock.SendEffect([]byte(strconv.Itoa(n)+"\n")), sock.CloseEffect(), molecule.Stop{})
+	return n, actor.Do(sock.SendEffect([]byte(strconv.Itoa(n)+"\n")), sock.CloseEffect(), actor.Stop{})
 }
 
 // TestOptions has the sockets cut lines, and stay open for sending once

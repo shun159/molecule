@@ -20,7 +20,7 @@ Behaviours are pure. A callback gets the state and a message and returns the
 next state along with effects: replies, sends, timers, monitors. The runtime
 performs the effects. A behaviour is therefore tested by calling its
 functions, without starting a process. One that reads the clock is given it
-(`molecule.Clocked`): the real one in a process, a virtual one in a gensim
+(`actor.Clocked`): the real one in a process, a virtual one in a gensim
 simulation.
 
 ## Example
@@ -36,7 +36,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/proc"
 )
@@ -47,11 +47,11 @@ type Counter struct{ genserver.Default[int] }
 type Get struct{}
 type Add struct{ N int }
 
-func (Counter) HandleCall(n int, _ Get, from genserver.From[int]) (int, []molecule.Effect) {
-	return n, molecule.Do(from.Reply(n))
+func (Counter) HandleCall(n int, _ Get, from genserver.From[int]) (int, []actor.Effect) {
+	return n, actor.Do(from.Reply(n))
 }
 
-func (Counter) HandleCast(n int, a Add) (int, []molecule.Effect) {
+func (Counter) HandleCast(n int, a Add) (int, []actor.Effect) {
 	return n + a.N, nil
 }
 
@@ -93,7 +93,7 @@ n, effs := Counter{}.HandleCast(2, Add{3}) // 5, no effects
 
 ## Packages
 
-    molecule                   names, calls, casts and effects: the vocabulary of programs
+    actor                      names, calls, casts and effects: the vocabulary of programs
     proc                       processes, links, monitors, names, synchronous start
     behaviours/genserver       gen_server
     behaviours/genstatem       gen_statem

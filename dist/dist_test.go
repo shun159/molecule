@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/dist"
@@ -126,13 +126,13 @@ func TestSend(t *testing.T) {
 // greeter is a genserver answering calls with a greeting.
 type greeter struct{}
 
-func (greeter) Init(proc.PID) (int, []molecule.Effect, error) { return 0, nil, nil }
+func (greeter) Init(proc.PID) (int, []actor.Effect, error) { return 0, nil, nil }
 
-func (greeter) HandleCall(n int, name string, from genserver.From[string]) (int, []molecule.Effect) {
-	return n + 1, molecule.Do(from.Reply(fmt.Sprintf("hello %s, #%d", name, n+1)))
+func (greeter) HandleCall(n int, name string, from genserver.From[string]) (int, []actor.Effect) {
+	return n + 1, actor.Do(from.Reply(fmt.Sprintf("hello %s, #%d", name, n+1)))
 }
 
-func (greeter) HandleCast(n int, _ struct{}) (int, []molecule.Effect) { return n, nil }
+func (greeter) HandleCast(n int, _ struct{}) (int, []actor.Effect) { return n, nil }
 
 func TestCall(t *testing.T) {
 	nodes, _ := cluster(t, "secret", "a@test", "b@test")
@@ -359,33 +359,33 @@ func TestUnnamed(t *testing.T) {
 // count on a call.
 type counter struct{}
 
-func (counter) Init(proc.PID) (int, []molecule.Effect, error) { return 0, nil, nil }
+func (counter) Init(proc.PID) (int, []actor.Effect, error) { return 0, nil, nil }
 
-func (counter) HandleCall(n int, _ string, from genserver.From[int]) (int, []molecule.Effect) {
-	return n, molecule.Do(from.Reply(n))
+func (counter) HandleCall(n int, _ string, from genserver.From[int]) (int, []actor.Effect) {
+	return n, actor.Do(from.Reply(n))
 }
 
-func (counter) HandleCast(n int, by int) (int, []molecule.Effect) { return n + by, nil }
+func (counter) HandleCast(n int, by int) (int, []actor.Effect) { return n + by, nil }
 
 func TestRemoteName(t *testing.T) {
 	nodes, _ := cluster(t, "secret", "a@test", "b@test")
 	a, b := nodes[0], nodes[1]
 	ctx := context.Background()
-	if _, err := genserver.Start(ctx, b, counter{}, molecule.WithName(molecule.Local("counter"))); err != nil {
+	if _, err := genserver.Start(ctx, b, counter{}, actor.WithName(actor.Local("counter"))); err != nil {
 		t.Fatal(err)
 	}
-	remote := genserver.NewRef[string, int, int](molecule.Remote{Node: "b@test", Name: "counter"})
+	remote := genserver.NewRef[string, int, int](actor.Remote{Node: "b@test", Name: "counter"})
 	remote.Cast(a, 2)
 	remote.Cast(a, 3)
 	if got, err := remote.Call(ctx, a, "count"); err != nil || got != 5 {
 		t.Errorf("call: %v, %v", got, err)
 	}
-	nobody := genserver.NewRef[string, int, int](molecule.Remote{Node: "b@test", Name: "nobody"})
+	nobody := genserver.NewRef[string, int, int](actor.Remote{Node: "b@test", Name: "nobody"})
 	if _, err := nobody.Call(ctx, a, "count"); !errors.Is(err, proc.NoProc) {
 		t.Errorf("call to nobody: %v", err)
 	}
 	// A Remote name of the node itself is resolved there.
-	here := genserver.NewRef[string, int, int](molecule.Remote{Node: "b@test", Name: "counter"})
+	here := genserver.NewRef[string, int, int](actor.Remote{Node: "b@test", Name: "counter"})
 	if got, err := here.Call(ctx, b, "count"); err != nil || got != 5 {
 		t.Errorf("call from b: %v, %v", got, err)
 	}
@@ -397,15 +397,15 @@ type observer struct{ genserver.Default[[]any] }
 
 type watch struct{}
 
-func (observer) HandleCast(log []any, _ watch) ([]any, []molecule.Effect) {
-	counter := molecule.Remote{Node: "b@test", Name: "counter"}
-	return log, molecule.Do(
-		molecule.SendRequest{To: counter, Req: "count", Tag: "count"},
-		molecule.Monitor{Target: counter, Tag: "counter"},
+func (observer) HandleCast(log []any, _ watch) ([]any, []actor.Effect) {
+	counter := actor.Remote{Node: "b@test", Name: "counter"}
+	return log, actor.Do(
+		actor.SendRequest{To: counter, Req: "count", Tag: "count"},
+		actor.Monitor{Target: counter, Tag: "counter"},
 	)
 }
 
-func (observer) HandleInfo(log []any, msg any) ([]any, []molecule.Effect) {
+func (observer) HandleInfo(log []any, msg any) ([]any, []actor.Effect) {
 	return append(log[:len(log):len(log)], msg), nil
 }
 
@@ -413,7 +413,7 @@ func TestRemoteNameEffects(t *testing.T) {
 	nodes, _ := cluster(t, "secret", "a@test", "b@test")
 	a, b := nodes[0], nodes[1]
 	ctx := context.Background()
-	c, err := genserver.Start(ctx, b, counter{}, molecule.WithName(molecule.Local("counter")))
+	c, err := genserver.Start(ctx, b, counter{}, actor.WithName(actor.Local("counter")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -433,14 +433,14 @@ func TestRemoteNameEffects(t *testing.T) {
 	for len(log()) < 1 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	if got := log(); len(got) != 1 || got[0] != (molecule.Response{Tag: "count", Value: 7}) {
+	if got := log(); len(got) != 1 || got[0] != (actor.Response{Tag: "count", Value: 7}) {
 		t.Fatalf("log %#v", got)
 	}
 	c.Stop(ctx, b)
 	for len(log()) < 2 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	if got := log(); len(got) != 2 || got[1] != (molecule.Down{Tag: "counter", PID: cpid, Reason: proc.Normal}) {
+	if got := log(); len(got) != 2 || got[1] != (actor.Down{Tag: "counter", PID: cpid, Reason: proc.Normal}) {
 		t.Errorf("log %#v", got)
 	}
 }

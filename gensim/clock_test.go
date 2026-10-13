@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/behaviours/genstatem"
 	"github.com/shun159/molecule/gensim"
@@ -19,8 +19,8 @@ type stamp struct {
 
 func (s stamp) WithClock(now func() time.Time) any { s.now = now; return s }
 
-func (s stamp) HandleCall(st struct{}, _ get, from genserver.From[time.Time]) (struct{}, []molecule.Effect) {
-	return st, molecule.Do(from.Reply(s.now()))
+func (s stamp) HandleCall(st struct{}, _ get, from genserver.From[time.Time]) (struct{}, []actor.Effect) {
+	return st, actor.Do(from.Reply(s.now()))
 }
 
 // stampMachine is stamp as a state machine.
@@ -28,13 +28,13 @@ type stampMachine struct{ now func() time.Time }
 
 func (m stampMachine) WithClock(now func() time.Time) any { m.now = now; return m }
 
-func (stampMachine) Init(proc.PID) (int, struct{}, []molecule.Effect, error) {
+func (stampMachine) Init(proc.PID) (int, struct{}, []actor.Effect, error) {
 	return 0, struct{}{}, nil, nil
 }
 
-func (m stampMachine) HandleEvent(st int, d struct{}, ev genstatem.Event) (int, struct{}, []molecule.Effect) {
+func (m stampMachine) HandleEvent(st int, d struct{}, ev genstatem.Event) (int, struct{}, []actor.Effect) {
 	if c, ok := ev.(genstatem.Call); ok {
-		return st, d, molecule.Do(c.Reply(m.now()))
+		return st, d, actor.Do(c.Reply(m.now()))
 	}
 	return st, d, nil
 }

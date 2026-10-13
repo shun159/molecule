@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/dist"
 	"github.com/shun159/molecule/dist/pg"
 	"github.com/shun159/molecule/proc"
@@ -36,20 +36,20 @@ func TestOverDist(t *testing.T) {
 		mu.Lock()
 		addrs[name] = d.Addr().String()
 		mu.Unlock()
-		if _, err := pg.Start(ctx, n, molecule.Local("pg")); err != nil {
+		if _, err := pg.Start(ctx, n, actor.Local("pg")); err != nil {
 			t.Fatal(err)
 		}
 		m := n.Spawn(func(s *proc.Self) error {
 			_, err := s.Receive(context.Background())
 			return err
 		})
-		if err := pg.Join(ctx, n, molecule.Local("pg"), "g", m); err != nil {
+		if err := pg.Join(ctx, n, actor.Local("pg"), "g", m); err != nil {
 			t.Fatal(err)
 		}
 		nodes, dists = append(nodes, n), append(dists, d)
 	}
 	count := func(n *proc.Node) int {
-		pids, err := pg.Members(ctx, n, molecule.Local("pg"), "g")
+		pids, err := pg.Members(ctx, n, actor.Local("pg"), "g")
 		if err != nil {
 			t.Fatal(err)
 		}

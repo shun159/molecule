@@ -1,4 +1,4 @@
-package molecule
+package actor
 
 import (
 	"context"
@@ -16,7 +16,7 @@ type Caller interface {
 
 // ErrCallingSelf is returned by a process that calls itself, which would
 // otherwise wait forever for its own reply.
-var ErrCallingSelf = errors.New("molecule: calling self")
+var ErrCallingSelf = errors.New("actor: calling self")
 
 // ExitError is returned by Call when the server died, or never existed,
 // before replying. It unwraps to the exit reason, so
@@ -27,7 +27,7 @@ type ExitError struct {
 }
 
 func (e *ExitError) Error() string {
-	return fmt.Sprintf("molecule: call to %v: %v", e.To, e.Reason)
+	return fmt.Sprintf("actor: call to %v: %v", e.To, e.Reason)
 }
 
 func (e *ExitError) Unwrap() error { return e.Reason }
