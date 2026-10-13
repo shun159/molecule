@@ -65,6 +65,7 @@ type Option func(*StartOptions)
 type StartOptions struct {
 	Name        Name
 	MaxMessages int
+	MaxAsync    int
 }
 
 // WithName registers the process under name before Init runs.
@@ -77,4 +78,12 @@ func WithName(name Name) Option {
 // see proc.Self.SetMaxMessages.
 func WithMaxMessages(n int) Option {
 	return func(o *StartOptions) { o.MaxMessages = n }
+}
+
+// WithMaxAsync bounds the asyncs of a behaviour running at once to n: an
+// Async started past it waits until one running ends, then runs, in the
+// order started, as Task.async_stream with max_concurrency does. A waiting
+// async is cancelled as a running one is; its Run then never runs.
+func WithMaxAsync(n int) Option {
+	return func(o *StartOptions) { o.MaxAsync = n }
 }

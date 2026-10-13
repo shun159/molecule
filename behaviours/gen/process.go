@@ -27,7 +27,7 @@ func run[S any](self *proc.Self, b Behaviour[S], args any, o molecule.StartOptio
 		}
 	}
 
-	r := newRuntime(b, procEnv{self})
+	r := newRuntime(b, procEnv{self}, o)
 	if err := r.Init(args); err != nil {
 		self.InitAck(err)
 		if errors.Is(err, molecule.ErrIgnore) {

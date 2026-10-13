@@ -3,6 +3,7 @@ package gen_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -32,6 +33,8 @@ func (asyncer) HandleCast(s []any, msg any) ([]any, []molecule.Effect) {
 		return s, molecule.Do(molecule.CancelAsync(m))
 	case string: // "stop"
 		return s, molecule.Do(molecule.Stop{})
+	case []molecule.Effect:
+		return s, m
 	}
 	return s, nil
 }
@@ -196,5 +199,92 @@ func TestAsyncSimulated(t *testing.T) {
 	got, _ := gensim.State[[]any](s, pid)
 	if len(got) != 2 {
 		t.Fatalf("results %v, want both", got)
+	}
+}
+
+// gated tells on started it runs, and returns i once released.
+func gated(i int, started chan<- int, release <-chan struct{}) func(context.Context) (any, error) {
+	return func(ctx context.Context) (any, error) {
+		started <- i
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return i, nil
+	}
+}
+
+// WithMaxAsync runs as many asyncs at once, the others waiting their
+// turn, in order; one cancelled while waiting never runs.
+func TestMaxAsync(t *testing.T) {
+	n := proc.NewNode("")
+	asyncTest(t, n, func(s *proc.Self) {
+		ref, err := genserver.Start(context.Background(), n, asyncer{to: s.PID()}, molecule.WithMaxAsync(2))
+		if err != nil {
+			t.Fatal(err)
+		}
+		started := make(chan int, 4)
+		var release [4]chan struct{}
+		for i := range release {
+			release[i] = make(chan struct{})
+			ref.Cast(s, startAsync{Key: i, Run: gated(i, started, release[i])})
+		}
+		ref.Cast(s, cancelAsync{Key: 3})
+		running := map[int]bool{<-started: true, <-started: true}
+		if !running[0] || !running[1] {
+			t.Fatalf("running %v, want 0 and 1", running)
+		}
+		for i := range 3 {
+			close(release[i])
+			if r := result(t, s); r.Value != i {
+				t.Fatalf("got %+v, want %d", r, i)
+			}
+			if i == 0 {
+				if j := <-started; j != 2 {
+					t.Fatalf("%d started, want 2", j)
+				}
+			}
+		}
+		noResult(t, s)
+		select {
+		case j := <-started:
+			t.Errorf("%d started", j)
+		default:
+		}
+	})
+}
+
+// In gensim as well: asyncs waiting run in order, one at a time here, a
+// cancelled one never, a replaced one at the end.
+func TestMaxAsyncSimulated(t *testing.T) {
+	for seed := range uint64(5) {
+		s := gensim.New(seed)
+		pid, err := gensim.Start(s, genserver.Child(asyncer{}, molecule.WithMaxAsync(1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ran := map[int]bool{}
+		run := func(v any) func(context.Context) (any, error) {
+			return func(context.Context) (any, error) {
+				if i, ok := v.(int); ok {
+					ran[i] = true
+				}
+				return v, nil
+			}
+		}
+		var effs []molecule.Effect
+		for i := range 5 {
+			effs = append(effs, molecule.Async{Key: i, Run: run(i)})
+		}
+		effs = append(effs, molecule.CancelAsync{Key: 2}, molecule.Async{Key: 3, Run: run("3b")})
+		s.Cast(pid, effs)
+		s.RunUntilIdle()
+		got, _ := gensim.State[[]any](s, pid)
+		if want := []any{0, 1, 4, "3b"}; !slices.Equal(got, want) {
+			t.Errorf("seed %d: results %v, want %v", seed, got, want)
+		}
+		if ran[2] || ran[3] {
+			t.Errorf("seed %d: ran %v", seed, ran)
+		}
 	}
 }

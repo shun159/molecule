@@ -38,7 +38,7 @@ func (c child[S]) StartLink(ctx context.Context, parent *proc.Self) (proc.PID, e
 }
 
 func (c child[S]) Simulate(env Env) (Runner, any, molecule.StartOptions) {
-	return NewRunner(c.b, env), c.args, newOptions(c.opts)
+	return NewRunner(c.b, env, c.opts...), c.args, newOptions(c.opts)
 }
 
 // Effects for behaviours that start others, as supervisors.

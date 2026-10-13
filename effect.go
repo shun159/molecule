@@ -100,6 +100,9 @@ type SendRequest struct {
 // started under the same Key, or by the behaviour terminating; its outcome
 // is then not delivered, even if Run returned first. A panic in Run is its
 // error, a *proc.PanicError, rather than the end of the program.
+//
+// A behaviour started WithMaxAsync runs that many at once at most; the
+// others wait their turn.
 type Async struct {
 	Key any
 	Run func(ctx context.Context) (any, error)

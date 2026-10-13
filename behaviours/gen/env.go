@@ -88,7 +88,8 @@ type Runner interface {
 	State() any
 }
 
-// NewRunner returns a runner of b acting on env.
-func NewRunner[S any](b Behaviour[S], env Env) Runner {
-	return newRuntime(b, env)
+// NewRunner returns a runner of b acting on env, as started with opts.
+// The options of the process, Name and MaxMessages, are the driver's.
+func NewRunner[S any](b Behaviour[S], env Env, opts ...molecule.Option) Runner {
+	return newRuntime(b, env, newOptions(opts))
 }
