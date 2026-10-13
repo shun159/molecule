@@ -58,6 +58,12 @@
 // and links, monitors and pending requests between them fail with
 // proc.NoConnection, on both sides.
 //
+// # Fuzzing
+//
+// Seeds try orders at random. WithChoices has the bytes of a fuzz target
+// decide them instead, for the fuzzer to search the orders, guided by the
+// code they cover, and keep those failing in testdata/fuzz.
+//
 // # Purity
 //
 // A behaviour must not write the state it is given, nor a message once
