@@ -83,7 +83,9 @@ func WithMaxMessages(n int) Option {
 // WithMaxAsync bounds the asyncs of a behaviour running at once to n: an
 // Async started past it waits until one running ends, then runs, in the
 // order started, as Task.async_stream with max_concurrency does. A waiting
-// async is cancelled as a running one is; its Run then never runs.
+// async is cancelled as a running one is; its Run then never runs. A
+// running one cancelled keeps its place until its Run returns, so that no
+// more than n run at once.
 func WithMaxAsync(n int) Option {
 	return func(o *StartOptions) { o.MaxAsync = n }
 }

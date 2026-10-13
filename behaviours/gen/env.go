@@ -50,9 +50,10 @@ type Env interface {
 	Now() time.Time
 	// SendAfter sends msg to Self after d, unless cancel is called first.
 	SendAfter(d time.Duration, msg any) (cancel func())
-	// Async runs run, and sends done of its outcome to Self, unless
-	// cancel is called first, which also makes run's ctx done. A panic in
-	// run is its error, a *proc.PanicError.
+	// Async runs run, and sends done of its outcome to Self once it
+	// returns, even if cancel was called, which makes run's ctx done: the
+	// runtime learns so when run has returned. A panic in run is its
+	// error, a *proc.PanicError.
 	Async(run func(ctx context.Context) (any, error), done func(v any, err error) any) (cancel func())
 	// Request makes an alias that also monitors pid, as
 	// proc.Node.MonitorAlias does: the first of the message sent to the

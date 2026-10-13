@@ -101,6 +101,9 @@ type SendRequest struct {
 // is then not delivered, even if Run returned first. A panic in Run is its
 // error, a *proc.PanicError, rather than the end of the program.
 //
+// Go cannot stop a goroutine: a Run that does not heed its ctx runs on
+// after it is cancelled, and after the behaviour has ended.
+//
 // A behaviour started WithMaxAsync runs that many at once at most; the
 // others wait their turn.
 type Async struct {

@@ -254,6 +254,40 @@ func TestMaxAsync(t *testing.T) {
 	})
 }
 
+// A running async cancelled keeps its place until its Run returns, even
+// one not heeding its ctx: no more than WithMaxAsync goroutines run.
+func TestMaxAsyncCancelled(t *testing.T) {
+	n := proc.NewNode("")
+	asyncTest(t, n, func(s *proc.Self) {
+		ref, err := genserver.Start(context.Background(), n, asyncer{to: s.PID()}, actor.WithMaxAsync(1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		started := make(chan int, 2)
+		release := make(chan struct{})
+		stubborn := func(context.Context) (any, error) {
+			started <- 0
+			<-release
+			return 0, nil
+		}
+		ref.Cast(s, startAsync{Key: 0, Run: stubborn})
+		<-started
+		ref.Cast(s, cancelAsync{Key: 0})
+		ref.Cast(s, startAsync{Key: 1, Run: gated(1, started, nil)})
+		select {
+		case <-started:
+			t.Fatal("1 started while the cancelled 0 runs")
+		case <-time.After(50 * time.Millisecond):
+		}
+		close(release)
+		if j := <-started; j != 1 {
+			t.Fatalf("%d started, want 1", j)
+		}
+		ref.Cast(s, cancelAsync{Key: 1})
+		noResult(t, s)
+	})
+}
+
 // In gensim as well: asyncs waiting run in order, one at a time here, a
 // cancelled one never, a replaced one at the end.
 func TestMaxAsyncSimulated(t *testing.T) {
