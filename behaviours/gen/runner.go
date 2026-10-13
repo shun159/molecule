@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"time"
 
 	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/proc"
@@ -87,6 +88,8 @@ type queued struct {
 type request struct {
 	tag     any
 	to      actor.Dest
+	req     any
+	start   time.Time // for its CallDone
 	release func()
 	cancel  func() // of its timeout, if any
 }
@@ -284,6 +287,7 @@ func (r *runtime[S]) translate(msg any) (Msg, bool) {
 		if m.m.Down {
 			resp = actor.Response{Tag: req.tag, Err: &actor.ExitError{To: req.to, Reason: m.m.Reason}}
 		}
+		r.callDone(req, resp.Err)
 		return InfoMsg{Msg: resp}, true
 	case requestTimeout:
 		req, ok := r.requests[m.ref]
@@ -292,6 +296,7 @@ func (r *runtime[S]) translate(msg any) (Msg, bool) {
 		}
 		r.endRequest(m.ref, req)
 		r.abandon(req.to, m.ref)
+		r.callDone(req, context.DeadlineExceeded)
 		return InfoMsg{Msg: actor.Response{Tag: req.tag, Err: context.DeadlineExceeded}}, true
 	case responseMsg:
 		return InfoMsg{Msg: m.Response}, true
@@ -565,7 +570,9 @@ func (r *runtime[S]) sendRequest(e actor.SendRequest) {
 	}
 	pid, ok := r.env.Resolve(e.To)
 	if !ok {
-		r.env.Send(r.env.Self(), responseMsg{actor.Response{Tag: e.Tag, Err: &actor.ExitError{To: e.To, Reason: proc.NoProc}}})
+		err := &actor.ExitError{To: e.To, Reason: proc.NoProc}
+		r.env.Emit(actor.CallDone{To: e.To, Req: e.Req, Err: err})
+		r.env.Send(r.env.Self(), responseMsg{actor.Response{Tag: e.Tag, Err: err}})
 		return
 	}
 	ref, release := r.env.Request(pid, func(ref proc.Ref, m proc.AliasMsg) any {
@@ -577,7 +584,7 @@ func (r *runtime[S]) sendRequest(e actor.SendRequest) {
 
 // request records the request e, made under ref.
 func (r *runtime[S]) request(e actor.SendRequest, ref proc.Ref, release func()) {
-	req := request{tag: e.Tag, to: e.To, release: release}
+	req := request{tag: e.Tag, to: e.To, req: e.Req, start: r.env.Now(), release: release}
 	if e.Timeout > 0 {
 		req.cancel = r.env.SendAfter(e.Timeout, requestTimeout{ref: ref})
 	}
@@ -593,6 +600,11 @@ func (r *runtime[S]) abandon(to actor.Dest, ref proc.Ref) {
 	} else if pid, ok := r.env.Resolve(to); ok {
 		r.env.Send(pid, msg)
 	}
+}
+
+// callDone emits the CallDone of req, ended with err.
+func (r *runtime[S]) callDone(req request, err error) {
+	r.env.Emit(actor.CallDone{To: req.to, Req: req.req, Took: r.env.Now().Sub(req.start), Err: err})
 }
 
 func (r *runtime[S]) endRequest(ref proc.Ref, req request) {
