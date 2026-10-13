@@ -75,6 +75,7 @@ type process struct {
 	pid, parent proc.PID
 	runner      gen.Runner
 	mailbox     []any
+	maxMessages int // see molecule.WithMaxMessages
 	alive       bool
 	busy        bool // handling, or starting: Step leaves it alone
 	acked       bool // its start is over
@@ -187,8 +188,12 @@ func Spawn[S any](s *Sim, b gen.Behaviour[S], args any, opts ...SpawnOption) (pr
 	if p.on != "" {
 		node = s.nodeNamed(p.on)
 	}
-	return s.start(node, nil, fmt.Sprintf("%T", b), func(e gen.Env) (gen.Runner, any, string) {
-		return gen.NewRunner(b, e), args, p.name
+	return s.start(node, nil, fmt.Sprintf("%T", b), func(e gen.Env) (gen.Runner, any, molecule.StartOptions) {
+		var o molecule.StartOptions
+		if p.name != "" {
+			o.Name = molecule.Local(p.name)
+		}
+		return gen.NewRunner(b, e), args, o
 	})
 }
 
@@ -203,13 +208,12 @@ func Start(s *Sim, c gen.Child, opts ...SpawnOption) (proc.PID, error) {
 	if p.on != "" {
 		node = s.nodeNamed(p.on)
 	}
-	return s.start(node, nil, fmt.Sprintf("%T", c), func(e gen.Env) (gen.Runner, any, string) {
+	return s.start(node, nil, fmt.Sprintf("%T", c), func(e gen.Env) (gen.Runner, any, molecule.StartOptions) {
 		r, args, o := c.Simulate(e)
-		name := p.name
-		if l, ok := o.Name.(molecule.Local); ok && name == "" {
-			name = string(l)
+		if p.name != "" {
+			o.Name = molecule.Local(p.name)
 		}
-		return r, args, name
+		return r, args, o
 	})
 }
 
@@ -218,9 +222,10 @@ func Start(s *Sim, c gen.Child, opts ...SpawnOption) (proc.PID, error) {
 var ErrNotSimulated = errors.New("gensim: child started by a function, which cannot be simulated")
 
 // start starts a process on node, linked to parent if any, running the
-// runner newRunner makes, registered under the name it tells, if any, and
-// runs the simulation until it has started, as Start and StartLink wait.
-func (s *Sim) start(node *node, parent *process, what string, newRunner func(gen.Env) (gen.Runner, any, string)) (proc.PID, error) {
+// runner newRunner makes, started with the options it tells: registered
+// under its local name, if any. It runs the simulation until the process
+// has started, as Start and StartLink wait.
+func (s *Sim) start(node *node, parent *process, what string, newRunner func(gen.Env) (gen.Runner, any, molecule.StartOptions)) (proc.PID, error) {
 	if !node.up {
 		return proc.PID{}, ErrNodeDown
 	}
@@ -232,8 +237,10 @@ func (s *Sim) start(node *node, parent *process, what string, newRunner func(gen
 		watchers: make(map[proc.Ref]watcher),
 		watching: make(map[proc.Ref]proc.PID),
 	}
-	runner, args, name := newRunner(&env{s, p})
-	if name != "" {
+	runner, args, o := newRunner(&env{s, p})
+	p.maxMessages = o.MaxMessages
+	if l, _ := o.Name.(molecule.Local); l != "" {
+		name := string(l)
 		if pid, ok := node.names[name]; ok {
 			return proc.PID{}, &molecule.AlreadyStartedError{PID: pid}
 		}
@@ -491,7 +498,16 @@ func (s *Sim) deliver(l *link) {
 		panic(&ImpureError{PID: l.from, Msg: msg, What: "changed a message after sending it to " + l.to.String()})
 	}
 	if p := s.byPID[l.to]; p != nil && p.alive {
-		p.mailbox = append(p.mailbox, msg)
+		s.enqueue(p, msg)
+	}
+}
+
+// enqueue puts msg in the mailbox of p, and kills p if that is past its
+// limit, as proc.Self.SetMaxMessages does.
+func (s *Sim) enqueue(p *process, msg any) {
+	p.mailbox = append(p.mailbox, msg)
+	if p.maxMessages > 0 && len(p.mailbox) > p.maxMessages {
+		s.exit(p, proc.MailboxFull)
 	}
 }
 
@@ -637,7 +653,7 @@ func (s *Sim) fireTimer(limit time.Time) bool {
 	}
 	if p := s.byPID[t.pid]; p != nil && p.alive {
 		s.record(Event{Kind: Fired, To: t.pid, Msg: t.msg})
-		p.mailbox = append(p.mailbox, t.msg)
+		s.enqueue(p, t.msg)
 	}
 	return true
 }
@@ -824,11 +840,7 @@ func (e *env) StartLink(child gen.Starter) (proc.PID, error) {
 	if !ok {
 		return proc.PID{}, ErrNotSimulated
 	}
-	return e.s.start(e.p.node, e.p, fmt.Sprintf("%T", child), func(env gen.Env) (gen.Runner, any, string) {
-		r, args, opts := c.Simulate(env)
-		l, _ := opts.Name.(molecule.Local)
-		return r, args, string(l)
-	})
+	return e.s.start(e.p.node, e.p, fmt.Sprintf("%T", child), c.Simulate)
 }
 
 func (e *env) MonitorNodes(on bool) {

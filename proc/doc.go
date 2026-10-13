@@ -40,8 +40,10 @@
 //
 // Mailboxes are unbounded FIFO queues. A process that receives slower than
 // it is sent to has its mailbox grow without limit; a protocol that needs
-// flow control asks for data, as gentcp does. There is no selective
-// receive: [Self.Receive] returns the oldest message.
+// flow control asks for data, as gentcp does. A process may instead bound
+// its mailbox, see [Self.SetMaxMessages]: past the bound, it is killed with
+// reason [MailboxFull], for its supervisor to restart. There is no
+// selective receive: [Self.Receive] returns the oldest message.
 //
 // # Exit reasons
 //

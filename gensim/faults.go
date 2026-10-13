@@ -224,7 +224,7 @@ func (s *Sim) dropQueue(l *link) {
 // deliverLocal puts msg in the mailbox of p, from its own node.
 func (s *Sim) deliverLocal(p *process, msg any) {
 	s.record(Event{Kind: Sent, To: p.pid, Msg: msg})
-	p.mailbox = append(p.mailbox, msg)
+	s.enqueue(p, msg)
 }
 
 // signalLocal delivers to p an exit signal its node raised, such as

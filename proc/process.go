@@ -3,6 +3,7 @@ package proc
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -31,6 +32,8 @@ type process struct {
 	watchesNodes atomic.Bool
 	// label tells what p is, see Self.SetLabel.
 	label atomic.Pointer[string]
+	// full is set once the mailbox of p is past its limit.
+	full atomic.Bool
 
 	// mu guards links, monitors and the transition to dead, so a link or
 	// a monitor is either established with a live process or reported as
@@ -149,6 +152,41 @@ func (p *process) die(reason error) {
 	}
 }
 
+// push puts msg in the mailbox of p, and kills p if that is past its
+// limit. The kill is made in a goroutine of its own: a push may be made
+// under the lock of p, or of a process it monitors, which dying takes.
+func (p *process) push(msg any) {
+	if p.mbox.push(msg) && p.full.CompareAndSwap(false, true) {
+		go p.overflow()
+	}
+}
+
+// overflow kills p, its mailbox past its limit, as max_heap_size kills an
+// Erlang process: reported, though no code of its own failed, and with its
+// messages dropped at once, rather than once its goroutine notices.
+func (p *process) overflow() {
+	n := p.mbox.len()
+	p.node.regMu.Lock()
+	name := p.name // before dying frees it
+	p.node.regMu.Unlock()
+	p.die(MailboxFull)
+	if p.exitReason() != MailboxFull {
+		return // dead already
+	}
+	p.mbox.drop()
+	attrs := []any{
+		slog.String("pid", p.pid.String()),
+		slog.Int("message_queue_len", n),
+	}
+	if name != "" {
+		attrs = append(attrs, slog.String("registered_name", name))
+	}
+	if l := p.label.Load(); l != nil {
+		attrs = append(attrs, slog.String("label", *l))
+	}
+	p.node.Logger().Error("mailbox full", attrs...)
+}
+
 // signalExit handles an exit signal sent to p by from. Signals that kill p
 // take effect immediately; the rest become ExitMsg in the mailbox, so they
 // stay ordered with the messages from the same sender.
@@ -169,7 +207,7 @@ func (p *process) signalExit(from PID, reason error, viaLink bool) {
 	case !viaLink && errors.Is(reason, Kill):
 		p.die(Killed)
 	case p.trapExit.Load():
-		p.mbox.push(ExitMsg{From: from, Reason: reason})
+		p.push(ExitMsg{From: from, Reason: reason})
 	case errors.Is(reason, Normal):
 		if from == p.pid {
 			p.die(Normal)
@@ -368,6 +406,15 @@ func (s *Self) Unlink(to PID) {
 	delete(t.links, p.pid)
 	unlock()
 }
+
+// SetMaxMessages sets the most messages that may wait in the mailbox of
+// the process, n, and returns the previous limit; 0 is none, the default.
+// A message past it kills the process with reason MailboxFull, as
+// max_heap_size does in Erlang: a process that cannot keep up is restarted
+// by its supervisor, its mailbox empty, rather than grow without bound.
+// Every message counts, and none is refused: an ExitMsg, a DownMsg, a
+// timer or a reply to a request arrives as any other, up to the kill.
+func (s *Self) SetMaxMessages(n int) int { return s.p.mbox.setMax(max(n, 0)) }
 
 // TrapExit sets whether exit signals are turned into ExitMsg instead of
 // terminating the process, and returns the previous setting.

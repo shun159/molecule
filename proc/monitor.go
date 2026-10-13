@@ -49,7 +49,7 @@ func (p *process) down(ref Ref, target PID, reason error) {
 		return
 	}
 	delete(p.monitoring, ref)
-	p.mbox.push(DownMsg{Ref: ref, PID: target, Reason: reason})
+	p.push(DownMsg{Ref: ref, PID: target, Reason: reason})
 }
 
 // Monitor starts watching target. When target dies, a DownMsg carrying the
@@ -80,7 +80,7 @@ func (s *Self) Monitor(target PID) Ref {
 		if !p.node.isLocal(target) {
 			reason = NoConnection
 		}
-		p.mbox.push(DownMsg{Ref: ref, PID: target, Reason: reason})
+		p.push(DownMsg{Ref: ref, PID: target, Reason: reason})
 		return ref
 	}
 
@@ -89,7 +89,7 @@ func (s *Self) Monitor(target PID) Ref {
 	switch {
 	case p.dead.Load():
 	case t.dead.Load():
-		p.mbox.push(DownMsg{Ref: ref, PID: target, Reason: NoProc})
+		p.push(DownMsg{Ref: ref, PID: target, Reason: NoProc})
 	default:
 		p.watch(ref, target)
 		t.watchedBy(ref, watcher{pid: p.pid})
@@ -110,13 +110,13 @@ func (s *Self) MonitorName(node, name string) Ref {
 			return s.Monitor(pid)
 		}
 		ref := p.node.MakeRef()
-		p.mbox.push(DownMsg{Ref: ref, PID: PID{node: node}, Reason: NoProc})
+		p.push(DownMsg{Ref: ref, PID: PID{node: node}, Reason: NoProc})
 		return ref
 	}
 	ref := p.node.MakeRef()
 	d := p.node.distribution()
 	if d == nil {
-		p.mbox.push(DownMsg{Ref: ref, PID: PID{node: node}, Reason: NoConnection})
+		p.push(DownMsg{Ref: ref, PID: PID{node: node}, Reason: NoConnection})
 		return ref
 	}
 	p.mu.Lock()

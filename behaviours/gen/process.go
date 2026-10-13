@@ -16,6 +16,7 @@ import (
 // runner, acknowledges the start, and feeds the runner the mailbox.
 func run[S any](self *proc.Self, b Behaviour[S], args any, o molecule.StartOptions) error {
 	self.SetLabel(labelOf(b))
+	self.SetMaxMessages(o.MaxMessages)
 	if o.Name != nil {
 		if err := o.Name.Register(self.Node(), self.PID()); err != nil {
 			if pid, ok := o.Name.WhereIs(self.Node()); ok && pid != self.PID() {

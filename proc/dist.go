@@ -95,7 +95,7 @@ type Remote struct{ n *Node }
 // Send delivers msg to the local process to.
 func (r Remote) Send(to PID, msg any) {
 	if p := r.n.lookup(to); p != nil {
-		p.mbox.push(msg)
+		p.push(msg)
 	}
 }
 

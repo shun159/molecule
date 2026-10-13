@@ -63,10 +63,18 @@ type Option func(*StartOptions)
 // StartOptions are the options of a start, as the runtime of behaviours
 // reads them.
 type StartOptions struct {
-	Name Name
+	Name        Name
+	MaxMessages int
 }
 
 // WithName registers the process under name before Init runs.
 func WithName(name Name) Option {
 	return func(o *StartOptions) { o.Name = name }
+}
+
+// WithMaxMessages kills the process once more than n messages wait in its
+// mailbox, with reason proc.MailboxFull, for its supervisor to restart it;
+// see proc.Self.SetMaxMessages.
+func WithMaxMessages(n int) Option {
+	return func(o *StartOptions) { o.MaxMessages = n }
 }

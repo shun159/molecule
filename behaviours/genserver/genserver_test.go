@@ -490,3 +490,44 @@ func TestClocked(t *testing.T) {
 		t.Errorf("%v, %v: want the time", got, err)
 	}
 }
+
+// stuck handles its first info by waiting until released.
+type stuck struct {
+	genserver.Default[struct{}]
+	release chan struct{}
+}
+
+func (s stuck) HandleInfo(st struct{}, _ any) (struct{}, []molecule.Effect) {
+	<-s.release
+	return st, nil
+}
+
+// A server falling behind past WithMaxMessages is killed.
+func TestMaxMessages(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		_, logger := testlog.New()
+		n := proc.NewNode("", proc.WithLogger(logger))
+		release := make(chan struct{})
+		r, err := genserver.Start(context.Background(), n, stuck{release: release}, molecule.WithMaxMessages(2))
+		if err != nil {
+			t.Fatal(err)
+		}
+		pid := r.Dest().(proc.PID)
+		ctx, cancel := n.Watch(context.Background(), pid)
+		defer cancel()
+		n.Send(pid, 0) // handled, stuck
+		synctest.Wait()
+		n.Send(pid, 1)
+		n.Send(pid, 2)
+		synctest.Wait()
+		if !n.IsAlive(pid) {
+			t.Fatal("killed at its limit")
+		}
+		n.Send(pid, 3)
+		<-ctx.Done()
+		if err := context.Cause(ctx); !errors.Is(err, proc.MailboxFull) {
+			t.Errorf("exited with %v", err)
+		}
+		close(release)
+	})
+}
