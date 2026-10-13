@@ -111,9 +111,7 @@ func (e procEnv) Async(run func(context.Context) (any, error), done func(any, er
 	ctx, cancel := context.WithCancel(e.self.Context())
 	go func() {
 		v, err := RunAsync(ctx, run)
-		if ctx.Err() == nil {
-			n.Send(self, done(v, err))
-		}
+		n.Send(self, done(v, err))
 	}()
 	return cancel
 }

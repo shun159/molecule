@@ -48,9 +48,10 @@ type runtime[S any] struct {
 	timerGen uint64
 	asyncs   map[any]async // key -> async running, or waiting
 	asyncGen uint64
-	maxAsync int      // the most running at once, if > 0
-	running  int      // asyncs running
-	waiting  []queued // asyncs waiting for one running to end, in order
+	maxAsync int             // the most running at once, if > 0
+	running  int             // asyncs running, cancelled ones until they return
+	waiting  []queued        // asyncs waiting for one running to end, in order
+	draining map[uint64]bool // gens of asyncs cancelled, still running
 	requests map[proc.Ref]request
 
 	stopping   bool
@@ -103,6 +104,7 @@ func newRuntime[S any](b Behaviour[S], env Env, o actor.StartOptions) *runtime[S
 		tags:     make(map[proc.Ref]any),
 		timers:   make(map[any]timer),
 		asyncs:   make(map[any]async),
+		draining: make(map[uint64]bool),
 		requests: make(map[proc.Ref]request),
 	}
 }
@@ -271,7 +273,14 @@ func (r *runtime[S]) translate(msg any) (Msg, bool) {
 	case asyncDone:
 		a, ok := r.asyncs[m.key]
 		if !ok || a.gen != m.gen {
-			return nil, false // cancelled, or replaced
+			// Cancelled, or replaced: its outcome is not for the
+			// behaviour, but its place is free now it has returned.
+			if r.draining[m.gen] {
+				delete(r.draining, m.gen)
+				r.running--
+				r.runWaiting()
+			}
+			return nil, false
 		}
 		delete(r.asyncs, m.key)
 		r.running--
@@ -544,8 +553,9 @@ func (r *runtime[S]) runWaiting() {
 	}
 }
 
-// cancelAsync cancels the async under key, running or waiting. A slot it
-// frees is for the caller to fill, with runWaiting.
+// cancelAsync cancels the async under key, running or waiting. One
+// running keeps its place until its Run returns, which Go cannot make it
+// do: so no more than maxAsync goroutines run at once.
 func (r *runtime[S]) cancelAsync(key any) {
 	a, ok := r.asyncs[key]
 	if !ok {
@@ -553,7 +563,7 @@ func (r *runtime[S]) cancelAsync(key any) {
 	}
 	if a.cancel != nil {
 		a.cancel()
-		r.running--
+		r.draining[a.gen] = true
 	}
 	delete(r.asyncs, key)
 }
