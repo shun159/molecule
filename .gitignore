@@ -10,6 +10,9 @@
 *.out
 *.prof
 
+# Tables of examples/kvring run from here
+/kvring-data/
+
 # Local workspaces
 go.work
 go.work.sum
