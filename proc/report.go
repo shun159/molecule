@@ -65,6 +65,7 @@ func (p *process) crashReport(fn func(*Self) error, reason error) {
 		attrs = append(attrs, slog.String("stack", string(pe.Stack)))
 	}
 	n.Logger().Error("crash report", attrs...)
+	n.Emit(Crashed{PID: p.pid, Name: name, Label: p.labelString(), Reason: reason})
 }
 
 func funcName(fn any) string {

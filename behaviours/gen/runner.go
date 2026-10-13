@@ -139,6 +139,8 @@ func (r *runtime[S]) init(args any) (state S, effs []actor.Effect, err error) {
 
 func (r *runtime[S]) State() any { return r.state }
 
+func (r *runtime[S]) Label() string { return labelOf(r.b) }
+
 func (r *runtime[S]) Deliver(msg any) (bool, error) {
 	if done, reason := r.receive(msg); done {
 		return true, reason
