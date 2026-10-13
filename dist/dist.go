@@ -38,6 +38,13 @@ type Config struct {
 	// four times as often. A send blocked as long fails it too. Zero
 	// means DefaultTickTime.
 	TickTime time.Duration
+	// MaxQueue, if positive, bounds the frames waiting at the connection
+	// to a node: to be sent, while it connects or sends slower than the
+	// node is sent to, or received, not yet handed on. Past it, the
+	// connection is dropped as one lost: the links and monitors through
+	// it fail with proc.NoConnection, and the next send connects anew.
+	// Zero means no bound.
+	MaxQueue int
 }
 
 // DefaultTickTime is Config.TickTime when zero.

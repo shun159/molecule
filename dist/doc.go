@@ -46,6 +46,8 @@
 //
 // A connection silent for Config.TickTime is taken for lost, like
 // net_ticktime: an idle connection sends ticks to show it lives.
+// With Config.MaxQueue, one with too many frames waiting is dropped as
+// well, for a node that cannot keep up not to take the memory of this one.
 //
 // # What there is not yet
 //
