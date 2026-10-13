@@ -110,4 +110,8 @@
 // A supervisor reports to the logger of its node when a child exits with an
 // abnormal reason, when a child fails to start, and when it gives up after
 // too many restarts. It reports each child it starts at debug level.
+//
+// To a handler of events, see proc.WithEvents, it tells each restart of a
+// child that exited, a [Restarted], and its giving up, a [GaveUp], for a
+// program to count them.
 package supervisor

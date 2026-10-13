@@ -916,3 +916,5 @@ func (e *env) RequestName(node, name string, reply func(proc.Ref, proc.AliasMsg)
 }
 
 func (e *env) Logger() *slog.Logger { return e.s.logger }
+
+func (e *env) Emit(event any) { e.s.emit(event) }

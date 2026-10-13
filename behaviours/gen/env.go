@@ -64,6 +64,8 @@ type Env interface {
 	RequestName(node, name string, reply func(ref proc.Ref, m proc.AliasMsg) any) (ref proc.Ref, release func())
 	// Logger is where reports go.
 	Logger() *slog.Logger
+	// Emit hands event to the handler of events, as proc.Node.Emit does.
+	Emit(event any)
 }
 
 // Runner runs a Behaviour against an Env: it handles the messages a driver

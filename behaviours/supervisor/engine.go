@@ -188,7 +188,8 @@ func (b sup) exited(s *state, m proc.ExitMsg) []actor.Effect {
 		return nil
 	}
 	c := &s.children[i]
-	effs := reportTerminated(s.self, b.childID(*c), m.From, c.spec.Restart, m.Reason)
+	id := b.childID(*c)
+	effs := reportTerminated(s.self, id, m.From, c.spec.Restart, m.Reason)
 	c.pid = proc.PID{}
 	if !shouldRestart(c.spec.Restart, m.Reason) {
 		if b.dynamic || c.spec.Restart == Temporary {
@@ -196,7 +197,15 @@ func (b sup) exited(s *state, m proc.ExitMsg) []actor.Effect {
 		}
 		return effs
 	}
-	return append(effs, b.restart(s, i)...)
+	final := s.final
+	effs = append(effs, b.restart(s, i)...)
+	switch {
+	case s.final && !final:
+		effs = append(effs, gen.Emit{Event: GaveUp{Supervisor: s.self, Child: id, PID: m.From, Reason: m.Reason}})
+	case !s.final:
+		effs = append(effs, gen.Emit{Event: Restarted{Supervisor: s.self, Child: id, PID: m.From, Reason: m.Reason}})
+	}
+	return effs
 }
 
 // restart restarts the child at i, not running, and those the strategy

@@ -443,6 +443,8 @@ func (r *runtime[S]) apply(effs []actor.Effect) {
 			r.continues = append(r.continues, Started{Tag: e.Tag, PID: pid, Err: err})
 		case Log:
 			r.env.Logger().Log(context.Background(), e.Level, e.Msg, e.Attrs...)
+		case Emit:
+			r.env.Emit(e.Event)
 		case AckLater:
 			r.ackLater = true
 		case Ack:
