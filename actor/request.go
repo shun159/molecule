@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // Pending is a call made without waiting for its reply, like the request
@@ -43,10 +44,22 @@ var ErrCancelled = errors.New("actor: request cancelled")
 // and genstatem call it with the type of the reply.
 func Request[Rep any](caller Caller, to Dest, req any) *Pending[Rep] {
 	p := &Pending[Rep]{done: make(chan struct{}), cancel: make(chan struct{})}
+	n := caller.Node()
+	var start time.Time
+	if n.Emitting() {
+		start = time.Now()
+	}
+	// done ends p with its outcome.
+	done := func() {
+		if !start.IsZero() {
+			n.Emit(CallDone{To: to, Req: req, Took: time.Since(start), Err: p.err})
+		}
+		close(p.done)
+	}
 	a, abandon, err := sendCall(caller, to, func(f From) any { return CallMsg{From: f, Req: req} })
 	if err != nil {
 		p.err = err
-		close(p.done)
+		done()
 		return p
 	}
 	d, _ := caller.(dying)
@@ -55,7 +68,7 @@ func Request[Rep any](caller Caller, to Dest, req any) *Pending[Rep] {
 		callerDone = d.Done()
 	}
 	go func() {
-		defer close(p.done)
+		defer done()
 		defer a.Release()
 		select {
 		case m := <-a.C:

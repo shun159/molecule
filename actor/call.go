@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/shun159/molecule/proc"
 )
@@ -41,7 +42,25 @@ func (e *ExitError) Unwrap() error { return e.Reason }
 // A caller that stops waiting before the reply -- ctx done, or the caller
 // dead -- tells the server so with a CallAbandoned.
 func Call(ctx context.Context, caller Caller, to Dest, req any) (any, error) {
-	return call(ctx, caller, to, func(f From) any { return CallMsg{From: f, Req: req} }, true)
+	n := caller.Node()
+	if !n.Emitting() {
+		return call(ctx, caller, to, func(f From) any { return CallMsg{From: f, Req: req} }, true)
+	}
+	start := time.Now()
+	v, err := call(ctx, caller, to, func(f From) any { return CallMsg{From: f, Req: req} }, true)
+	n.Emit(CallDone{To: to, Req: req, Took: time.Since(start), Err: err})
+	return v, err
+}
+
+// CallDone is the event of a call done, see proc.WithEvents: one of Call,
+// of Request, or of the SendRequest of a behaviour, with how long it took
+// and its error, nil for a reply. Req tells what was asked, to tell the
+// calls apart by.
+type CallDone struct {
+	To   Dest
+	Req  any
+	Took time.Duration
+	Err  error
 }
 
 // CallWith is Call with the message wrap makes of the From, for the

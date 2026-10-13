@@ -45,6 +45,10 @@
 // PID of the caller and the reference of the alias the reply goes to. Only
 // the first reply to a call arrives.
 //
+// On a node with a handler of events, see proc.WithEvents, each call done
+// -- of Call, Request or SendRequest -- is a [CallDone], telling how long
+// it took, for a program to measure its calls.
+//
 // # Effects
 //
 // The callbacks of behaviours are pure: they return effects for their

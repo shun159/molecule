@@ -46,3 +46,7 @@ func (n *Node) Emit(event any) {
 	}()
 	n.events(event)
 }
+
+// Emitting reports whether n has a handler of events, for an event costly
+// to make, as one timing what it tells of, to be made only then.
+func (n *Node) Emitting() bool { return n.events != nil }
