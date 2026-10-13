@@ -46,6 +46,7 @@ type Sim struct {
 
 	noPurity bool
 	events   func(any) // see WithEvents
+	choices  []byte    // see WithChoices, those left
 
 	// CallTimeout bounds the virtual time a Call waits.
 	CallTimeout time.Duration
@@ -122,6 +123,25 @@ type Option func(*Sim)
 // WithLogger sends the reports of the simulated behaviours to l. They are
 // discarded otherwise.
 func WithLogger(l *slog.Logger) Option { return func(s *Sim) { s.logger = l } }
+
+// WithChoices makes the choices of the run -- the step taken next, the
+// message lost -- read from data, rather than drawn from the seed, until
+// data is used up, the seed then drawing the rest. Bytes go only to choices
+// among several: a byte for one among up to 256.
+//
+// It is for fuzzing the order of events: given the bytes of a fuzz
+// target, the fuzzer mutates the schedule, a byte a choice, toward
+// runs covering new code, and keeps a schedule failing in testdata/fuzz,
+// replayed by go test from then on.
+//
+//	func FuzzTree(f *testing.F) {
+//		f.Add([]byte{})
+//		f.Fuzz(func(t *testing.T, schedule []byte) {
+//			s := gensim.New(1, gensim.WithChoices(schedule))
+//			...
+//		})
+//	}
+func WithChoices(data []byte) Option { return func(s *Sim) { s.choices = data } }
 
 // WithEvents makes the simulation hand h the events of its processes, as
 // proc.WithEvents does those of a node: proc.Crashed, proc.Overflowed, and
@@ -394,8 +414,32 @@ func (s *Sim) Step() bool {
 	if len(choices) == 0 {
 		return false
 	}
-	choices[s.rng.IntN(len(choices))]()
+	choices[s.choose(len(choices))]()
 	return true
+}
+
+// choose returns a choice among n, read from the choices given, if any
+// are left, or drawn from the seed.
+func (s *Sim) choose(n int) int {
+	if len(s.choices) == 0 {
+		return s.rng.IntN(n)
+	}
+	v := 0
+	for m := 1; m < n && len(s.choices) > 0; m <<= 8 {
+		v = v<<8 | int(s.choices[0])
+		s.choices = s.choices[1:]
+	}
+	return v % n
+}
+
+// chance reports true with probability p, as choose chooses.
+func (s *Sim) chance(p float64) bool {
+	if len(s.choices) == 0 {
+		return s.rng.Float64() < p
+	}
+	b := s.choices[0]
+	s.choices = s.choices[1:]
+	return float64(b)/256 < p
 }
 
 // RunUntilIdle takes steps until none is possible without time passing.
@@ -477,7 +521,7 @@ func (s *Sim) send(from, to proc.PID, msg any) {
 		s.record(Event{Kind: Dropped, From: from, To: to, Msg: msg})
 		return
 	}
-	if s.Loss > 0 && !from.IsZero() && from.Node() != to.Node() && s.rng.Float64() < s.Loss {
+	if s.Loss > 0 && !from.IsZero() && from.Node() != to.Node() && s.chance(s.Loss) {
 		s.record(Event{Kind: Dropped, From: from, To: to, Msg: msg})
 		return
 	}

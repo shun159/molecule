@@ -31,9 +31,9 @@ type tree struct {
 	top proc.PID
 }
 
-func newTree(t *testing.T, seed uint64, spec Spec) *tree {
+func newTree(t *testing.T, seed uint64, spec Spec, opts ...gensim.Option) *tree {
 	t.Helper()
-	s := gensim.New(seed)
+	s := gensim.New(seed, opts...)
 	top, err := gensim.Start(s, Child(spec))
 	if err != nil {
 		t.Fatal(err)
@@ -145,51 +145,68 @@ func TestSimDynamic(t *testing.T) {
 // tree either runs every permanent child, or has given up, all of it.
 func TestSimChaos(t *testing.T) {
 	for seed := range uint64(200) {
-		inner := Spec{Strategy: Strategy(seed % 3), Intensity: 3, Period: time.Second, Children: []ChildSpec{
-			worker("c", Permanent), worker("d", Transient), worker("e", Temporary),
-		}}
-		tr := newTree(t, seed, Spec{Strategy: Strategy((seed / 3) % 3), Intensity: 3, Period: time.Second, Children: []ChildSpec{
-			worker("a", Permanent),
-			{ID: "inner", Start: Child(inner), Type: Supervisor},
-		}})
-		r := rand.New(rand.NewPCG(seed, 3))
-		var all []proc.PID
-		for range 10 {
-			if !tr.s.Alive(tr.top) {
-				break
-			}
-			top := tr.children(tr.top)
-			targets := []proc.PID{top["a"]}
-			if tr.s.Alive(top["inner"]) {
-				for _, pid := range tr.children(top["inner"]) {
-					targets = append(targets, pid)
-				}
-			}
-			all = append(all, targets...)
-			if pid := targets[r.IntN(len(targets))]; !pid.IsZero() {
-				tr.s.Cast(pid, crashNow{})
-			}
-			for range r.IntN(10) {
-				tr.s.Step()
-			}
-			tr.s.Advance(time.Duration(r.IntN(600)) * time.Millisecond)
-		}
-		tr.s.RunUntilIdle()
+		chaos(t, seed)
+	}
+}
+
+// FuzzSimChaos is TestSimChaos with the order of events searched by the
+// fuzzer, the crashes still those of the seed.
+func FuzzSimChaos(f *testing.F) {
+	f.Add(uint64(0), []byte{})
+	f.Add(uint64(1), []byte{3, 1, 4, 1, 5, 9, 2, 6})
+	f.Fuzz(func(t *testing.T, seed uint64, schedule []byte) {
+		chaos(t, seed, gensim.WithChoices(schedule))
+	})
+}
+
+// chaos crashes processes of a tree of two levels at random, and checks
+// that the tree is whole after, or given up whole.
+func chaos(t *testing.T, seed uint64, opts ...gensim.Option) {
+	t.Helper()
+	inner := Spec{Strategy: Strategy(seed % 3), Intensity: 3, Period: time.Second, Children: []ChildSpec{
+		worker("c", Permanent), worker("d", Transient), worker("e", Temporary),
+	}}
+	tr := newTree(t, seed, Spec{Strategy: Strategy((seed / 3) % 3), Intensity: 3, Period: time.Second, Children: []ChildSpec{
+		worker("a", Permanent),
+		{ID: "inner", Start: Child(inner), Type: Supervisor},
+	}}, opts...)
+	r := rand.New(rand.NewPCG(seed, 3))
+	var all []proc.PID
+	for range 10 {
 		if !tr.s.Alive(tr.top) {
-			for _, pid := range all {
-				if tr.s.Alive(pid) {
-					t.Fatalf("seed %d: %v alive, the tree given up", seed, pid)
-				}
-			}
-			continue
+			break
 		}
 		top := tr.children(tr.top)
-		if !tr.s.Alive(top["a"]) || !tr.s.Alive(top["inner"]) {
-			t.Fatalf("seed %d: top children %v not all running", seed, top)
+		targets := []proc.PID{top["a"]}
+		if tr.s.Alive(top["inner"]) {
+			for _, pid := range tr.children(top["inner"]) {
+				targets = append(targets, pid)
+			}
 		}
-		if c := tr.children(top["inner"])["c"]; !tr.s.Alive(c) {
-			t.Fatalf("seed %d: permanent c not running\n%s", seed, fmt.Sprint(tr.children(top["inner"])))
+		all = append(all, targets...)
+		if pid := targets[r.IntN(len(targets))]; !pid.IsZero() {
+			tr.s.Cast(pid, crashNow{})
 		}
+		for range r.IntN(10) {
+			tr.s.Step()
+		}
+		tr.s.Advance(time.Duration(r.IntN(600)) * time.Millisecond)
+	}
+	tr.s.RunUntilIdle()
+	if !tr.s.Alive(tr.top) {
+		for _, pid := range all {
+			if tr.s.Alive(pid) {
+				t.Fatalf("seed %d: %v alive, the tree given up", seed, pid)
+			}
+		}
+		return
+	}
+	top := tr.children(tr.top)
+	if !tr.s.Alive(top["a"]) || !tr.s.Alive(top["inner"]) {
+		t.Fatalf("seed %d: top children %v not all running", seed, top)
+	}
+	if c := tr.children(top["inner"])["c"]; !tr.s.Alive(c) {
+		t.Fatalf("seed %d: permanent c not running\n%s", seed, fmt.Sprint(tr.children(top["inner"])))
 	}
 }
 
