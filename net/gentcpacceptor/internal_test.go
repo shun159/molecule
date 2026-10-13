@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/net/gentcp"
 	"github.com/shun159/molecule/proc"
@@ -20,16 +20,16 @@ type rstate struct {
 	infos  []any
 }
 
-func (recorder) Init(proc.PID, gentcp.Socket) (rstate, []molecule.Effect, error) {
+func (recorder) Init(proc.PID, gentcp.Socket) (rstate, []actor.Effect, error) {
 	return rstate{}, nil, nil
 }
 
-func (recorder) HandleData(s rstate, sock gentcp.Socket, b []byte) (rstate, []molecule.Effect) {
+func (recorder) HandleData(s rstate, sock gentcp.Socket, b []byte) (rstate, []actor.Effect) {
 	s.data = append(s.data[:len(s.data):len(s.data)], string(b))
-	return s, molecule.Do(sock.SendEffect(b))
+	return s, actor.Do(sock.SendEffect(b))
 }
 
-func (recorder) HandleInfo(s rstate, _ gentcp.Socket, msg any) (rstate, []molecule.Effect) {
+func (recorder) HandleInfo(s rstate, _ gentcp.Socket, msg any) (rstate, []actor.Effect) {
 	s.infos = append(s.infos[:len(s.infos):len(s.infos)], msg)
 	return s, nil
 }
@@ -37,7 +37,7 @@ func (recorder) HandleInfo(s rstate, _ gentcp.Socket, msg any) (rstate, []molecu
 // closer also records the closing of the connection.
 type closer struct{ recorder }
 
-func (closer) HandleClosed(s rstate, _ gentcp.Socket, err error) (rstate, []molecule.Effect) {
+func (closer) HandleClosed(s rstate, _ gentcp.Socket, err error) (rstate, []actor.Effect) {
 	s.closed = append(s.closed[:len(s.closed):len(s.closed)], err)
 	return s, nil
 }
@@ -45,8 +45,8 @@ func (closer) HandleClosed(s rstate, _ gentcp.Socket, err error) (rstate, []mole
 // minimal implements only the required callbacks.
 type minimal struct{}
 
-func (minimal) Init(proc.PID, gentcp.Socket) (int, []molecule.Effect, error) { return 0, nil, nil }
-func (minimal) HandleData(n int, _ gentcp.Socket, _ []byte) (int, []molecule.Effect) {
+func (minimal) Init(proc.PID, gentcp.Socket) (int, []actor.Effect, error) { return 0, nil, nil }
+func (minimal) HandleData(n int, _ gentcp.Socket, _ []byte) (int, []actor.Effect) {
 	return n + 1, nil
 }
 
@@ -67,11 +67,11 @@ func TestAdapter(t *testing.T) {
 		t.Errorf("data before attach: %+v, %#v", c, effs)
 	}
 	c, effs = a.Handle(c, info(attached{sock}))
-	if !c.ready || !reflect.DeepEqual(effs, molecule.Do(sock.SetActiveEffect(gentcp.N(3)))) {
+	if !c.ready || !reflect.DeepEqual(effs, actor.Do(sock.SetActiveEffect(gentcp.N(3)))) {
 		t.Errorf("on attach: %+v, %#v", c, effs)
 	}
 	c, effs = a.Handle(c, info(gentcp.DataMsg{Sock: sock, Bytes: []byte("hi")}))
-	if want := molecule.Do(sock.SendEffect([]byte("hi")), sock.SetActiveEffect(gentcp.N(1))); !reflect.DeepEqual(effs, want) {
+	if want := actor.Do(sock.SendEffect([]byte("hi")), sock.SetActiveEffect(gentcp.N(1))); !reflect.DeepEqual(effs, want) {
 		t.Errorf("on data: %#v, want the write then one more packet", effs)
 	}
 	c, effs = a.Handle(c, info(gentcp.DataMsg{Sock: other, Bytes: []byte("stray")}))
@@ -82,7 +82,7 @@ func TestAdapter(t *testing.T) {
 	if effs != nil || len(c.state.infos) != 0 {
 		t.Errorf("own Passive handled: %+v, %#v", c.state, effs)
 	}
-	cast := molecule.CastMsg{Req: "hello"}
+	cast := actor.CastMsg{Req: "hello"}
 	c, _ = a.Handle(c, cast)
 	c, _ = a.Handle(c, info("plain"))
 	c, _ = a.Handle(c, info(gentcp.PassiveMsg{Sock: other}))
@@ -95,20 +95,20 @@ func TestAdapter(t *testing.T) {
 		t.Errorf("closing of another socket handled: %#v", effs)
 	}
 	stopped, effs := a.Handle(c, info(gentcp.ErrorMsg{Sock: sock, Err: boom}))
-	if stop, ok := effs[0].(molecule.Stop); len(effs) != 1 || !ok ||
+	if stop, ok := effs[0].(actor.Stop); len(effs) != 1 || !ok ||
 		!errors.Is(stop.Reason, proc.Shutdown) || !errors.Is(stop.Reason, boom) {
 		t.Errorf("on an error: %#v, want a stop with a shutdown wrapping it", effs)
 	}
 	if _, effs = a.Handle(stopped, info(gentcp.ClosedMsg{Sock: sock})); effs != nil {
 		t.Errorf("Closed after Error: %#v, want nothing more", effs)
 	}
-	if _, effs = a.Handle(c, info(gentcp.ClosedMsg{Sock: sock})); !reflect.DeepEqual(effs, molecule.Do(molecule.Stop{})) {
+	if _, effs = a.Handle(c, info(gentcp.ClosedMsg{Sock: sock})); !reflect.DeepEqual(effs, actor.Do(actor.Stop{})) {
 		t.Errorf("on closed by the peer: %#v", effs)
 	}
 
 	m := adapter[int]{b: minimal{}, activeN: 1}
 	mc, _ := m.Handle(initial(m), info(attached{sock}))
-	if mc, effs = m.Handle(mc, info(gentcp.DataMsg{Sock: sock})); !reflect.DeepEqual(effs, molecule.Do(sock.SetActiveEffect(gentcp.N(1)))) {
+	if mc, effs = m.Handle(mc, info(gentcp.DataMsg{Sock: sock})); !reflect.DeepEqual(effs, actor.Do(sock.SetActiveEffect(gentcp.N(1)))) {
 		t.Errorf("on data without effects: %#v, want one more packet", effs)
 	}
 	if mc, effs = m.Handle(mc, info("ignored")); effs != nil || mc.state != 1 {
@@ -136,8 +136,8 @@ func TestAdapterClosed(t *testing.T) {
 // terminator reports Terminate through its effects.
 type terminator struct{ minimal }
 
-func (terminator) Terminate(n int, reason error) []molecule.Effect {
-	return molecule.Do(molecule.Stop{Reason: reason})
+func (terminator) Terminate(n int, reason error) []actor.Effect {
+	return actor.Do(actor.Stop{Reason: reason})
 }
 
 func TestAdapterTerminate(t *testing.T) {
@@ -147,7 +147,7 @@ func TestAdapterTerminate(t *testing.T) {
 		t.Errorf("Terminate before Init: %#v", effs)
 	}
 	c, _ := a.Handle(initial(a), info(attached{gentcp.Socket{}}))
-	if effs := a.Terminate(c, boom); !reflect.DeepEqual(effs, molecule.Do(molecule.Stop{Reason: boom})) {
+	if effs := a.Terminate(c, boom); !reflect.DeepEqual(effs, actor.Do(actor.Stop{Reason: boom})) {
 		t.Errorf("Terminate after Init: %#v", effs)
 	}
 	if effs := (adapter[int]{b: minimal{}, activeN: 1}).Terminate(c, boom); effs != nil {

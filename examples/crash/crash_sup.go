@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/behaviours/supervisor"
 	"github.com/shun159/molecule/proc"
@@ -15,13 +15,13 @@ import (
 // restarting does not help, and the supervisor gives up.
 func startCrashSup(ctx context.Context, n *proc.Node) (proc.PID, error) {
 	return supervisor.Start(ctx, n, supervisor.Spec{
-		Name:      molecule.Local("crash_sup"),
+		Name:      actor.Local("crash_sup"),
 		Strategy:  supervisor.OneForOne,
 		Intensity: 3,
 		Period:    5 * time.Second,
 		Children: []supervisor.ChildSpec{{
 			ID:      "calc",
-			Start:   genserver.Child(CalcServer{}, molecule.WithName(calcName)),
+			Start:   genserver.Child(CalcServer{}, actor.WithName(calcName)),
 			Restart: supervisor.Permanent,
 		}},
 	})

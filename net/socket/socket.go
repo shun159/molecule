@@ -9,7 +9,7 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/net/internal/dgram"
 	"github.com/shun159/molecule/proc"
 )
@@ -119,7 +119,7 @@ var kind = &dgram.Kind[syscall.Sockaddr, Socket]{
 
 // Send sends data as one datagram to to. It writes in the calling process;
 // a failure leaves the socket as it was.
-func (s Socket) Send(ctx context.Context, caller molecule.Caller, to syscall.Sockaddr, data []byte) error {
+func (s Socket) Send(ctx context.Context, caller actor.Caller, to syscall.Sockaddr, data []byte) error {
 	if s.conn == nil {
 		return dgram.Call(ctx, kind, caller, s.PID, dgram.SendReq[syscall.Sockaddr]{To: to, Data: data})
 	}
@@ -130,24 +130,24 @@ func (s Socket) Send(ctx context.Context, caller molecule.Caller, to syscall.Soc
 // from, waiting for it. The wait ends at the deadline of ctx, if any, with
 // ErrTimeout; the socket keeps whatever arrives after. Only the owner may
 // receive.
-func (s Socket) Recv(ctx context.Context, caller molecule.Caller) (syscall.Sockaddr, []byte, error) {
+func (s Socket) Recv(ctx context.Context, caller actor.Caller) (syscall.Sockaddr, []byte, error) {
 	return dgram.Recv(ctx, kind, caller, s.PID)
 }
 
 // SetActive changes the active mode.
-func (s Socket) SetActive(ctx context.Context, caller molecule.Caller, a Active) error {
+func (s Socket) SetActive(ctx context.Context, caller actor.Caller, a Active) error {
 	return dgram.Call(ctx, kind, caller, s.PID, dgram.SetActiveReq{Active: a})
 }
 
 // ControllingProcess gives the socket to owner, which gets its messages
 // from then on. Only the owner may. Messages already sent stay with the
 // previous owner.
-func (s Socket) ControllingProcess(ctx context.Context, caller molecule.Caller, owner proc.PID) error {
+func (s Socket) ControllingProcess(ctx context.Context, caller actor.Caller, owner proc.PID) error {
 	return dgram.Call(ctx, kind, caller, s.PID, dgram.ControlReq{Owner: owner})
 }
 
 // Close closes the socket, and its process exits.
-func (s Socket) Close(ctx context.Context, caller molecule.Caller) error {
+func (s Socket) Close(ctx context.Context, caller actor.Caller) error {
 	err := dgram.Call(ctx, kind, caller, s.PID, dgram.CloseReq{})
 	if err == ErrClosed {
 		return nil // closed already
@@ -159,25 +159,25 @@ func (s Socket) Close(ctx context.Context, caller molecule.Caller) error {
 // behaviour: the runtime of the behaviour writes, as Send does. A failure
 // comes back to the behaviour as a SendErrorMsg. Through a Socket made by
 // hand, it goes through the socket process, and a failure is not told.
-func (s Socket) SendEffect(to syscall.Sockaddr, data []byte) molecule.Effect {
+func (s Socket) SendEffect(to syscall.Sockaddr, data []byte) actor.Effect {
 	return dgram.SendEffect(kind, s, s.PID, s.conn, to, data, false, Passive)
 }
 
 // SendActiveEffect is the effect sending data, then changing the active
 // mode, as SendEffect and SetActiveEffect do: how a behaviour answers a
 // datagram and asks for the next. The mode changes even if sending fails.
-func (s Socket) SendActiveEffect(to syscall.Sockaddr, data []byte, a Active) molecule.Effect {
+func (s Socket) SendActiveEffect(to syscall.Sockaddr, data []byte, a Active) actor.Effect {
 	return dgram.SendEffect(kind, s, s.PID, s.conn, to, data, true, a)
 }
 
 // SetActiveEffect is the effect changing the active mode, for a behaviour.
-func (s Socket) SetActiveEffect(a Active) molecule.Effect {
-	return molecule.Send{To: s.PID, Msg: dgram.SetActiveReq{Active: a}}
+func (s Socket) SetActiveEffect(a Active) actor.Effect {
+	return actor.Send{To: s.PID, Msg: dgram.SetActiveReq{Active: a}}
 }
 
 // CloseEffect is the effect closing the socket, for a behaviour.
-func (s Socket) CloseEffect() molecule.Effect {
-	return molecule.Send{To: s.PID, Msg: dgram.CloseReq{}}
+func (s Socket) CloseEffect() actor.Effect {
+	return actor.Send{To: s.PID, Msg: dgram.CloseReq{}}
 }
 
 // Open opens a socket of domain, typ and proto, as socket(2) does, owned

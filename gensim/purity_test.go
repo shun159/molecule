@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/gensim"
 )
@@ -16,7 +16,7 @@ type tally struct {
 	copy bool
 }
 
-func (t tally) HandleCast(m map[string]int, name string) (map[string]int, []molecule.Effect) {
+func (t tally) HandleCast(m map[string]int, name string) (map[string]int, []actor.Effect) {
 	if t.copy {
 		m = maps.Clone(m)
 	} else if m == nil {
@@ -29,7 +29,7 @@ func (t tally) HandleCast(m map[string]int, name string) (map[string]int, []mole
 // ranks keeps a slice, its first element overwritten in place.
 type ranks struct{ genserver.Default[[]string] }
 
-func (ranks) HandleCast(r []string, name string) ([]string, []molecule.Effect) {
+func (ranks) HandleCast(r []string, name string) ([]string, []actor.Effect) {
 	if len(r) == 0 {
 		return []string{name}, nil
 	}
@@ -78,7 +78,7 @@ func TestPurity(t *testing.T) {
 		if (err != nil) != tt.impure {
 			t.Errorf("%s: %v", tt.name, err)
 		}
-		if err != nil && (err.PID != pid || err.Msg != (molecule.CastMsg{Req: "b"})) {
+		if err != nil && (err.PID != pid || err.Msg != (actor.CastMsg{Req: "b"})) {
 			t.Errorf("%s: %+v", tt.name, err)
 		}
 	}
@@ -110,7 +110,7 @@ func TestPurityOfMessages(t *testing.T) {
 // clock keeps a time, which it formats: no change of its own.
 type clock struct{ genserver.Default[time.Time] }
 
-func (clock) HandleCast(t time.Time, _ string) (time.Time, []molecule.Effect) {
+func (clock) HandleCast(t time.Time, _ string) (time.Time, []actor.Effect) {
 	_ = t.Local().String()
 	return t.Add(time.Second), nil
 }

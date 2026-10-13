@@ -1,6 +1,6 @@
 package gen
 
-import "github.com/shun159/molecule"
+import "github.com/shun159/molecule/actor"
 
 // Performer is an effect that performs itself, for what lies outside the
 // processes, such as a socket: the runtime calls Perform in the process
@@ -9,6 +9,6 @@ import "github.com/shun159/molecule"
 // any other; only the runtime performs it, so the behaviour stays pure.
 // In gensim, Perform acts on the real world all the same.
 type Performer interface {
-	molecule.Effect
+	actor.Effect
 	Perform(env Env)
 }

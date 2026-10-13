@@ -5,7 +5,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/proc"
 )
@@ -52,7 +52,7 @@ type op struct {
 	initial bool // a start of Init: its failure fails the supervisor
 	restart bool // a start of a restart: its failure is retried
 	call    bool // a start asked by StartChild, to reply to from
-	from    molecule.From
+	from    actor.From
 	value   any
 	err     error
 }
@@ -70,7 +70,7 @@ type state struct {
 	stopping  []proc.PID // the children stopped, waited for
 	exits     []proc.ExitMsg
 	final     bool // stopping for good
-	stopCalls []molecule.From
+	stopCalls []actor.From
 }
 
 func (s state) clone() state {
@@ -95,9 +95,9 @@ type (
 	retry struct{ key uint64 }
 )
 
-func (b sup) Init(self proc.PID, _ any) (state, []molecule.Effect, error) {
+func (b sup) Init(self proc.PID, _ any) (state, []actor.Effect, error) {
 	s := state{self: self}
-	effs := []molecule.Effect{molecule.TrapExit{On: true}}
+	effs := []actor.Effect{actor.TrapExit{On: true}}
 	if b.dynamic {
 		return s, effs, nil
 	}
@@ -115,15 +115,15 @@ func (b sup) Init(self proc.PID, _ any) (state, []molecule.Effect, error) {
 	return s, append(effs, more...), nil
 }
 
-func (b sup) Handle(s state, msg gen.Msg) (state, []molecule.Effect) {
+func (b sup) Handle(s state, msg gen.Msg) (state, []actor.Effect) {
 	s = s.clone()
-	var effs []molecule.Effect
+	var effs []actor.Effect
 	switch m := msg.(type) {
 	case gen.ContinueMsg:
 		if st, ok := m.Msg.(gen.Started); ok {
 			effs = b.started(&s, st)
 		}
-	case molecule.CallMsg:
+	case actor.CallMsg:
 		effs = b.call(&s, m.From, m.Req)
 	case gen.InfoMsg:
 		effs = b.info(&s, m.Msg)
@@ -134,13 +134,13 @@ func (b sup) Handle(s state, msg gen.Msg) (state, []molecule.Effect) {
 
 // ParentExit stops the children, then the supervisor, with the reason of
 // the parent, as a supervisor does.
-func (b sup) ParentExit(s state, reason error) (state, []molecule.Effect) {
+func (b sup) ParentExit(s state, reason error) (state, []actor.Effect) {
 	s = s.clone()
 	b.finish(&s, reason)
 	return b.advance(s)
 }
 
-func (sup) Terminate(state, error) []molecule.Effect { return nil }
+func (sup) Terminate(state, error) []actor.Effect { return nil }
 
 // Label tells what the process is.
 func (b sup) Label() string {
@@ -150,12 +150,12 @@ func (b sup) Label() string {
 	return "supervisor"
 }
 
-func (b sup) info(s *state, msg any) []molecule.Effect {
+func (b sup) info(s *state, msg any) []actor.Effect {
 	switch m := msg.(type) {
 	case proc.ExitMsg:
 		if i := slices.Index(s.stopping, m.From); i >= 0 {
 			s.stopping = slices.Delete(s.stopping, i, i+1)
-			return molecule.Do(molecule.CancelTimer{Key: killKey{m.From}})
+			return actor.Do(actor.CancelTimer{Key: killKey{m.From}})
 		}
 		if s.byPID(m.From) < 0 {
 			return nil // a child already stopped or replaced
@@ -167,7 +167,7 @@ func (b sup) info(s *state, msg any) []molecule.Effect {
 		return b.exited(s, m)
 	case kill:
 		if slices.Contains(s.stopping, m.pid) {
-			return molecule.Do(molecule.Exit{To: m.pid, Reason: proc.Kill})
+			return actor.Do(actor.Exit{To: m.pid, Reason: proc.Kill})
 		}
 	case expired:
 		s.restarts--
@@ -182,7 +182,7 @@ func (b sup) info(s *state, msg any) []molecule.Effect {
 func (s state) busy() bool { return s.waitStart || len(s.stopping) > 0 || len(s.ops) > 0 }
 
 // exited handles the exit of a running child.
-func (b sup) exited(s *state, m proc.ExitMsg) []molecule.Effect {
+func (b sup) exited(s *state, m proc.ExitMsg) []actor.Effect {
 	i := s.byPID(m.From)
 	if i < 0 {
 		return nil
@@ -201,7 +201,7 @@ func (b sup) exited(s *state, m proc.ExitMsg) []molecule.Effect {
 
 // restart restarts the child at i, not running, and those the strategy
 // involves, unless restarts are too many: then the supervisor gives up.
-func (b sup) restart(s *state, i int) []molecule.Effect {
+func (b sup) restart(s *state, i int) []actor.Effect {
 	if s.restarts+1 > b.max {
 		effs := reportShutdown(s.self, ErrMaxIntensity)
 		b.finish(s, ErrMaxIntensity)
@@ -209,7 +209,7 @@ func (b sup) restart(s *state, i int) []molecule.Effect {
 	}
 	s.restarts++
 	s.timerSeq++
-	effs := molecule.Do(molecule.StartTimer{Key: expireKey{s.timerSeq}, After: b.period, Msg: expired{}})
+	effs := actor.Do(actor.StartTimer{Key: expireKey{s.timerSeq}, After: b.period, Msg: expired{}})
 	if b.dynamic {
 		s.ops = append(s.ops, op{kind: opStart, keys: []uint64{s.children[i].key}, restart: true})
 		return effs
@@ -252,7 +252,7 @@ func (b sup) stopAll(s *state) []op {
 }
 
 // started handles the outcome of the start of the child of the first op.
-func (b sup) started(s *state, st gen.Started) []molecule.Effect {
+func (b sup) started(s *state, st gen.Started) []actor.Effect {
 	if !s.waitStart || len(s.ops) == 0 {
 		return nil
 	}
@@ -261,14 +261,14 @@ func (b sup) started(s *state, st gen.Started) []molecule.Effect {
 	s.ops = s.ops[1:]
 	i := s.byKey(o.keys[0])
 	c := &s.children[i]
-	var effs []molecule.Effect
+	var effs []actor.Effect
 	switch {
-	case errors.Is(st.Err, molecule.ErrIgnore):
+	case errors.Is(st.Err, actor.ErrIgnore):
 		if b.dynamic {
 			s.children = slices.Delete(s.children, i, i+1)
 		}
 		if o.call {
-			effs = append(effs, molecule.Reply{To: o.from, Value: startResult{err: st.Err}})
+			effs = append(effs, actor.Reply{To: o.from, Value: startResult{err: st.Err}})
 		}
 	case st.Err != nil:
 		id := b.childID(*c)
@@ -280,14 +280,14 @@ func (b sup) started(s *state, st gen.Started) []molecule.Effect {
 			s.ops = append(b.stopAll(s), op{kind: opAck, err: err}, op{kind: opFinish, err: err})
 		case o.call:
 			s.children = slices.Delete(s.children, i, i+1)
-			effs = append(effs, molecule.Reply{To: o.from, Value: startResult{err: st.Err}})
+			effs = append(effs, actor.Reply{To: o.from, Value: startResult{err: st.Err}})
 		default:
 			// The children after it in the restart stay down until the
 			// retry restarts them.
 			for len(s.ops) > 0 && s.ops[0].kind == opStart && s.ops[0].restart {
 				s.ops = s.ops[1:]
 			}
-			effs = append(effs, molecule.Send{To: s.self, Msg: retry{c.key}})
+			effs = append(effs, actor.Send{To: s.self, Msg: retry{c.key}})
 		}
 	default:
 		c.pid = st.PID
@@ -296,7 +296,7 @@ func (b sup) started(s *state, st gen.Started) []molecule.Effect {
 		}
 		effs = append(effs, reportStarted(s.self, b.childID(*c), st.PID)...)
 		if o.call {
-			effs = append(effs, molecule.Reply{To: o.from, Value: startResult{pid: st.PID}})
+			effs = append(effs, actor.Reply{To: o.from, Value: startResult{pid: st.PID}})
 		}
 	}
 	return effs
@@ -304,8 +304,8 @@ func (b sup) started(s *state, st gen.Started) []molecule.Effect {
 
 // advance runs the operations queued, until one waits, then the exits that
 // came meanwhile.
-func (b sup) advance(s state) (state, []molecule.Effect) {
-	var effs []molecule.Effect
+func (b sup) advance(s state) (state, []actor.Effect) {
+	var effs []actor.Effect
 	for !s.waitStart && len(s.stopping) == 0 {
 		if len(s.ops) == 0 {
 			if len(s.exits) == 0 || s.final {
@@ -345,13 +345,13 @@ func (b sup) advance(s state) (state, []molecule.Effect) {
 				s.stopping = append(s.stopping, pid)
 				switch d := c.spec.shutdown(); d {
 				case Brutal:
-					effs = append(effs, molecule.Exit{To: pid, Reason: proc.Kill})
+					effs = append(effs, actor.Exit{To: pid, Reason: proc.Kill})
 				case Infinity:
-					effs = append(effs, molecule.Exit{To: pid, Reason: proc.Shutdown})
+					effs = append(effs, actor.Exit{To: pid, Reason: proc.Shutdown})
 				default:
 					effs = append(effs,
-						molecule.Exit{To: pid, Reason: proc.Shutdown},
-						molecule.StartTimer{Key: killKey{pid}, After: d, Msg: kill{pid}})
+						actor.Exit{To: pid, Reason: proc.Shutdown},
+						actor.StartTimer{Key: killKey{pid}, After: d, Msg: kill{pid}})
 				}
 			}
 		case opRemove:
@@ -360,17 +360,17 @@ func (b sup) advance(s state) (state, []molecule.Effect) {
 			}
 			s.ops = s.ops[1:]
 		case opReply:
-			effs = append(effs, molecule.Reply{To: o.from, Value: o.value})
+			effs = append(effs, actor.Reply{To: o.from, Value: o.value})
 			s.ops = s.ops[1:]
 		case opAck:
 			effs = append(effs, gen.Ack{Err: o.err})
 			s.ops = s.ops[1:]
 		case opFinish:
 			for _, from := range s.stopCalls {
-				effs = append(effs, molecule.Reply{To: from})
+				effs = append(effs, actor.Reply{To: from})
 			}
 			s.ops = nil
-			return s, append(effs, molecule.Stop{Reason: o.err})
+			return s, append(effs, actor.Stop{Reason: o.err})
 		}
 	}
 	return s, effs
@@ -406,8 +406,8 @@ func (b sup) which(s state) []ChildInfo {
 }
 
 // call handles the calls of the API.
-func (b sup) call(s *state, from molecule.From, req any) []molecule.Effect {
-	reply := func(v any) []molecule.Effect { return molecule.Do(molecule.Reply{To: from, Value: v}) }
+func (b sup) call(s *state, from actor.From, req any) []actor.Effect {
+	reply := func(v any) []actor.Effect { return actor.Do(actor.Reply{To: from, Value: v}) }
 	switch r := req.(type) {
 	case whichChildren:
 		return reply(b.which(*s))

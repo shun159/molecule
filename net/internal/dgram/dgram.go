@@ -12,7 +12,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/proc"
 )
@@ -74,8 +74,8 @@ func Write[A, S any](k *Kind[A, S], conn Conn[A], to A, data []byte) error {
 
 // Call calls the socket process pid with req, and returns the error it
 // replies with, or k's ErrClosed if it is gone.
-func Call[A, S any](ctx context.Context, k *Kind[A, S], caller molecule.Caller, pid proc.PID, req any) error {
-	v, err := molecule.Call(ctx, caller, pid, req)
+func Call[A, S any](ctx context.Context, k *Kind[A, S], caller actor.Caller, pid proc.PID, req any) error {
+	v, err := actor.Call(ctx, caller, pid, req)
 	if err != nil {
 		return gone(k, err)
 	}
@@ -85,7 +85,7 @@ func Call[A, S any](ctx context.Context, k *Kind[A, S], caller molecule.Caller, 
 
 // Recv takes the next datagram of the passive socket pid, waiting until
 // the deadline of ctx, if any.
-func Recv[A, S any](ctx context.Context, k *Kind[A, S], caller molecule.Caller, pid proc.PID) (A, []byte, error) {
+func Recv[A, S any](ctx context.Context, k *Kind[A, S], caller actor.Caller, pid proc.PID) (A, []byte, error) {
 	var zero A
 	var timeout time.Duration
 	if deadline, ok := ctx.Deadline(); ok {
@@ -95,7 +95,7 @@ func Recv[A, S any](ctx context.Context, k *Kind[A, S], caller molecule.Caller, 
 	}
 	// The socket ends the wait: giving up here could lose a datagram it
 	// has just taken for this call.
-	v, err := molecule.Call(context.Background(), caller, pid, RecvReq{timeout})
+	v, err := actor.Call(context.Background(), caller, pid, RecvReq{timeout})
 	if err != nil {
 		return zero, nil, gone(k, err)
 	}
@@ -111,7 +111,7 @@ func Recv[A, S any](ctx context.Context, k *Kind[A, S], caller molecule.Caller, 
 // gone turns the error of a call to a socket whose process is gone into
 // ErrClosed.
 func gone[A, S any](k *Kind[A, S], err error) error {
-	var exit *molecule.ExitError
+	var exit *actor.ExitError
 	if errors.As(err, &exit) {
 		return k.ErrClosed
 	}
@@ -122,15 +122,15 @@ func gone[A, S any](k *Kind[A, S], err error) error {
 // a behaviour, then setting its active mode if then. With conn, the
 // runtime of the behaviour writes, and a failure comes back to it as k's
 // SendError; without, the socket process does, and a failure is not told.
-func SendEffect[A, S any](k *Kind[A, S], sock S, pid proc.PID, conn Conn[A], to A, data []byte, then bool, a Active) molecule.Effect {
+func SendEffect[A, S any](k *Kind[A, S], sock S, pid proc.PID, conn Conn[A], to A, data []byte, then bool, a Active) actor.Effect {
 	if conn == nil {
-		return molecule.Send{To: pid, Msg: SendReq[A]{To: to, Data: data, Then: then, Active: a}}
+		return actor.Send{To: pid, Msg: SendReq[A]{To: to, Data: data, Then: then, Active: a}}
 	}
 	return sendEffect[A, S]{k: k, sock: sock, pid: pid, conn: conn, to: to, data: data, then: then, active: a}
 }
 
 type sendEffect[A, S any] struct {
-	molecule.Extension
+	actor.Extension
 	k      *Kind[A, S]
 	sock   S
 	pid    proc.PID

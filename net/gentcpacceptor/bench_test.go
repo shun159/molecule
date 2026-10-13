@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/net/gentcp"
 	"github.com/shun159/molecule/net/gentcpacceptor"
 	"github.com/shun159/molecule/proc"
@@ -20,12 +20,12 @@ import (
 // Echo writes back what it reads.
 type Echo struct{}
 
-func (Echo) Init(proc.PID, gentcp.Socket) (struct{}, []molecule.Effect, error) {
+func (Echo) Init(proc.PID, gentcp.Socket) (struct{}, []actor.Effect, error) {
 	return struct{}{}, nil, nil
 }
 
-func (Echo) HandleData(s struct{}, sock gentcp.Socket, b []byte) (struct{}, []molecule.Effect) {
-	return s, molecule.Do(sock.SendEffect(b))
+func (Echo) HandleData(s struct{}, sock gentcp.Socket, b []byte) (struct{}, []actor.Effect) {
+	return s, actor.Do(sock.SendEffect(b))
 }
 
 // The baseline is the usual Go echo server: a goroutine per connection.
@@ -169,11 +169,11 @@ type sum struct {
 	crc    uint32
 }
 
-func (summer) Init(proc.PID, gentcp.Socket) (sum, []molecule.Effect, error) {
+func (summer) Init(proc.PID, gentcp.Socket) (sum, []actor.Effect, error) {
 	return sum{}, nil, nil
 }
 
-func (summer) HandleData(s sum, sock gentcp.Socket, b []byte) (sum, []molecule.Effect) {
+func (summer) HandleData(s sum, sock gentcp.Socket, b []byte) (sum, []actor.Effect) {
 	if len(s.header) < 8 {
 		k := min(8-len(s.header), len(b))
 		s.header = append(s.header[:len(s.header):len(s.header)], b[:k]...)
@@ -185,7 +185,7 @@ func (summer) HandleData(s sum, sock gentcp.Socket, b []byte) (sum, []molecule.E
 	s.n += uint64(len(b))
 	s.crc = work(s.crc, b)
 	if len(s.header) == 8 && s.n == s.want {
-		return s, molecule.Do(sock.SendEffect(s.header))
+		return s, actor.Do(sock.SendEffect(s.header))
 	}
 	return s, nil
 }

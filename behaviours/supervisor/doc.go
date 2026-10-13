@@ -66,7 +66,7 @@
 //     and waits until the child has started. genserver.Child,
 //     genstatem.Child, [Child] and [DynamicChild] make one, which gensim
 //     can simulate as well; [StartFunc] makes one of any function.
-//     Returning molecule.ErrIgnore means the child is not to run: the
+//     Returning actor.ErrIgnore means the child is not to run: the
 //     supervisor keeps its specification without a process. Any other
 //     error is a failure to start.
 //   - Restart says when a child that exited is restarted. [Permanent]
@@ -94,7 +94,7 @@
 // child fails to start, the children already started are stopped in
 // reverse order, and the start fails with a [*StartError] wrapping both
 // proc.Shutdown and the reason of the child. If the name is taken, it fails
-// with a molecule.AlreadyStartedError.
+// with a actor.AlreadyStartedError.
 //
 // When a restart fails to start a child, the supervisor tries again,
 // counting it as another restart, as OTP does.

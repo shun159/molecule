@@ -3,7 +3,7 @@ package gensim_test
 import (
 	"testing"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/gensim"
 	"github.com/shun159/molecule/proc"
@@ -14,7 +14,7 @@ import (
 func TestMaxMessages(t *testing.T) {
 	for seed := range uint64(5) {
 		s := gensim.New(seed)
-		limited, err := gensim.Start(s, genserver.Child(counter{}, molecule.WithMaxMessages(2)))
+		limited, err := gensim.Start(s, genserver.Child(counter{}, actor.WithMaxMessages(2)))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -9,7 +9,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/behaviours/genstatem"
 	"github.com/shun159/molecule/proc"
@@ -20,23 +20,23 @@ import (
 // every event it handles.
 type lab struct {
 	enter bool
-	init  []molecule.Effect
+	init  []actor.Effect
 }
 
 type cmd struct {
 	label      string
 	next       string // "" keeps the state
-	effs       []molecule.Effect
+	effs       []actor.Effect
 	postponeIn string // the state in which to postpone the event
 }
 
 func (l lab) StateEnter() bool { return l.enter }
 
-func (l lab) Init(proc.PID) (string, []string, []molecule.Effect, error) {
+func (l lab) Init(proc.PID) (string, []string, []actor.Effect, error) {
 	return "idle", nil, l.init, nil
 }
 
-func (lab) HandleEvent(state string, log []string, ev genstatem.Event) (string, []string, []molecule.Effect) {
+func (lab) HandleEvent(state string, log []string, ev genstatem.Event) (string, []string, []actor.Effect) {
 	log = append(slices.Clip(log), state+":"+describe(ev))
 	var c cmd
 	switch e := ev.(type) {
@@ -112,7 +112,7 @@ func inWorld(t *testing.T, l lab, f func(w *world)) {
 	})
 }
 
-func (w *world) cast(c cmd) { molecule.SendCast(w.n, w.pid, c) }
+func (w *world) cast(c cmd) { actor.SendCast(w.n, w.pid, c) }
 
 func (w *world) log() []string {
 	w.t.Helper()
@@ -166,7 +166,7 @@ func TestPostpone(t *testing.T) {
 	inWorld(t, lab{}, func(w *world) {
 		reply := make(chan any, 1)
 		go func() {
-			v, _ := molecule.Call(context.Background(), w.n, w.pid, cmd{label: "x", postponeIn: "idle"})
+			v, _ := actor.Call(context.Background(), w.n, w.pid, cmd{label: "x", postponeIn: "idle"})
 			reply <- v
 		}()
 		synctest.Wait() // the call is in first
@@ -195,9 +195,9 @@ func TestNextEventOrder(t *testing.T) {
 		ctx := context.Background()
 		gen.Suspend(ctx, w.n, w.pid)
 		d := cmd{label: "d"}
-		b := cmd{label: "b", effs: molecule.Do(genstatem.NextEvent{Event: genstatem.Internal{Msg: d}})}
+		b := cmd{label: "b", effs: actor.Do(genstatem.NextEvent{Event: genstatem.Internal{Msg: d}})}
 		c := cmd{label: "c"}
-		w.cast(cmd{label: "a", effs: molecule.Do(
+		w.cast(cmd{label: "a", effs: actor.Do(
 			genstatem.NextEvent{Event: genstatem.Internal{Msg: b}},
 			genstatem.NextEvent{Event: genstatem.Internal{Msg: c}},
 		)})
@@ -210,7 +210,7 @@ func TestNextEventOrder(t *testing.T) {
 func TestPostponedAfterInserted(t *testing.T) {
 	inWorld(t, lab{enter: true}, func(w *world) {
 		w.cast(cmd{label: "p", postponeIn: "idle"})
-		w.cast(cmd{label: "go", next: "busy", effs: molecule.Do(genstatem.NextEvent{Event: genstatem.Internal{Msg: cmd{label: "n"}}})})
+		w.cast(cmd{label: "go", next: "busy", effs: actor.Do(genstatem.NextEvent{Event: genstatem.Internal{Msg: cmd{label: "n"}}})})
 		w.expect("idle:enter(idle)", "idle:cast(p)", "idle:cast(go)", "busy:enter(idle)", "busy:internal(n)", "busy:cast(p)")
 	})
 }
@@ -218,7 +218,7 @@ func TestPostponedAfterInserted(t *testing.T) {
 func TestStateTimeout(t *testing.T) {
 	inWorld(t, lab{}, func(w *world) {
 		start := time.Now()
-		w.cast(cmd{label: "arm", effs: molecule.Do(genstatem.StartStateTimeout{After: time.Second, Msg: "t1"})})
+		w.cast(cmd{label: "arm", effs: actor.Do(genstatem.StartStateTimeout{After: time.Second, Msg: "t1"})})
 		time.Sleep(time.Second - time.Nanosecond)
 		w.expect("idle:cast(arm)")
 		time.Sleep(time.Nanosecond)
@@ -228,17 +228,17 @@ func TestStateTimeout(t *testing.T) {
 		}
 
 		// A state change cancels it...
-		w.cast(cmd{label: "arm2", effs: molecule.Do(genstatem.StartStateTimeout{After: time.Second, Msg: "t2"})})
+		w.cast(cmd{label: "arm2", effs: actor.Do(genstatem.StartStateTimeout{After: time.Second, Msg: "t2"})})
 		w.cast(cmd{label: "go", next: "busy"})
 		time.Sleep(2 * time.Second)
 		// ...but one started by the transition is for the new state.
-		w.cast(cmd{label: "back", next: "idle", effs: molecule.Do(genstatem.StartStateTimeout{After: time.Second, Msg: "t3"})})
+		w.cast(cmd{label: "back", next: "idle", effs: actor.Do(genstatem.StartStateTimeout{After: time.Second, Msg: "t3"})})
 		time.Sleep(time.Second)
 		w.expect("idle:cast(arm)", "idle:state_timeout(t1)", "idle:cast(arm2)", "idle:cast(go)",
 			"busy:cast(back)", "idle:state_timeout(t3)")
 
-		w.cast(cmd{label: "arm4", effs: molecule.Do(genstatem.StartStateTimeout{After: time.Second, Msg: "t4"})})
-		w.cast(cmd{label: "cancel", effs: molecule.Do(genstatem.CancelStateTimeout{})})
+		w.cast(cmd{label: "arm4", effs: actor.Do(genstatem.StartStateTimeout{After: time.Second, Msg: "t4"})})
+		w.cast(cmd{label: "cancel", effs: actor.Do(genstatem.CancelStateTimeout{})})
 		time.Sleep(2 * time.Second)
 		if l := w.log(); l[len(l)-1] != "idle:cast(cancel)" {
 			t.Errorf("cancelled state timeout fired: %q", l)
@@ -248,11 +248,11 @@ func TestStateTimeout(t *testing.T) {
 
 func TestEventTimeout(t *testing.T) {
 	inWorld(t, lab{}, func(w *world) {
-		w.cast(cmd{label: "arm", effs: molecule.Do(genstatem.StartEventTimeout{After: time.Second, Msg: "quiet"})})
+		w.cast(cmd{label: "arm", effs: actor.Do(genstatem.StartEventTimeout{After: time.Second, Msg: "quiet"})})
 		time.Sleep(500 * time.Millisecond)
 		w.cast(cmd{label: "noise"}) // any event cancels it
 		time.Sleep(2 * time.Second)
-		w.cast(cmd{label: "rearm", effs: molecule.Do(genstatem.StartEventTimeout{After: time.Second, Msg: "quiet"})})
+		w.cast(cmd{label: "rearm", effs: actor.Do(genstatem.StartEventTimeout{After: time.Second, Msg: "quiet"})})
 		time.Sleep(time.Second)
 		w.expect("idle:cast(arm)", "idle:cast(noise)", "idle:cast(rearm)", "idle:event_timeout(quiet)")
 	})
@@ -260,12 +260,12 @@ func TestEventTimeout(t *testing.T) {
 
 func TestGenericTimeout(t *testing.T) {
 	inWorld(t, lab{}, func(w *world) {
-		w.cast(cmd{label: "arm", effs: molecule.Do(
+		w.cast(cmd{label: "arm", effs: actor.Do(
 			genstatem.StartTimeout{Name: "a", After: time.Second, Msg: "a1"},
 			genstatem.StartTimeout{Name: "b", After: time.Second, Msg: "b1"},
 			genstatem.StartTimeout{Name: "c", After: time.Second, Msg: "c1"},
 		)})
-		w.cast(cmd{label: "go", next: "busy", effs: molecule.Do( // survives the state change
+		w.cast(cmd{label: "go", next: "busy", effs: actor.Do( // survives the state change
 			genstatem.StartTimeout{Name: "b", After: 2 * time.Second, Msg: "b2"}, // replaces b1
 			genstatem.CancelTimeout{Name: "c"},
 		)})
@@ -275,7 +275,7 @@ func TestGenericTimeout(t *testing.T) {
 }
 
 func TestInitActions(t *testing.T) {
-	l := lab{enter: true, init: molecule.Do(
+	l := lab{enter: true, init: actor.Do(
 		genstatem.NextEvent{Event: genstatem.Internal{Msg: cmd{label: "boot"}}},
 		genstatem.StartStateTimeout{After: time.Second, Msg: "init"},
 	)}
@@ -287,15 +287,15 @@ func TestInitActions(t *testing.T) {
 }
 
 // misbehaving stops in various wrong ways from a state enter call.
-type misbehaving struct{ effs []molecule.Effect }
+type misbehaving struct{ effs []actor.Effect }
 
 func (m misbehaving) StateEnter() bool { return true }
 
-func (m misbehaving) Init(proc.PID) (int, struct{}, []molecule.Effect, error) {
+func (m misbehaving) Init(proc.PID) (int, struct{}, []actor.Effect, error) {
 	return 0, struct{}{}, nil, nil
 }
 
-func (m misbehaving) HandleEvent(state int, d struct{}, ev genstatem.Event) (int, struct{}, []molecule.Effect) {
+func (m misbehaving) HandleEvent(state int, d struct{}, ev genstatem.Event) (int, struct{}, []actor.Effect) {
 	switch ev.(type) {
 	case genstatem.Enter[int]:
 		if state == 1 {
@@ -312,12 +312,12 @@ func (m misbehaving) HandleEvent(state int, d struct{}, ev genstatem.Event) (int
 
 func TestEnterMisuse(t *testing.T) {
 	for _, tt := range []struct {
-		effs []molecule.Effect
+		effs []actor.Effect
 		want error
 	}{
 		{nil, genstatem.ErrEnterChangedState},
-		{molecule.Do(genstatem.Postpone{}), genstatem.ErrEnterAction},
-		{molecule.Do(genstatem.NextEvent{Event: genstatem.Internal{}}), genstatem.ErrEnterAction},
+		{actor.Do(genstatem.Postpone{}), genstatem.ErrEnterAction},
+		{actor.Do(genstatem.NextEvent{Event: genstatem.Internal{}}), genstatem.ErrEnterAction},
 	} {
 		synctest.Test(t, func(t *testing.T) {
 			n := proc.NewNode("")
@@ -327,7 +327,7 @@ func TestEnterMisuse(t *testing.T) {
 			}
 			down, stop := n.Watch(context.Background(), pid)
 			defer stop()
-			molecule.SendCast(n, pid, "go")
+			actor.SendCast(n, pid, "go")
 			<-down.Done()
 			if r := context.Cause(down); r != tt.want {
 				t.Errorf("exit reason = %v, want %v", r, tt.want)
@@ -340,18 +340,18 @@ func TestEnterMisuse(t *testing.T) {
 // must be ignored rather than reach the gen runtime.
 type closer struct{ observer chan<- string }
 
-func (closer) Init(proc.PID) (string, int, []molecule.Effect, error) { return "open", 7, nil, nil }
+func (closer) Init(proc.PID) (string, int, []actor.Effect, error) { return "open", 7, nil, nil }
 
-func (closer) HandleEvent(state string, n int, ev genstatem.Event) (string, int, []molecule.Effect) {
+func (closer) HandleEvent(state string, n int, ev genstatem.Event) (string, int, []actor.Effect) {
 	if _, ok := ev.(genstatem.Cast); ok {
-		return state, n, molecule.Do(molecule.Stop{})
+		return state, n, actor.Do(actor.Stop{})
 	}
 	return state, n, nil
 }
 
-func (c closer) Terminate(state string, n int, reason error) []molecule.Effect {
+func (c closer) Terminate(state string, n int, reason error) []actor.Effect {
 	c.observer <- fmt.Sprintf("%s %d %v", state, n, reason)
-	return molecule.Do(genstatem.Postpone{}, genstatem.StartStateTimeout{After: time.Second})
+	return actor.Do(genstatem.Postpone{}, genstatem.StartStateTimeout{After: time.Second})
 }
 
 func TestTerminate(t *testing.T) {
@@ -367,7 +367,7 @@ func TestTerminate(t *testing.T) {
 		}
 		down, stop := n.Watch(context.Background(), pid)
 		defer stop()
-		molecule.SendCast(n, pid, "stop")
+		actor.SendCast(n, pid, "stop")
 		<-down.Done()
 		if r := context.Cause(down); r != proc.Normal {
 			t.Errorf("exit reason = %v", r)
@@ -382,8 +382,8 @@ func TestTerminate(t *testing.T) {
 // as in Erlang, Start has succeeded by then, and the machine stops after.
 func TestInitEventsAfterStart(t *testing.T) {
 	n := proc.NewNode("")
-	stopper := cmd{label: "stop", effs: molecule.Do(molecule.Stop{Reason: errBoom})}
-	l := lab{init: molecule.Do(genstatem.NextEvent{Event: genstatem.Internal{Msg: stopper}})}
+	stopper := cmd{label: "stop", effs: actor.Do(actor.Stop{Reason: errBoom})}
+	l := lab{init: actor.Do(genstatem.NextEvent{Event: genstatem.Internal{Msg: stopper}})}
 	type result struct {
 		err    error
 		reason error
@@ -435,11 +435,11 @@ func TestRef(t *testing.T) {
 // echoMachine answers each call with its request.
 type echoMachine struct{}
 
-func (echoMachine) Init(proc.PID) (int, int, []molecule.Effect, error) { return 0, 0, nil, nil }
+func (echoMachine) Init(proc.PID) (int, int, []actor.Effect, error) { return 0, 0, nil, nil }
 
-func (echoMachine) HandleEvent(st, d int, ev genstatem.Event) (int, int, []molecule.Effect) {
+func (echoMachine) HandleEvent(st, d int, ev genstatem.Event) (int, int, []actor.Effect) {
 	if c, ok := ev.(genstatem.Call); ok {
-		return st, d, molecule.Do(c.Reply(c.Req))
+		return st, d, actor.Do(c.Reply(c.Req))
 	}
 	return st, d, nil
 }

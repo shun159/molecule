@@ -11,7 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/internal/testlog"
 	"github.com/shun159/molecule/proc"
@@ -27,20 +27,20 @@ type (
 	reset struct{}
 )
 
-func (counter) Init(_ proc.PID, args any) (int, []molecule.Effect, error) {
+func (counter) Init(_ proc.PID, args any) (int, []actor.Effect, error) {
 	return args.(int), nil, nil
 }
 
-func (counter) Handle(n int, msg gen.Msg) (int, []molecule.Effect) {
+func (counter) Handle(n int, msg gen.Msg) (int, []actor.Effect) {
 	switch m := msg.(type) {
-	case molecule.CallMsg:
+	case actor.CallMsg:
 		switch m.Req.(type) {
 		case get:
-			return n, molecule.Do(molecule.Reply{To: m.From, Value: n})
+			return n, actor.Do(actor.Reply{To: m.From, Value: n})
 		case reset:
-			return 0, molecule.Do(molecule.Reply{To: m.From, Value: n}, molecule.Stop{})
+			return 0, actor.Do(actor.Reply{To: m.From, Value: n}, actor.Stop{})
 		}
-	case molecule.CastMsg:
+	case actor.CastMsg:
 		if r, ok := m.Req.(incr); ok {
 			return n + r.by, nil
 		}
@@ -48,19 +48,19 @@ func (counter) Handle(n int, msg gen.Msg) (int, []molecule.Effect) {
 	return n, nil
 }
 
-func (counter) Terminate(int, error) []molecule.Effect { return nil }
+func (counter) Terminate(int, error) []actor.Effect { return nil }
 
 func TestCounterPure(t *testing.T) {
-	from := molecule.From{}
+	from := actor.From{}
 	for _, tt := range []struct {
 		state int
 		msg   gen.Msg
 		want  int
-		effs  []molecule.Effect
+		effs  []actor.Effect
 	}{
-		{1, molecule.CastMsg{Req: incr{2}}, 3, nil},
-		{3, molecule.CallMsg{From: from, Req: get{}}, 3, molecule.Do(molecule.Reply{To: from, Value: 3})},
-		{3, molecule.CallMsg{From: from, Req: reset{}}, 0, molecule.Do(molecule.Reply{To: from, Value: 3}, molecule.Stop{})},
+		{1, actor.CastMsg{Req: incr{2}}, 3, nil},
+		{3, actor.CallMsg{From: from, Req: get{}}, 3, actor.Do(actor.Reply{To: from, Value: 3})},
+		{3, actor.CallMsg{From: from, Req: reset{}}, 0, actor.Do(actor.Reply{To: from, Value: 3}, actor.Stop{})},
 		{3, gen.InfoMsg{Msg: "noise"}, 3, nil},
 	} {
 		got, effs := counter{}.Handle(tt.state, tt.msg)
@@ -77,7 +77,7 @@ func TestCounterRunning(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		molecule.SendCast(n, pid, incr{5})
+		actor.SendCast(n, pid, incr{5})
 		if v := call(t, n, pid, get{}); v != 15 {
 			t.Errorf("get = %v", v)
 		}
@@ -113,20 +113,20 @@ type continued struct{ msg any }
 
 type pargs struct {
 	observer proc.PID
-	effs     []molecule.Effect
+	effs     []actor.Effect
 	err      error
 	panic    bool
 }
 
 // do asks the puppet to return effs, then reply "ok".
-type do struct{ effs []molecule.Effect }
+type do struct{ effs []actor.Effect }
 
 type terminated struct {
 	n      int
 	reason error
 }
 
-func (puppet) Init(self proc.PID, args any) (pstate, []molecule.Effect, error) {
+func (puppet) Init(self proc.PID, args any) (pstate, []actor.Effect, error) {
 	a := args.(pargs)
 	if a.panic {
 		panic("in init")
@@ -134,20 +134,20 @@ func (puppet) Init(self proc.PID, args any) (pstate, []molecule.Effect, error) {
 	return pstate{observer: a.observer, self: self}, a.effs, a.err
 }
 
-func (puppet) Handle(s pstate, msg gen.Msg) (pstate, []molecule.Effect) {
+func (puppet) Handle(s pstate, msg gen.Msg) (pstate, []actor.Effect) {
 	switch m := msg.(type) {
-	case molecule.CallMsg:
+	case actor.CallMsg:
 		switch req := m.Req.(type) {
 		case do:
-			return s, append(slices.Clip(req.effs), molecule.Reply{To: m.From, Value: "ok"})
+			return s, append(slices.Clip(req.effs), actor.Reply{To: m.From, Value: "ok"})
 		case get:
-			return s, molecule.Do(molecule.Reply{To: m.From, Value: s.n})
+			return s, actor.Do(actor.Reply{To: m.From, Value: s.n})
 		case string:
 			if req == "panic" {
 				panic("in handle")
 			}
 		}
-	case molecule.CastMsg:
+	case actor.CastMsg:
 		switch req := m.Req.(type) {
 		case int:
 			s.n += req
@@ -165,8 +165,8 @@ func (puppet) Handle(s pstate, msg gen.Msg) (pstate, []molecule.Effect) {
 	return s, nil
 }
 
-func (puppet) Terminate(s pstate, reason error) []molecule.Effect {
-	return molecule.Do(molecule.Send{To: s.observer, Msg: terminated{s.n, reason}})
+func (puppet) Terminate(s pstate, reason error) []actor.Effect {
+	return actor.Do(actor.Send{To: s.observer, Msg: terminated{s.n, reason}})
 }
 
 // collector spawns a process that forwards what it receives to a channel.
@@ -213,7 +213,7 @@ func inWorld(t *testing.T, f func(w *world)) {
 	})
 }
 
-func (w *world) start(effs ...molecule.Effect) proc.PID {
+func (w *world) start(effs ...actor.Effect) proc.PID {
 	w.t.Helper()
 	pid, err := gen.Start(context.Background(), w.n, puppet{}, pargs{observer: w.observer, effs: effs})
 	if err != nil {
@@ -229,7 +229,7 @@ func (w *world) spawn(fn func(*proc.Self) error) proc.PID {
 	return pid
 }
 
-func (w *world) do(pid proc.PID, effs ...molecule.Effect) {
+func (w *world) do(pid proc.PID, effs ...actor.Effect) {
 	w.t.Helper()
 	if v := call(w.t, w.n, pid, do{effs}); v != "ok" {
 		w.t.Fatalf("do = %v", v)
@@ -275,14 +275,14 @@ func TestInitFailure(t *testing.T) {
 		if _, err := gen.Start(context.Background(), w.n, puppet{}, pargs{err: errInit}); err != errInit {
 			t.Errorf("Start = %v, want %v", err, errInit)
 		}
-		if _, err := gen.Start(context.Background(), w.n, puppet{}, pargs{err: molecule.ErrIgnore}); err != molecule.ErrIgnore {
+		if _, err := gen.Start(context.Background(), w.n, puppet{}, pargs{err: actor.ErrIgnore}); err != actor.ErrIgnore {
 			t.Errorf("Start = %v, want ignore", err)
 		}
 		var pe *proc.PanicError
 		if _, err := gen.Start(context.Background(), w.n, puppet{}, pargs{panic: true}); !errors.As(err, &pe) {
 			t.Errorf("Start = %v, want a panic", err)
 		}
-		if _, err := gen.Start(context.Background(), w.n, puppet{}, pargs{effs: molecule.Do(molecule.Stop{Reason: errBoom})}); err != errBoom {
+		if _, err := gen.Start(context.Background(), w.n, puppet{}, pargs{effs: actor.Do(actor.Stop{Reason: errBoom})}); err != errBoom {
 			t.Errorf("Start with Stop in Init = %v", err)
 		}
 	})
@@ -292,11 +292,11 @@ func TestIgnoreDoesNotKillCaller(t *testing.T) {
 	inWorld(t, func(w *world) {
 		errc := make(chan error, 1)
 		caller := w.spawn(func(s *proc.Self) error {
-			_, err := gen.StartLink(context.Background(), s, puppet{}, pargs{err: molecule.ErrIgnore})
+			_, err := gen.StartLink(context.Background(), s, puppet{}, pargs{err: actor.ErrIgnore})
 			errc <- err
 			return waitForever(s)
 		})
-		if err := <-errc; err != molecule.ErrIgnore {
+		if err := <-errc; err != actor.ErrIgnore {
 			t.Errorf("StartLink = %v", err)
 		}
 		synctest.Wait()
@@ -308,8 +308,8 @@ func TestIgnoreDoesNotKillCaller(t *testing.T) {
 
 func TestStartWithName(t *testing.T) {
 	inWorld(t, func(w *world) {
-		name := molecule.Local("srv")
-		pid, err := gen.Start(context.Background(), w.n, puppet{}, pargs{observer: w.observer}, molecule.WithName(name))
+		name := actor.Local("srv")
+		pid, err := gen.Start(context.Background(), w.n, puppet{}, pargs{observer: w.observer}, actor.WithName(name))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -317,13 +317,13 @@ func TestStartWithName(t *testing.T) {
 		if got, ok := name.WhereIs(w.n); !ok || got != pid {
 			t.Errorf("WhereIs = %v, %v", got, ok)
 		}
-		molecule.SendCast(w.n, name, 4)
+		actor.SendCast(w.n, name, 4)
 		if v := call(t, w.n, name, get{}); v != 4 {
 			t.Errorf("get via name = %v", v)
 		}
 
-		_, err = gen.Start(context.Background(), w.n, puppet{}, pargs{}, molecule.WithName(name))
-		var already *molecule.AlreadyStartedError
+		_, err = gen.Start(context.Background(), w.n, puppet{}, pargs{}, actor.WithName(name))
+		var already *actor.AlreadyStartedError
 		if !errors.As(err, &already) || already.PID != pid {
 			t.Errorf("second Start = %v, want already started as %v", err, pid)
 		}
@@ -336,12 +336,12 @@ func TestStopEffect(t *testing.T) {
 	}{{errBoom, errBoom}, {nil, proc.Normal}} {
 		inWorld(t, func(w *world) {
 			pid := w.start()
-			molecule.SendCast(w.n, pid, 7)
+			actor.SendCast(w.n, pid, 7)
 			ctx, stop := w.n.Watch(context.Background(), pid)
 			defer stop()
 
 			// The reply after Stop is still sent: all effects run.
-			w.do(pid, molecule.Stop{Reason: tt.reason})
+			w.do(pid, actor.Stop{Reason: tt.reason})
 			if e := <-w.events; e != (terminated{7, tt.want}) {
 				t.Errorf("Terminate got %#v", e)
 			}
@@ -356,8 +356,8 @@ func TestStopEffect(t *testing.T) {
 func TestHandlePanic(t *testing.T) {
 	inWorld(t, func(w *world) {
 		pid := w.start()
-		molecule.SendCast(w.n, pid, 5)
-		_, err := molecule.Call(context.Background(), w.n, pid, "panic")
+		actor.SendCast(w.n, pid, 5)
+		_, err := actor.Call(context.Background(), w.n, pid, "panic")
 		var pe *proc.PanicError
 		if !errors.As(err, &pe) {
 			t.Errorf("Call = %v, want the panic as exit reason", err)
@@ -375,7 +375,7 @@ func TestParentExit(t *testing.T) {
 			children := make(chan proc.PID, 1)
 			parent := w.spawn(func(s *proc.Self) error {
 				pid, err := gen.StartLink(context.Background(), s, puppet{},
-					pargs{observer: w.observer, effs: molecule.Do(molecule.TrapExit{On: trap})})
+					pargs{observer: w.observer, effs: actor.Do(actor.TrapExit{On: trap})})
 				if err != nil {
 					return err
 				}
@@ -418,19 +418,19 @@ func TestMonitorEffect(t *testing.T) {
 		c := w.spawn(waitForever)
 
 		w.do(pid,
-			molecule.Monitor{Target: a, Tag: "a"},
-			molecule.Monitor{Target: b, Tag: "b"},
-			molecule.Demonitor{Tag: "b"},
-			molecule.Monitor{Target: molecule.Local("nobody"), Tag: "nobody"},
-			molecule.Monitor{Target: c, Tag: "a"}, // replaces the monitor of a
+			actor.Monitor{Target: a, Tag: "a"},
+			actor.Monitor{Target: b, Tag: "b"},
+			actor.Demonitor{Tag: "b"},
+			actor.Monitor{Target: actor.Local("nobody"), Tag: "nobody"},
+			actor.Monitor{Target: c, Tag: "a"}, // replaces the monitor of a
 		)
 		kill(w.n, a, errBoom)
 		kill(w.n, b, errBoom)
 		kill(w.n, c, errBoom)
 
 		want := []any{
-			molecule.Down{Tag: "nobody", Reason: proc.NoProc},
-			molecule.Down{Tag: "a", PID: c, Reason: errBoom},
+			actor.Down{Tag: "nobody", Reason: proc.NoProc},
+			actor.Down{Tag: "a", PID: c, Reason: errBoom},
 		}
 		if got := w.log(pid); !reflect.DeepEqual(got, want) {
 			t.Errorf("log = %#v\nwant %#v", got, want)
@@ -443,13 +443,13 @@ func TestTimers(t *testing.T) {
 		pid := w.start()
 		start := time.Now()
 		w.do(pid,
-			molecule.StartTimer{Key: "once", After: time.Second, Msg: "once"},
-			molecule.StartTimer{Key: "cancelled", After: time.Second, Msg: "cancelled"},
-			molecule.CancelTimer{Key: "cancelled"},
-			molecule.StartTimer{Key: "replaced", After: time.Second, Msg: "old"},
+			actor.StartTimer{Key: "once", After: time.Second, Msg: "once"},
+			actor.StartTimer{Key: "cancelled", After: time.Second, Msg: "cancelled"},
+			actor.CancelTimer{Key: "cancelled"},
+			actor.StartTimer{Key: "replaced", After: time.Second, Msg: "old"},
 		)
 		time.Sleep(500 * time.Millisecond)
-		w.do(pid, molecule.StartTimer{Key: "replaced", After: time.Second, Msg: "new"})
+		w.do(pid, actor.StartTimer{Key: "replaced", After: time.Second, Msg: "new"})
 
 		time.Sleep(time.Until(start.Add(time.Second)) - time.Nanosecond)
 		if got := w.log(pid); len(got) != 0 {
@@ -472,17 +472,17 @@ func TestTimerFiredThenCancelled(t *testing.T) {
 	inWorld(t, func(w *world) {
 		pid := w.start()
 		w.do(pid,
-			molecule.StartTimer{Key: "cancelled", After: time.Second, Msg: "cancelled"},
-			molecule.StartTimer{Key: "replaced", After: time.Second, Msg: "old"},
+			actor.StartTimer{Key: "cancelled", After: time.Second, Msg: "cancelled"},
+			actor.StartTimer{Key: "replaced", After: time.Second, Msg: "old"},
 		)
 		ctx := context.Background()
 		if err := gen.Suspend(ctx, w.n, pid); err != nil {
 			t.Fatal(err)
 		}
 		// Queued ahead of the timer messages, handled after they fired.
-		molecule.SendCast(w.n, pid, do{molecule.Do(
-			molecule.CancelTimer{Key: "cancelled"},
-			molecule.StartTimer{Key: "replaced", After: time.Second, Msg: "new"},
+		actor.SendCast(w.n, pid, do{actor.Do(
+			actor.CancelTimer{Key: "cancelled"},
+			actor.StartTimer{Key: "replaced", After: time.Second, Msg: "new"},
 		)})
 		time.Sleep(time.Second)
 		if err := gen.Resume(ctx, w.n, pid); err != nil {
@@ -502,26 +502,26 @@ func TestSendRequest(t *testing.T) {
 	inWorld(t, func(w *world) {
 		pid := w.start()
 		server := w.start()
-		molecule.SendCast(w.n, server, 42)
-		molecule.SendCast(w.n, pid, 7)
+		actor.SendCast(w.n, server, 42)
+		actor.SendCast(w.n, pid, 7)
 		dead := w.n.Spawn(func(*proc.Self) error { return nil })
 		mute := w.spawn(waitForever)
 
 		w.do(pid,
-			molecule.SendRequest{To: server, Req: get{}, Tag: "server"},
-			molecule.SendRequest{To: pid, Req: get{}, Tag: "self"},
+			actor.SendRequest{To: server, Req: get{}, Tag: "server"},
+			actor.SendRequest{To: pid, Req: get{}, Tag: "self"},
 		)
 		synctest.Wait()
 		w.do(pid,
-			molecule.SendRequest{To: molecule.Local("nobody"), Req: get{}, Tag: "nobody"},
-			molecule.SendRequest{To: mute, Req: get{}, Tag: "mute", Timeout: time.Second},
+			actor.SendRequest{To: actor.Local("nobody"), Req: get{}, Tag: "nobody"},
+			actor.SendRequest{To: mute, Req: get{}, Tag: "mute", Timeout: time.Second},
 		)
 		time.Sleep(time.Second)
-		w.do(pid, molecule.SendRequest{To: dead, Req: get{}, Tag: "dead"})
+		w.do(pid, actor.SendRequest{To: dead, Req: get{}, Tag: "dead"})
 
-		got := map[any]molecule.Response{}
+		got := map[any]actor.Response{}
 		for _, e := range w.log(pid) {
-			r := e.(molecule.Response)
+			r := e.(actor.Response)
 			got[r.Tag] = r
 		}
 		if r := got["server"]; r.Value != 42 || r.Err != nil {
@@ -552,9 +552,9 @@ func TestSuspendResume(t *testing.T) {
 		if err := gen.Suspend(ctx, w.n, pid); err != nil {
 			t.Fatal(err)
 		}
-		molecule.SendCast(w.n, pid, 1)
+		actor.SendCast(w.n, pid, 1)
 		w.n.Send(pid, "info")
-		molecule.SendCast(w.n, pid, 2)
+		actor.SendCast(w.n, pid, 2)
 		if s := w.state(pid); s.n != 0 || len(s.log) != 0 {
 			t.Errorf("handled while suspended: %+v", s)
 		}
@@ -569,11 +569,11 @@ func TestSuspendResume(t *testing.T) {
 
 func TestLinkEffects(t *testing.T) {
 	inWorld(t, func(w *world) {
-		trapping := w.start(molecule.TrapExit{On: true})
+		trapping := w.start(actor.TrapExit{On: true})
 		plain := w.start()
 		other := w.spawn(waitForever)
-		w.do(trapping, molecule.Link{PID: other})
-		w.do(plain, molecule.Link{PID: other})
+		w.do(trapping, actor.Link{PID: other})
+		w.do(plain, actor.Link{PID: other})
 
 		ctx, stop := w.n.Watch(context.Background(), plain)
 		defer stop()
@@ -589,7 +589,7 @@ func TestLinkEffects(t *testing.T) {
 
 		unlinked := w.start()
 		another := w.spawn(waitForever)
-		w.do(unlinked, molecule.Link{PID: another}, molecule.Unlink{PID: another})
+		w.do(unlinked, actor.Link{PID: another}, actor.Unlink{PID: another})
 		kill(w.n, another, errBoom)
 		if !w.n.IsAlive(unlinked) {
 			t.Error("unlinked behaviour died")
@@ -602,9 +602,9 @@ func TestSendAndCastEffects(t *testing.T) {
 		pid := w.start()
 		peer := w.start()
 		w.do(pid,
-			molecule.Send{To: w.observer, Msg: "hello"},
-			molecule.Cast{To: peer, Req: 3},
-			molecule.Send{To: molecule.Local("nobody"), Msg: "dropped"},
+			actor.Send{To: w.observer, Msg: "hello"},
+			actor.Cast{To: peer, Req: 3},
+			actor.Send{To: actor.Local("nobody"), Msg: "dropped"},
 		)
 		if e := <-w.events; e != "hello" {
 			t.Errorf("observer got %#v", e)
@@ -624,9 +624,9 @@ func TestRemoteDest(t *testing.T) {
 		w.n.Register("observer", w.observer)
 		w.n.Register("peer", peer)
 		w.do(pid,
-			molecule.Send{To: molecule.Remote{Node: w.n.Name(), Name: "observer"}, Msg: "by name"},
-			molecule.Cast{To: molecule.Remote{Node: w.n.Name(), Name: "peer"}, Req: 7},
-			molecule.Send{To: molecule.Remote{Node: "elsewhere", Name: "observer"}, Msg: "lost"},
+			actor.Send{To: actor.Remote{Node: w.n.Name(), Name: "observer"}, Msg: "by name"},
+			actor.Cast{To: actor.Remote{Node: w.n.Name(), Name: "peer"}, Req: 7},
+			actor.Send{To: actor.Remote{Node: "elsewhere", Name: "observer"}, Msg: "lost"},
 		)
 		if e := <-w.events; e != "by name" {
 			t.Errorf("observer got %#v", e)
@@ -634,7 +634,7 @@ func TestRemoteDest(t *testing.T) {
 		if v := call(t, w.n, peer, get{}); v != 7 {
 			t.Errorf("peer state = %v", v)
 		}
-		if v, err := molecule.Call(context.Background(), w.n, molecule.Remote{Node: w.n.Name(), Name: "peer"}, get{}); err != nil || v != 7 {
+		if v, err := actor.Call(context.Background(), w.n, actor.Remote{Node: w.n.Name(), Name: "peer"}, get{}); err != nil || v != 7 {
 			t.Errorf("call by remote name = %v, %v", v, err)
 		}
 		w.noEvent()
@@ -650,10 +650,10 @@ func TestTerminateReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	molecule.SendCast(n, pid, 5)
+	actor.SendCast(n, pid, 5)
 	down, stop := n.Watch(ctx, pid)
 	defer stop()
-	molecule.Call(ctx, n, pid, "panic")
+	actor.Call(ctx, n, pid, "panic")
 	<-down.Done()
 
 	reports := rec.Records("behaviour terminating")
@@ -673,7 +673,7 @@ func TestTerminateReport(t *testing.T) {
 	pid, _ = gen.Start(ctx, n, puppet{}, pargs{})
 	down2, stop2 := n.Watch(ctx, pid)
 	defer stop2()
-	molecule.Call(ctx, n, pid, do{molecule.Do(molecule.Stop{})})
+	actor.Call(ctx, n, pid, do{actor.Do(actor.Stop{})})
 	<-down2.Done()
 	if len(rec.Records("behaviour terminating")) != 1 {
 		t.Errorf("normal stop reported: %+v", rec.Records(""))
@@ -699,11 +699,11 @@ func TestContinueOrder(t *testing.T) {
 		if err := gen.Suspend(ctx, w.n, pid); err != nil {
 			t.Fatal(err)
 		}
-		nested := do{molecule.Do(molecule.Continue{Msg: "c3"})}
-		molecule.SendCast(w.n, pid, do{molecule.Do(
-			molecule.Continue{Msg: "c1"},
-			molecule.Continue{Msg: nested},
-			molecule.Continue{Msg: "c2"},
+		nested := do{actor.Do(actor.Continue{Msg: "c3"})}
+		actor.SendCast(w.n, pid, do{actor.Do(
+			actor.Continue{Msg: "c1"},
+			actor.Continue{Msg: nested},
+			actor.Continue{Msg: "c2"},
 		)})
 		w.n.Send(pid, "mailbox")
 		if err := gen.Resume(ctx, w.n, pid); err != nil {
@@ -718,7 +718,7 @@ func TestContinueOrder(t *testing.T) {
 
 func TestContinueFromInit(t *testing.T) {
 	inWorld(t, func(w *world) {
-		pid := w.start(molecule.Continue{Msg: "boot"})
+		pid := w.start(actor.Continue{Msg: "boot"})
 		w.n.Send(pid, "first")
 		if got := w.log(pid); !reflect.DeepEqual(got, []any{continued{"boot"}, "first"}) {
 			t.Errorf("log = %#v", got)
@@ -729,8 +729,8 @@ func TestContinueFromInit(t *testing.T) {
 func TestStopDropsContinue(t *testing.T) {
 	inWorld(t, func(w *world) {
 		pid := w.start()
-		leak := do{molecule.Do(molecule.Send{To: w.observer, Msg: "continued after stop"})}
-		w.do(pid, molecule.Continue{Msg: leak}, molecule.Stop{})
+		leak := do{actor.Do(actor.Send{To: w.observer, Msg: "continued after stop"})}
+		w.do(pid, actor.Continue{Msg: leak}, actor.Stop{})
 		if e := <-w.events; e != (terminated{0, proc.Normal}) {
 			t.Errorf("event %#v", e)
 		}
@@ -740,14 +740,14 @@ func TestStopDropsContinue(t *testing.T) {
 
 // widget implements Extension effects as an unknown behaviour's would;
 // the runtime must refuse them.
-type widget struct{ molecule.Extension }
+type widget struct{ actor.Extension }
 
 func TestExtensionEffectRefused(t *testing.T) {
 	inWorld(t, func(w *world) {
 		pid := w.start()
 		down, stop := w.n.Watch(context.Background(), pid)
 		defer stop()
-		molecule.SendCast(w.n, pid, do{molecule.Do(widget{})})
+		actor.SendCast(w.n, pid, do{actor.Do(widget{})})
 		<-down.Done()
 		var pe *proc.PanicError
 		if !errors.As(context.Cause(down), &pe) || !strings.Contains(fmt.Sprint(pe.Value), "widget") {
@@ -759,7 +759,7 @@ func TestExtensionEffectRefused(t *testing.T) {
 // stamp is a Performer sending its message from the process performing
 // it, through the Env.
 type stamp struct {
-	molecule.Extension
+	actor.Extension
 	to  proc.PID
 	msg string
 }
@@ -770,9 +770,9 @@ func TestPerformer(t *testing.T) {
 	inWorld(t, func(w *world) {
 		pid := w.start()
 		w.do(pid,
-			molecule.Send{To: w.observer, Msg: "first"},
+			actor.Send{To: w.observer, Msg: "first"},
 			stamp{to: w.observer, msg: "second"},
-			molecule.Send{To: w.observer, Msg: "third"},
+			actor.Send{To: w.observer, Msg: "third"},
 		)
 		for _, want := range []string{"first", "second from " + pid.String(), "third"} {
 			if e := <-w.events; e != want {
@@ -786,7 +786,7 @@ func TestTerminate(t *testing.T) {
 	for _, reason := range []error{nil, errBoom} {
 		inWorld(t, func(w *world) {
 			pid := w.start()
-			molecule.SendCast(w.n, pid, 3)
+			actor.SendCast(w.n, pid, 3)
 			if err := gen.Terminate(context.Background(), w.n, pid, reason); err != nil {
 				t.Fatalf("Terminate(%v) = %v", reason, err)
 			}
@@ -818,7 +818,7 @@ func TestTerminateSuspended(t *testing.T) {
 
 func TestTerminateNoProc(t *testing.T) {
 	n := proc.NewNode("")
-	if err := gen.Terminate(context.Background(), n, molecule.Local("nobody"), nil); !errors.Is(err, proc.NoProc) {
+	if err := gen.Terminate(context.Background(), n, actor.Local("nobody"), nil); !errors.Is(err, proc.NoProc) {
 		t.Errorf("Terminate = %v", err)
 	}
 }

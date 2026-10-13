@@ -3,7 +3,7 @@
 // the effects it returns, and handles the system messages of sys.
 //
 // Programs do not use gen: they use genserver, genstatem and the
-// vocabulary of the package molecule. gen is for behaviours built on it,
+// vocabulary of the package actor. gen is for behaviours built on it,
 // as genserver, genstatem and gentcpacceptor are.
 //
 // # Behaviours
@@ -11,7 +11,7 @@
 // A [Behaviour] is a server written as pure functions. Init returns the
 // initial state; Handle gets the state and a message and returns the next
 // state; Terminate runs when the server stops. Each returns
-// molecule.Effects for the runtime to perform. The runtime started by
+// actor.Effects for the runtime to perform. The runtime started by
 // [Start] or [StartLink] owns the process: it receives the messages, calls
 // the behaviour, and performs the effects.
 //
@@ -22,15 +22,15 @@
 // slice copied when changed. The state given is not to be written, nor a
 // message once sent: gensim checks it.
 //
-// Handle gets a [Msg]: a molecule.CallMsg, a molecule.CastMsg, an
+// Handle gets a [Msg]: a actor.CallMsg, a actor.CastMsg, an
 // [InfoMsg] for any other message, or a [ContinueMsg]. An InfoMsg also
-// carries the outcome of an effect: a molecule.Down for a Monitor, a
-// molecule.Response for a SendRequest, the message of a StartTimer, a
-// molecule.AsyncResult for an Async, and a proc.ExitMsg when trapping
+// carries the outcome of an effect: a actor.Down for a Monitor, a
+// actor.Response for a SendRequest, the message of a StartTimer, a
+// actor.AsyncResult for an Async, and a proc.ExitMsg when trapping
 // exits, except the one from the parent.
 //
 // Behaviours built on gen define effects of their own by embedding
-// molecule.Extension, and handle them in their adapter before the runtime
+// actor.Extension, and handle them in their adapter before the runtime
 // sees the rest; genstatem does so for its actions. A [Performer] is an
 // effect that the runtime has perform itself, for what lies outside the
 // processes: gentcp sends to a socket this way.
@@ -38,7 +38,7 @@
 // # Starting and stopping
 //
 // [Start] and [StartLink] start a behaviour and wait until Init has run,
-// with the options of molecule, such as molecule.WithName.
+// with the options of actor, such as actor.WithName.
 //
 // A behaviour stops on a Stop effect, on a panic in Handle, when its parent
 // exits while it traps exits, and on [Terminate]. In these cases Terminate
@@ -52,7 +52,7 @@
 // runtime rather than the behaviour, like the functions of sys. A suspended
 // behaviour handles system messages only; the other messages wait, and are
 // handled in order on Resume. They are calls of messages of their own,
-// made with molecule.CallWith.
+// made with actor.CallWith.
 //
 // # Runners and environments
 //
@@ -66,6 +66,6 @@
 //
 // A behaviour stopping with an abnormal reason is reported to the logger of
 // its node, with the message it was handling and its state, formatted by
-// its molecule.StatusFormatter if any, before the crash report of its
+// its actor.StatusFormatter if any, before the crash report of its
 // process.
 package gen

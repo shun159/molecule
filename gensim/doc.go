@@ -26,12 +26,12 @@
 //
 // Time is virtual and passes only when nothing else can happen: then the
 // next timer fires, and the clock moves to it. Call lets time pass while
-// it waits, up to CallTimeout; Advance makes it pass. A molecule.Clocked
+// it waits, up to CallTimeout; Advance makes it pass. A actor.Clocked
 // behaviour reads this clock, Now, rather than time.Now.
 //
 // # Asyncs
 //
-// A molecule.Async runs at once, to completion, at the step performing it,
+// A actor.Async runs at once, to completion, at the step performing it,
 // in the goroutine of the simulation; its AsyncResult is then in flight,
 // as a message from the process to itself, delivered at a step the seed
 // chooses. A Run blocking on the world blocks the simulation: in a test, it
@@ -45,7 +45,7 @@
 // # Nodes
 //
 // Processes run on DefaultNode, or on the node given with On: nodes are
-// made on first use, each with names of its own, which molecule.Remote reaches
+// made on first use, each with names of its own, which actor.Remote reaches
 // from the others. Nodes fail as they do with dist, at the steps the test
 // chooses, the order of all else decided by the seed:
 //
@@ -82,6 +82,6 @@
 // genstatem.Child, supervisor.Child and supervisor.DynamicChild make them;
 // a child started by a function, as gentcpacceptor starts its sockets,
 // fails to start with ErrNotSimulated, as do processes written against
-// proc directly. Names are molecule.Local and molecule.Remote names; other molecule.Name
+// proc directly. Names are actor.Local and actor.Remote names; other actor.Name
 // implementations do not resolve.
 package gensim

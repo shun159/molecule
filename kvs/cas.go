@@ -3,7 +3,7 @@ package kvs
 import (
 	"errors"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 )
 
 // ErrConflict tells a behaviour, in a Durable, that the entry of its
@@ -48,13 +48,13 @@ func CompareAndDelete[K, V comparable](t *Table[K, V], k K, old V) (bool, error)
 // PutIfEffect is the effect putting v under k as PutIf does, for a
 // behaviour, as PutEffect is that putting it: a Durable with ErrConflict
 // arrives if it did not write.
-func (t *Table[K, V]) PutIfEffect(k K, v V, rev uint64, tag any) molecule.Effect {
+func (t *Table[K, V]) PutIfEffect(k K, v V, rev uint64, tag any) actor.Effect {
 	return writeEffect[K, V]{t: t, key: k, val: v, tag: tag, ifRev: true, rev: rev}
 }
 
 // DeleteIfEffect is the effect deleting the entry under k as DeleteIf
 // does, as PutIfEffect is that putting one.
-func (t *Table[K, V]) DeleteIfEffect(k K, rev uint64, tag any) molecule.Effect {
+func (t *Table[K, V]) DeleteIfEffect(k K, rev uint64, tag any) actor.Effect {
 	return writeEffect[K, V]{t: t, del: true, key: k, tag: tag, ifRev: true, rev: rev}
 }
 

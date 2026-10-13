@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/proc"
 )
@@ -12,19 +12,19 @@ import (
 // echoer returns the effects its casts carry, staying in its state.
 type echoer struct{}
 
-func (echoer) Init(proc.PID) (int, int, []molecule.Effect, error) { return 0, 0, nil, nil }
+func (echoer) Init(proc.PID) (int, int, []actor.Effect, error) { return 0, 0, nil, nil }
 
-func (echoer) HandleEvent(s, d int, ev Event) (int, int, []molecule.Effect) {
+func (echoer) HandleEvent(s, d int, ev Event) (int, int, []actor.Effect) {
 	if c, ok := ev.(Cast); ok {
-		effs, _ := c.Msg.([]molecule.Effect)
+		effs, _ := c.Msg.([]actor.Effect)
 		return s, d, effs
 	}
 	return s, d, nil
 }
 
-func hasCancel(effs []molecule.Effect, key any) bool {
+func hasCancel(effs []actor.Effect, key any) bool {
 	for _, e := range effs {
-		if c, ok := e.(molecule.CancelTimer); ok && c.Key == key {
+		if c, ok := e.(actor.CancelTimer); ok && c.Key == key {
 			return true
 		}
 	}
@@ -37,10 +37,10 @@ func hasCancel(effs []molecule.Effect, key any) bool {
 func TestEventTimeoutFiredIsOver(t *testing.T) {
 	a := newAdapter[int, int](echoer{})
 	m, _, _ := a.Init(proc.PID{}, nil)
-	arm := molecule.CastMsg{Req: molecule.Do(StartEventTimeout{After: time.Second, Msg: "t"})}
+	arm := actor.CastMsg{Req: actor.Do(StartEventTimeout{After: time.Second, Msg: "t"})}
 
 	m, _ = a.Handle(m, arm)
-	if m, effs := a.Handle(m, molecule.CastMsg{}); !hasCancel(effs, eventTimerKey{}) || m.eventTimer {
+	if m, effs := a.Handle(m, actor.CastMsg{}); !hasCancel(effs, eventTimerKey{}) || m.eventTimer {
 		t.Errorf("a running event timeout not cancelled by an event: %#v", effs)
 	}
 
@@ -49,7 +49,7 @@ func TestEventTimeoutFiredIsOver(t *testing.T) {
 	if hasCancel(effs, eventTimerKey{}) {
 		t.Errorf("the event timeout that fired cancelled: %#v", effs)
 	}
-	if _, effs := a.Handle(m, molecule.CastMsg{}); hasCancel(effs, eventTimerKey{}) {
+	if _, effs := a.Handle(m, actor.CastMsg{}); hasCancel(effs, eventTimerKey{}) {
 		t.Errorf("a fired event timeout cancelled by the next event: %#v", effs)
 	}
 }

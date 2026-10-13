@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/proc"
 )
@@ -17,7 +17,7 @@ import (
 // are all stopped at once rather than in order.
 type DynamicSpec struct {
 	// Name, if set, is registered when the supervisor starts.
-	Name molecule.Name
+	Name actor.Name
 	// Intensity and Period limit restarts as for Spec.
 	Intensity int
 	Period    time.Duration
@@ -72,12 +72,12 @@ type (
 // StartChild starts a child of the dynamic supervisor at sup and returns
 // its PID. The ID of the spec is not used: children are known by PID, and
 // a restarted child has a new one. A child whose Start returns
-// molecule.ErrIgnore is not kept, and StartChild returns molecule.ErrIgnore.
-func StartChild(ctx context.Context, caller molecule.Caller, sup molecule.Dest, spec ChildSpec) (proc.PID, error) {
+// actor.ErrIgnore is not kept, and StartChild returns actor.ErrIgnore.
+func StartChild(ctx context.Context, caller actor.Caller, sup actor.Dest, spec ChildSpec) (proc.PID, error) {
 	if spec.Start == nil {
 		return proc.PID{}, errors.New("supervisor: child has no Start")
 	}
-	v, err := molecule.Call(ctx, caller, sup, startChild{spec})
+	v, err := actor.Call(ctx, caller, sup, startChild{spec})
 	if err != nil {
 		return proc.PID{}, err
 	}
@@ -87,8 +87,8 @@ func StartChild(ctx context.Context, caller molecule.Caller, sup molecule.Dest, 
 
 // TerminateChild stops the child pid of the dynamic supervisor at sup, as
 // on shutdown, and forgets it.
-func TerminateChild(ctx context.Context, caller molecule.Caller, sup molecule.Dest, pid proc.PID) error {
-	v, err := molecule.Call(ctx, caller, sup, terminateChild{pid})
+func TerminateChild(ctx context.Context, caller actor.Caller, sup actor.Dest, pid proc.PID) error {
+	v, err := actor.Call(ctx, caller, sup, terminateChild{pid})
 	if err != nil {
 		return err
 	}
@@ -98,8 +98,8 @@ func TerminateChild(ctx context.Context, caller molecule.Caller, sup molecule.De
 
 // CountChildren returns the number of children of the dynamic supervisor
 // at sup, including those waiting to be restarted.
-func CountChildren(ctx context.Context, caller molecule.Caller, sup molecule.Dest) (int, error) {
-	v, err := molecule.Call(ctx, caller, sup, countChildren{})
+func CountChildren(ctx context.Context, caller actor.Caller, sup actor.Dest) (int, error) {
+	v, err := actor.Call(ctx, caller, sup, countChildren{})
 	if err != nil {
 		return 0, err
 	}

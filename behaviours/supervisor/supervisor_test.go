@@ -9,7 +9,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/behaviours/supervisor"
 	"github.com/shun159/molecule/internal/testlog"
@@ -44,27 +44,27 @@ type (
 	stopNormal struct{}
 )
 
-func (w worker) Init(proc.PID) (worker, []molecule.Effect, error) {
+func (w worker) Init(proc.PID) (worker, []actor.Effect, error) {
 	if w.failInit != nil && w.failInit.Add(-1) >= 0 {
 		return w, nil, errInit
 	}
-	return w, molecule.Do(molecule.TrapExit{On: true}, molecule.Send{To: w.observer, Msg: started{w.id}}), nil
+	return w, actor.Do(actor.TrapExit{On: true}, actor.Send{To: w.observer, Msg: started{w.id}}), nil
 }
 
-func (worker) HandleCall(w worker, req any, from genserver.From[string]) (worker, []molecule.Effect) {
+func (worker) HandleCall(w worker, req any, from genserver.From[string]) (worker, []actor.Effect) {
 	switch req.(type) {
 	case crash:
-		return w, molecule.Do(from.Reply("ok"), molecule.Stop{Reason: errBoom})
+		return w, actor.Do(from.Reply("ok"), actor.Stop{Reason: errBoom})
 	case stopNormal:
-		return w, molecule.Do(from.Reply("ok"), molecule.Stop{})
+		return w, actor.Do(from.Reply("ok"), actor.Stop{})
 	}
-	return w, molecule.Do(from.Reply("ok"))
+	return w, actor.Do(from.Reply("ok"))
 }
 
-func (worker) HandleCast(w worker, _ struct{}) (worker, []molecule.Effect) { return w, nil }
+func (worker) HandleCast(w worker, _ struct{}) (worker, []actor.Effect) { return w, nil }
 
-func (worker) Terminate(w worker, reason error) []molecule.Effect {
-	return molecule.Do(molecule.Send{To: w.observer, Msg: stopped{w.id, reason}})
+func (worker) Terminate(w worker, reason error) []actor.Effect {
+	return actor.Do(actor.Send{To: w.observer, Msg: stopped{w.id, reason}})
 }
 
 // world is a synctest bubble with a node and an observer collecting the
@@ -147,7 +147,7 @@ func (w *world) expect(want ...any) {
 	}
 }
 
-func (w *world) children(sup molecule.Dest) map[string]proc.PID {
+func (w *world) children(sup actor.Dest) map[string]proc.PID {
 	w.t.Helper()
 	infos, err := supervisor.WhichChildren(context.Background(), w.n, sup)
 	if err != nil {
@@ -163,7 +163,7 @@ func (w *world) children(sup molecule.Dest) map[string]proc.PID {
 func (w *world) call(sup proc.PID, id string, req any) {
 	w.t.Helper()
 	pid := w.children(sup)[id]
-	if _, err := molecule.Call(context.Background(), w.n, pid, req); err != nil {
+	if _, err := actor.Call(context.Background(), w.n, pid, req); err != nil {
 		w.t.Fatal(err)
 	}
 }
@@ -361,7 +361,7 @@ func TestStartFailure(t *testing.T) {
 
 func TestIgnoredChild(t *testing.T) {
 	inWorld(t, func(w *world) {
-		ignore := func(context.Context, *proc.Self) (proc.PID, error) { return proc.PID{}, molecule.ErrIgnore }
+		ignore := func(context.Context, *proc.Self) (proc.PID, error) { return proc.PID{}, actor.ErrIgnore }
 		sup := w.start(supervisor.Spec{Children: []supervisor.ChildSpec{
 			{ID: "ignored", Start: supervisor.StartFunc(ignore)},
 			w.worker("a", supervisor.Permanent),
@@ -584,7 +584,7 @@ func TestSpecErrors(t *testing.T) {
 
 func TestName(t *testing.T) {
 	inWorld(t, func(w *world) {
-		name := molecule.Local("sup")
+		name := actor.Local("sup")
 		sup := w.start(supervisor.Spec{Name: name})
 		if pid, ok := name.WhereIs(w.n); !ok || pid != sup {
 			t.Errorf("WhereIs = %v, %v", pid, ok)
@@ -593,7 +593,7 @@ func TestName(t *testing.T) {
 			t.Errorf("WhichChildren by name: %v", err)
 		}
 		_, err := supervisor.Start(context.Background(), w.n, supervisor.Spec{Name: name})
-		var already *molecule.AlreadyStartedError
+		var already *actor.AlreadyStartedError
 		if !errors.As(err, &already) || already.PID != sup {
 			t.Errorf("second Start = %v", err)
 		}

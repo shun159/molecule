@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/gensim"
 	"github.com/shun159/molecule/proc"
@@ -21,29 +21,29 @@ type asyncer struct {
 }
 
 type (
-	startAsync  molecule.Async
-	cancelAsync molecule.CancelAsync
+	startAsync  actor.Async
+	cancelAsync actor.CancelAsync
 )
 
-func (asyncer) HandleCast(s []any, msg any) ([]any, []molecule.Effect) {
+func (asyncer) HandleCast(s []any, msg any) ([]any, []actor.Effect) {
 	switch m := msg.(type) {
 	case startAsync:
-		return s, molecule.Do(molecule.Async(m))
+		return s, actor.Do(actor.Async(m))
 	case cancelAsync:
-		return s, molecule.Do(molecule.CancelAsync(m))
+		return s, actor.Do(actor.CancelAsync(m))
 	case string: // "stop"
-		return s, molecule.Do(molecule.Stop{})
-	case []molecule.Effect:
+		return s, actor.Do(actor.Stop{})
+	case []actor.Effect:
 		return s, m
 	}
 	return s, nil
 }
 
-func (a asyncer) HandleInfo(s []any, msg any) ([]any, []molecule.Effect) {
-	if r, ok := msg.(molecule.AsyncResult); ok {
+func (a asyncer) HandleInfo(s []any, msg any) ([]any, []actor.Effect) {
+	if r, ok := msg.(actor.AsyncResult); ok {
 		s = append(s[:len(s):len(s)], r.Value)
 		if !a.to.IsZero() {
-			return s, molecule.Do(molecule.Send{To: a.to, Msg: r})
+			return s, actor.Do(actor.Send{To: a.to, Msg: r})
 		}
 	}
 	return s, nil
@@ -71,12 +71,12 @@ func startAsyncer(t *testing.T, n *proc.Node, to proc.PID) genserver.Ref[genserv
 	return ref
 }
 
-func result(t *testing.T, s *proc.Self) molecule.AsyncResult {
+func result(t *testing.T, s *proc.Self) actor.AsyncResult {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	msg, err := s.Receive(ctx)
-	r, ok := msg.(molecule.AsyncResult)
+	r, ok := msg.(actor.AsyncResult)
 	if err != nil || !ok {
 		t.Fatalf("got %#v, %v, want an AsyncResult", msg, err)
 	}
@@ -219,7 +219,7 @@ func gated(i int, started chan<- int, release <-chan struct{}) func(context.Cont
 func TestMaxAsync(t *testing.T) {
 	n := proc.NewNode("")
 	asyncTest(t, n, func(s *proc.Self) {
-		ref, err := genserver.Start(context.Background(), n, asyncer{to: s.PID()}, molecule.WithMaxAsync(2))
+		ref, err := genserver.Start(context.Background(), n, asyncer{to: s.PID()}, actor.WithMaxAsync(2))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -259,7 +259,7 @@ func TestMaxAsync(t *testing.T) {
 func TestMaxAsyncSimulated(t *testing.T) {
 	for seed := range uint64(5) {
 		s := gensim.New(seed)
-		pid, err := gensim.Start(s, genserver.Child(asyncer{}, molecule.WithMaxAsync(1)))
+		pid, err := gensim.Start(s, genserver.Child(asyncer{}, actor.WithMaxAsync(1)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -272,11 +272,11 @@ func TestMaxAsyncSimulated(t *testing.T) {
 				return v, nil
 			}
 		}
-		var effs []molecule.Effect
+		var effs []actor.Effect
 		for i := range 5 {
-			effs = append(effs, molecule.Async{Key: i, Run: run(i)})
+			effs = append(effs, actor.Async{Key: i, Run: run(i)})
 		}
-		effs = append(effs, molecule.CancelAsync{Key: 2}, molecule.Async{Key: 3, Run: run("3b")})
+		effs = append(effs, actor.CancelAsync{Key: 2}, actor.Async{Key: 3, Run: run("3b")})
 		s.Cast(pid, effs)
 		s.RunUntilIdle()
 		got, _ := gensim.State[[]any](s, pid)

@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/gen"
 )
 
@@ -34,13 +34,13 @@ func (t *Table[K, V]) NextExpiry() (time.Time, bool) {
 // ExpireEffect is the effect deleting the entries expired at now, for a
 // behaviour, as Expire does: a Durable with tag arrives once the deletes
 // are durable. A behaviour gives the time of its clock, see
-// molecule.Clocked.
-func (t *Table[K, V]) ExpireEffect(now time.Time, tag any) molecule.Effect {
+// actor.Clocked.
+func (t *Table[K, V]) ExpireEffect(now time.Time, tag any) actor.Effect {
 	return expireEffect[K, V]{t: t, now: now, tag: tag}
 }
 
 type expireEffect[K comparable, V any] struct {
-	molecule.Extension
+	actor.Extension
 	t   *Table[K, V]
 	now time.Time
 	tag any

@@ -1,4 +1,4 @@
-package molecule
+package actor
 
 import (
 	"errors"
@@ -46,7 +46,7 @@ type Clocked interface {
 
 // ErrIgnore, returned by Init, makes Start return it without the process
 // failing, like ignore in OTP.
-var ErrIgnore = errors.New("molecule: ignore")
+var ErrIgnore = errors.New("actor: ignore")
 
 // AlreadyStartedError is returned by Start when the name is taken.
 type AlreadyStartedError struct {
@@ -54,7 +54,7 @@ type AlreadyStartedError struct {
 }
 
 func (e *AlreadyStartedError) Error() string {
-	return fmt.Sprintf("molecule: already started as %v", e.PID)
+	return fmt.Sprintf("actor: already started as %v", e.PID)
 }
 
 // Option configures the start of a behaviour.

@@ -3,7 +3,7 @@ package kvs
 import (
 	"context"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/gen"
 )
 
@@ -21,22 +21,22 @@ type Durable struct {
 // a failure is logged.
 //
 //	s.leases[mac] = lease
-//	return s, molecule.Do(s.table.PutEffect(mac, lease, from))
+//	return s, actor.Do(s.table.PutEffect(mac, lease, from))
 //	...
 //	case kvs.Durable:
-//		return s, molecule.Do(molecule.Reply{To: m.Tag.(molecule.From), Value: ack})
-func (t *Table[K, V]) PutEffect(k K, v V, tag any) molecule.Effect {
+//		return s, actor.Do(actor.Reply{To: m.Tag.(actor.From), Value: ack})
+func (t *Table[K, V]) PutEffect(k K, v V, tag any) actor.Effect {
 	return writeEffect[K, V]{t: t, key: k, val: v, tag: tag}
 }
 
 // DeleteEffect is the effect deleting the entry under k, as PutEffect is
 // that putting one.
-func (t *Table[K, V]) DeleteEffect(k K, tag any) molecule.Effect {
+func (t *Table[K, V]) DeleteEffect(k K, tag any) actor.Effect {
 	return writeEffect[K, V]{t: t, del: true, key: k, tag: tag}
 }
 
 type writeEffect[K comparable, V any] struct {
-	molecule.Extension
+	actor.Extension
 	t     *Table[K, V]
 	del   bool
 	key   K

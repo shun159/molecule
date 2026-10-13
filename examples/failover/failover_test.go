@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/gensim"
 	"github.com/shun159/molecule/proc"
@@ -14,7 +14,7 @@ import (
 // lines is a console of the simulation, keeping the lines.
 type lines struct{ genserver.Default[[]string] }
 
-func (lines) HandleInfo(l []string, msg any) ([]string, []molecule.Effect) {
+func (lines) HandleInfo(l []string, msg any) ([]string, []actor.Effect) {
 	return append(l[:len(l):len(l)], msg.(string)), nil
 }
 

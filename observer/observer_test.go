@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/application"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/behaviours/supervisor"
@@ -22,7 +22,7 @@ import (
 // crasher crashes on a cast.
 type crasher struct{ genserver.Default[struct{}] }
 
-func (crasher) HandleCast(struct{}, string) (struct{}, []molecule.Effect) { panic("crash") }
+func (crasher) HandleCast(struct{}, string) (struct{}, []actor.Effect) { panic("crash") }
 
 func startApp(t *testing.T, n *proc.Node) *application.Running {
 	t.Helper()
@@ -57,7 +57,7 @@ func TestTree(t *testing.T) {
 	n := proc.NewNode("", proc.WithLogger(logger))
 	r := startApp(t, n)
 	a := treeOf(t, n, r).Children[0].PID
-	n.Send(a, molecule.CastMsg{Req: "crash"})
+	n.Send(a, actor.CastMsg{Req: "crash"})
 	deadline := time.Now().Add(5 * time.Second)
 	for treeOf(t, n, r).Children[0].Restarts == 0 {
 		if time.Now().After(deadline) {

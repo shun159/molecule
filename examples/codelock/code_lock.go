@@ -4,7 +4,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genstatem"
 	"github.com/shun159/molecule/proc"
 )
@@ -53,7 +53,7 @@ type (
 	clear struct{}
 )
 
-func (CodeLock) Init(proc.PID) (State, Data, []molecule.Effect, error) {
+func (CodeLock) Init(proc.PID) (State, Data, []actor.Effect, error) {
 	return Locked, Data{}, nil, nil
 }
 
@@ -61,17 +61,17 @@ func (CodeLock) Init(proc.PID) (State, Data, []molecule.Effect, error) {
 // unlocks the door.
 func (CodeLock) StateEnter() bool { return true }
 
-func (l CodeLock) HandleEvent(state State, data Data, ev genstatem.Event) (State, Data, []molecule.Effect) {
+func (l CodeLock) HandleEvent(state State, data Data, ev genstatem.Event) (State, Data, []actor.Effect) {
 	switch e := ev.(type) {
 	case genstatem.Enter[State]:
 		if state == Locked {
-			return state, Data{}, molecule.Do(l.show("door locked"))
+			return state, Data{}, actor.Do(l.show("door locked"))
 		}
-		return state, data, molecule.Do(l.show("door open"),
+		return state, data, actor.Do(l.show("door open"),
 			genstatem.StartStateTimeout{After: l.OpenTime, Msg: lock{}})
 
 	case genstatem.Call: // Status, in any state
-		return state, data, molecule.Do(e.Reply(state.String()))
+		return state, data, actor.Do(e.Reply(state.String()))
 
 	case genstatem.StateTimeout: // lock, in Open
 		return Locked, data, nil
@@ -80,7 +80,7 @@ func (l CodeLock) HandleEvent(state State, data Data, ev genstatem.Event) (State
 	if state == Open {
 		if _, ok := ev.(genstatem.Cast); ok {
 			// A button while open waits for the door to lock again.
-			return state, data, molecule.Do(genstatem.Postpone{})
+			return state, data, actor.Do(genstatem.Postpone{})
 		}
 		return state, data, nil
 	}
@@ -94,18 +94,18 @@ func (l CodeLock) HandleEvent(state State, data Data, ev genstatem.Event) (State
 		buttons := append(slices.Clip(data.Buttons), b.N)
 		switch {
 		case slices.Equal(buttons, l.Code):
-			return Open, Data{}, molecule.Do(l.show("correct code"))
+			return Open, Data{}, actor.Do(l.show("correct code"))
 		case len(buttons) == len(l.Code):
-			return state, Data{}, molecule.Do(l.show("wrong code"))
+			return state, Data{}, actor.Do(l.show("wrong code"))
 		}
 		return state, Data{Buttons: buttons},
-			molecule.Do(genstatem.StartEventTimeout{After: clearTime, Msg: clear{}})
+			actor.Do(genstatem.StartEventTimeout{After: clearTime, Msg: clear{}})
 	case genstatem.EventTimeout: // clear: no press for a while
-		return state, Data{}, molecule.Do(l.show("code cleared"))
+		return state, Data{}, actor.Do(l.show("code cleared"))
 	}
 	return state, data, nil
 }
 
-func (l CodeLock) show(text string) molecule.Effect {
-	return molecule.Send{To: l.Display, Msg: text}
+func (l CodeLock) show(text string) actor.Effect {
+	return actor.Send{To: l.Display, Msg: text}
 }

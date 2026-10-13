@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -19,25 +19,25 @@ type Starter interface {
 // arguments of its Init, and the options of its start.
 type Child interface {
 	Starter
-	Simulate(env Env) (Runner, any, molecule.StartOptions)
+	Simulate(env Env) (Runner, any, actor.StartOptions)
 }
 
 // ChildOf returns b, started with args and opts, as a Child.
-func ChildOf[S any](b Behaviour[S], args any, opts ...molecule.Option) Child {
+func ChildOf[S any](b Behaviour[S], args any, opts ...actor.Option) Child {
 	return child[S]{b, args, opts}
 }
 
 type child[S any] struct {
 	b    Behaviour[S]
 	args any
-	opts []molecule.Option
+	opts []actor.Option
 }
 
 func (c child[S]) StartLink(ctx context.Context, parent *proc.Self) (proc.PID, error) {
 	return StartLink(ctx, parent, c.b, c.args, c.opts...)
 }
 
-func (c child[S]) Simulate(env Env) (Runner, any, molecule.StartOptions) {
+func (c child[S]) Simulate(env Env) (Runner, any, actor.StartOptions) {
 	return NewRunner(c.b, env, c.opts...), c.args, newOptions(c.opts)
 }
 
@@ -47,13 +47,13 @@ type (
 	// for it to start: Started, with Tag, is handled right after the
 	// callback, as a ContinueMsg, before anything in the mailbox.
 	StartChild struct {
-		molecule.Extension
+		actor.Extension
 		Child Starter
 		Tag   any
 	}
 	// Log logs a record to the logger of the node, as reports do.
 	Log struct {
-		molecule.Extension
+		actor.Extension
 		Level slog.Level
 		Msg   string
 		Attrs []any
@@ -61,11 +61,11 @@ type (
 	// AckLater, among the effects of Init, holds back the end of the
 	// start until an Ack: Start returns once the behaviour has started
 	// what it starts, as a supervisor its children.
-	AckLater struct{ molecule.Extension }
+	AckLater struct{ actor.Extension }
 	// Ack ends the start held back by AckLater: Start returns Err, nil
 	// for a success. A behaviour failing its start stops as well.
 	Ack struct {
-		molecule.Extension
+		actor.Extension
 		Err error
 	}
 )
@@ -81,5 +81,5 @@ type Started struct {
 // rather than terminating at once: a supervisor stops its children first.
 // It gets the reason, and is expected to stop, in time, with a Stop.
 type ParentExiter[S any] interface {
-	ParentExit(state S, reason error) (S, []molecule.Effect)
+	ParentExit(state S, reason error) (S, []actor.Effect)
 }

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 )
 
@@ -26,21 +26,21 @@ func (Div) calcReq() {}
 type Add struct{ N int }
 
 var (
-	calcName = molecule.Local("calc")
+	calcName = actor.Local("calc")
 	calcRef  = genserver.RefFor(CalcServer{}, calcName)
 )
 
-func (CalcServer) HandleCall(n int, req CalcReq, from genserver.From[int]) (int, []molecule.Effect) {
+func (CalcServer) HandleCall(n int, req CalcReq, from genserver.From[int]) (int, []actor.Effect) {
 	switch r := req.(type) {
 	case Get:
-		return n, molecule.Do(from.Reply(n))
+		return n, actor.Do(from.Reply(n))
 	case Div:
 		n /= r.By // no check for zero: the bug
-		return n, molecule.Do(from.Reply(n))
+		return n, actor.Do(from.Reply(n))
 	}
 	return n, nil
 }
 
-func (CalcServer) HandleCast(n int, msg Add) (int, []molecule.Effect) {
+func (CalcServer) HandleCast(n int, msg Add) (int, []actor.Effect) {
 	return n + msg.N, nil
 }

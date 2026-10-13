@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/net/socket"
 	"github.com/shun159/molecule/proc"
@@ -167,23 +167,23 @@ type echo struct {
 
 type badSend struct{ sock socket.Socket }
 
-func (echo) HandleCast(s struct{}, msg any) (struct{}, []molecule.Effect) {
+func (echo) HandleCast(s struct{}, msg any) (struct{}, []actor.Effect) {
 	switch m := msg.(type) {
 	case socket.Socket:
-		return s, molecule.Do(m.SetActiveEffect(socket.Once))
+		return s, actor.Do(m.SetActiveEffect(socket.Once))
 	case badSend:
 		// An IPv6 address on an IPv4 socket.
-		return s, molecule.Do(m.sock.SendEffect(&syscall.SockaddrInet6{Port: 9}, []byte("x")))
+		return s, actor.Do(m.sock.SendEffect(&syscall.SockaddrInet6{Port: 9}, []byte("x")))
 	}
 	return s, nil
 }
 
-func (e echo) HandleInfo(s struct{}, msg any) (struct{}, []molecule.Effect) {
+func (e echo) HandleInfo(s struct{}, msg any) (struct{}, []actor.Effect) {
 	switch m := msg.(type) {
 	case socket.DataMsg:
-		return s, molecule.Do(m.Sock.SendActiveEffect(m.From, m.Bytes, socket.Once))
+		return s, actor.Do(m.Sock.SendActiveEffect(m.From, m.Bytes, socket.Once))
 	case socket.SendErrorMsg:
-		return s, molecule.Do(molecule.Send{To: e.to, Msg: m})
+		return s, actor.Do(actor.Send{To: e.to, Msg: m})
 	}
 	return s, nil
 }

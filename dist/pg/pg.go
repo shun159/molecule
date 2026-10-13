@@ -6,7 +6,7 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/gen"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/dist"
@@ -35,7 +35,7 @@ type (
 	}
 )
 
-// Queries to a scope, for molecule.SendRequest from a behaviour, or gensim.
+// Queries to a scope, for actor.SendRequest from a behaviour, or gensim.
 type (
 	// MembersRequest asks for the members of Group, as Members returns
 	// them.
@@ -91,27 +91,27 @@ type groups struct {
 	order   []any
 }
 
-// Start starts a scope registered as name. A molecule.Local name makes it
+// Start starts a scope registered as name. A actor.Local name makes it
 // share its groups with the scopes of the same name on other nodes.
-func Start(ctx context.Context, n *proc.Node, name molecule.Name) (proc.PID, error) {
-	ref, err := genserver.Start(ctx, n, scopeFor(name), molecule.WithName(name))
+func Start(ctx context.Context, n *proc.Node, name actor.Name) (proc.PID, error) {
+	ref, err := genserver.Start(ctx, n, scopeFor(name), actor.WithName(name))
 	return pidOf(ref), err
 }
 
 // StartLink starts a scope registered as name, linked to parent.
-func StartLink(ctx context.Context, parent *proc.Self, name molecule.Name) (proc.PID, error) {
-	ref, err := genserver.StartLink(ctx, parent, scopeFor(name), molecule.WithName(name))
+func StartLink(ctx context.Context, parent *proc.Self, name actor.Name) (proc.PID, error) {
+	ref, err := genserver.StartLink(ctx, parent, scopeFor(name), actor.WithName(name))
 	return pidOf(ref), err
 }
 
 // Child returns a scope registered as name as a child to start, the Start
 // of a supervisor.ChildSpec.
-func Child(name molecule.Name) gen.Child {
-	return genserver.Child(scopeFor(name), molecule.WithName(name))
+func Child(name actor.Name) gen.Child {
+	return genserver.Child(scopeFor(name), actor.WithName(name))
 }
 
-func scopeFor(name molecule.Name) Scope {
-	l, _ := name.(molecule.Local)
+func scopeFor(name actor.Name) Scope {
+	l, _ := name.(actor.Local)
 	return Scope{Name: string(l)}
 }
 
@@ -121,83 +121,83 @@ func pidOf(ref genserver.Ref[any, any, any]) proc.PID {
 }
 
 // Join makes pids members of group in the scope, once more each.
-func Join(ctx context.Context, caller molecule.Caller, scope molecule.Dest, group any, pids ...proc.PID) error {
-	_, err := molecule.Call(ctx, caller, scope, join{group, pids})
+func Join(ctx context.Context, caller actor.Caller, scope actor.Dest, group any, pids ...proc.PID) error {
+	_, err := actor.Call(ctx, caller, scope, join{group, pids})
 	return err
 }
 
 // Leave makes pids members of group once less each. Leaving a group one
 // is not in does nothing.
-func Leave(ctx context.Context, caller molecule.Caller, scope molecule.Dest, group any, pids ...proc.PID) error {
-	_, err := molecule.Call(ctx, caller, scope, leave{group, pids})
+func Leave(ctx context.Context, caller actor.Caller, scope actor.Dest, group any, pids ...proc.PID) error {
+	_, err := actor.Call(ctx, caller, scope, leave{group, pids})
 	return err
 }
 
 // Members returns the members of group: those joined through the scope,
 // in the order they joined, a process once per join, then those of the
 // scopes of other nodes.
-func Members(ctx context.Context, caller molecule.Caller, scope molecule.Dest, group any) ([]proc.PID, error) {
-	v, err := molecule.Call(ctx, caller, scope, MembersRequest{group})
+func Members(ctx context.Context, caller actor.Caller, scope actor.Dest, group any) ([]proc.PID, error) {
+	v, err := actor.Call(ctx, caller, scope, MembersRequest{group})
 	pids, _ := v.([]proc.PID)
 	return pids, err
 }
 
 // Which returns the groups having members, on any node.
-func Which(ctx context.Context, caller molecule.Caller, scope molecule.Dest) ([]any, error) {
-	v, err := molecule.Call(ctx, caller, scope, WhichRequest{})
+func Which(ctx context.Context, caller actor.Caller, scope actor.Dest) ([]any, error) {
+	v, err := actor.Call(ctx, caller, scope, WhichRequest{})
 	groups, _ := v.([]any)
 	return groups, err
 }
 
 // JoinEffect is the effect making pids members of group, for a behaviour.
-func JoinEffect(scope molecule.Dest, group any, pids ...proc.PID) molecule.Effect {
-	return molecule.Cast{To: scope, Req: join{group, pids}}
+func JoinEffect(scope actor.Dest, group any, pids ...proc.PID) actor.Effect {
+	return actor.Cast{To: scope, Req: join{group, pids}}
 }
 
 // LeaveEffect is the effect making pids leave group, for a behaviour.
-func LeaveEffect(scope molecule.Dest, group any, pids ...proc.PID) molecule.Effect {
-	return molecule.Cast{To: scope, Req: leave{group, pids}}
+func LeaveEffect(scope actor.Dest, group any, pids ...proc.PID) actor.Effect {
+	return actor.Cast{To: scope, Req: leave{group, pids}}
 }
 
 // SendEffect is the effect having the scope send msg to every member of
 // group, on any node, once per member however many times it joined, except
 // the process except, which may be zero.
-func SendEffect(scope molecule.Dest, group any, msg any, except proc.PID) molecule.Effect {
-	return molecule.Cast{To: scope, Req: send{group, msg, except}}
+func SendEffect(scope actor.Dest, group any, msg any, except proc.PID) actor.Effect {
+	return actor.Cast{To: scope, Req: send{group, msg, except}}
 }
 
-func (sc Scope) Init(self proc.PID) (state, []molecule.Effect, error) {
+func (sc Scope) Init(self proc.PID) (state, []actor.Effect, error) {
 	s := state{self: self, local: groups{members: map[any][]proc.PID{}}, peers: map[proc.PID]groups{}}
 	if sc.Name == "" {
 		return s, nil, nil
 	}
-	return s, molecule.Do(molecule.MonitorNodes{On: true}), nil
+	return s, actor.Do(actor.MonitorNodes{On: true}), nil
 }
 
-func (sc Scope) HandleCall(s state, req any, from genserver.From[any]) (state, []molecule.Effect) {
+func (sc Scope) HandleCall(s state, req any, from genserver.From[any]) (state, []actor.Effect) {
 	switch r := req.(type) {
 	case MembersRequest:
-		return s, molecule.Do(from.Reply(s.members(r.Group)))
+		return s, actor.Do(from.Reply(s.members(r.Group)))
 	case WhichRequest:
-		return s, molecule.Do(from.Reply(s.which()))
+		return s, actor.Do(from.Reply(s.which()))
 	}
 	s, effs := sc.HandleCast(s, req)
 	return s, append(effs, from.Reply(nil))
 }
 
-func (Scope) HandleCast(s state, req any) (state, []molecule.Effect) {
+func (Scope) HandleCast(s state, req any) (state, []actor.Effect) {
 	switch r := req.(type) {
 	case join:
 		return s.join(r.Group, r.PIDs)
 	case leave:
 		return s.leave(r.Group, r.PIDs)
 	case send:
-		var effs []molecule.Effect
+		var effs []actor.Effect
 		seen := map[proc.PID]bool{r.Except: true}
 		for _, pid := range s.members(r.Group) {
 			if !seen[pid] {
 				seen[pid] = true
-				effs = append(effs, molecule.Send{To: pid, Msg: r.Msg})
+				effs = append(effs, actor.Send{To: pid, Msg: r.Msg})
 			}
 		}
 		return s, effs
@@ -207,13 +207,13 @@ func (Scope) HandleCast(s state, req any) (state, []molecule.Effect) {
 
 // HandleInfo keeps up with the other scopes, and takes the members that
 // exit out of all their groups.
-func (sc Scope) HandleInfo(s state, msg any) (state, []molecule.Effect) {
+func (sc Scope) HandleInfo(s state, msg any) (state, []actor.Effect) {
 	switch m := msg.(type) {
 	case proc.NodeUp:
-		return s, molecule.Do(molecule.Send{To: molecule.Local(sc.Name).At(m.Node), Msg: discover{s.self}})
+		return s, actor.Do(actor.Send{To: actor.Local(sc.Name).At(m.Node), Msg: discover{s.self}})
 	case discover:
 		s, effs := s.meet(m.From, true)
-		return s, append(effs, molecule.Send{To: m.From, Msg: synced{s.self, s.local.all()}})
+		return s, append(effs, actor.Send{To: m.From, Msg: synced{s.self, s.local.all()}})
 	case synced:
 		s, effs := s.meet(m.From, false)
 		g := groups{members: map[any][]proc.PID{}}
@@ -233,7 +233,7 @@ func (sc Scope) HandleInfo(s state, msg any) (state, []molecule.Effect) {
 			s.peers = maps.Clone(s.peers)
 			s.peers[m.From], _ = g.remove(m.Group, m.PIDs)
 		}
-	case molecule.Down:
+	case actor.Down:
 		if p, ok := m.Tag.(peerTag); ok {
 			s.peers = maps.Clone(s.peers)
 			delete(s.peers, p.PID)
@@ -246,38 +246,38 @@ func (sc Scope) HandleInfo(s state, msg any) (state, []molecule.Effect) {
 
 // meet takes the scope peer, of another node, if new: it watches it, and
 // tells it about itself if asked to.
-func (s state) meet(peer proc.PID, discoverBack bool) (state, []molecule.Effect) {
+func (s state) meet(peer proc.PID, discoverBack bool) (state, []actor.Effect) {
 	if _, ok := s.peers[peer]; ok {
 		return s, nil
 	}
 	s.peers = maps.Clone(s.peers)
 	s.peers[peer] = groups{members: map[any][]proc.PID{}}
-	effs := []molecule.Effect{molecule.Monitor{Target: peer, Tag: peerTag{peer}}}
+	effs := []actor.Effect{actor.Monitor{Target: peer, Tag: peerTag{peer}}}
 	if discoverBack {
-		effs = append(effs, molecule.Send{To: peer, Msg: discover{s.self}})
+		effs = append(effs, actor.Send{To: peer, Msg: discover{s.self}})
 	}
 	return s, effs
 }
 
-func (s state) join(group any, pids []proc.PID) (state, []molecule.Effect) {
-	var effs []molecule.Effect
+func (s state) join(group any, pids []proc.PID) (state, []actor.Effect) {
+	var effs []actor.Effect
 	for _, pid := range pids {
 		if s.joins(pid) == 0 {
-			effs = append(effs, molecule.Monitor{Target: pid, Tag: pid})
+			effs = append(effs, actor.Monitor{Target: pid, Tag: pid})
 		}
 		s.local = s.local.add(group, []proc.PID{pid})
 	}
 	return s, append(effs, s.tellPeers(joined{s.self, group, pids})...)
 }
 
-func (s state) leave(group any, pids []proc.PID) (state, []molecule.Effect) {
+func (s state) leave(group any, pids []proc.PID) (state, []actor.Effect) {
 	var gone []proc.PID
 	s.local, gone = s.local.remove(group, pids)
-	var effs []molecule.Effect
+	var effs []actor.Effect
 	seen := map[proc.PID]bool{}
 	for _, pid := range gone {
 		if !seen[pid] && s.joins(pid) == 0 {
-			effs = append(effs, molecule.Demonitor{Tag: pid})
+			effs = append(effs, actor.Demonitor{Tag: pid})
 		}
 		seen[pid] = true
 	}
@@ -288,8 +288,8 @@ func (s state) leave(group any, pids []proc.PID) (state, []molecule.Effect) {
 }
 
 // exited takes pid, exited, out of its groups, as many times as it joined.
-func (s state) exited(pid proc.PID) (state, []molecule.Effect) {
-	var effs []molecule.Effect
+func (s state) exited(pid proc.PID) (state, []actor.Effect) {
+	var effs []actor.Effect
 	for _, group := range s.local.order {
 		var times []proc.PID
 		for _, p := range s.local.members[group] {
@@ -320,10 +320,10 @@ func (s state) joins(pid proc.PID) int {
 }
 
 // tellPeers sends msg to the scopes of the other nodes.
-func (s state) tellPeers(msg any) []molecule.Effect {
-	var effs []molecule.Effect
+func (s state) tellPeers(msg any) []actor.Effect {
+	var effs []actor.Effect
 	for _, peer := range s.peerOrder() {
-		effs = append(effs, molecule.Send{To: peer, Msg: msg})
+		effs = append(effs, actor.Send{To: peer, Msg: msg})
 	}
 	return effs
 }

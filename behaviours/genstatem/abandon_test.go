@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genstatem"
 	"github.com/shun159/molecule/gensim"
 	"github.com/shun159/molecule/proc"
@@ -17,7 +17,7 @@ import (
 type worker struct{}
 
 type workerData struct {
-	from      molecule.From // the call worked for
+	from      actor.From // the call worked for
 	taken     int
 	abandoned int
 }
@@ -33,11 +33,11 @@ const (
 	busy
 )
 
-func (worker) Init(proc.PID) (int, workerData, []molecule.Effect, error) {
+func (worker) Init(proc.PID) (int, workerData, []actor.Effect, error) {
 	return idle, workerData{}, nil, nil
 }
 
-func (worker) HandleEvent(st int, d workerData, ev genstatem.Event) (int, workerData, []molecule.Effect) {
+func (worker) HandleEvent(st int, d workerData, ev genstatem.Event) (int, workerData, []actor.Effect) {
 	switch e := ev.(type) {
 	case genstatem.Cast:
 		if _, ok := e.Msg.(counts); ok {
@@ -45,18 +45,18 @@ func (worker) HandleEvent(st int, d workerData, ev genstatem.Event) (int, worker
 		}
 	case genstatem.Call:
 		if _, ok := e.Req.(counts); ok {
-			return st, d, molecule.Do(e.Reply([2]int{d.taken, d.abandoned}))
+			return st, d, actor.Do(e.Reply([2]int{d.taken, d.abandoned}))
 		}
 		if st == busy {
-			return st, d, molecule.Do(genstatem.Postpone{})
+			return st, d, actor.Do(genstatem.Postpone{})
 		}
 		d.from = e.From
 		d.taken++
-		return busy, d, molecule.Do(genstatem.StartStateTimeout{After: time.Second, Msg: done{}})
+		return busy, d, actor.Do(genstatem.StartStateTimeout{After: time.Second, Msg: done{}})
 	case genstatem.StateTimeout:
-		return idle, d, molecule.Do(molecule.Reply{To: d.from, Value: "done"})
+		return idle, d, actor.Do(actor.Reply{To: d.from, Value: "done"})
 	case genstatem.Info:
-		if ab, ok := e.Msg.(molecule.CallAbandoned); ok && ab.From == d.from {
+		if ab, ok := e.Msg.(actor.CallAbandoned); ok && ab.From == d.from {
 			d.abandoned++
 			return idle, d, nil
 		}

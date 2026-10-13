@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/application"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/behaviours/supervisor"
@@ -56,7 +56,7 @@ func main() {
 		Name: "failover",
 		Start: supervisor.Child(supervisor.Spec{Children: []supervisor.ChildSpec{
 			{ID: "console", Start: consoleChild(os.Stdout)},
-			{ID: "worker", Start: genserver.Child(w, molecule.WithName(workerName))},
+			{ID: "worker", Start: genserver.Child(w, actor.WithName(workerName))},
 		}}),
 	})
 	if err != nil {

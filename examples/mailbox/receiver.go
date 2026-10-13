@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/proc"
 )
@@ -23,11 +23,11 @@ type receiverState struct {
 	waiting []genserver.From[int] // Wait calls, answered when all are in
 }
 
-func (Receiver) Init(proc.PID) (receiverState, []molecule.Effect, error) {
+func (Receiver) Init(proc.PID) (receiverState, []actor.Effect, error) {
 	return receiverState{}, nil, nil
 }
 
-func (r Receiver) HandleCast(s receiverState, _ Pong) (receiverState, []molecule.Effect) {
+func (r Receiver) HandleCast(s receiverState, _ Pong) (receiverState, []actor.Effect) {
 	s.pongs++
 	if s.pongs != r.Expect {
 		return s, nil
@@ -35,9 +35,9 @@ func (r Receiver) HandleCast(s receiverState, _ Pong) (receiverState, []molecule
 	return receiverState{pongs: s.pongs}, r.answer(s)
 }
 
-func (r Receiver) HandleCall(s receiverState, _ Wait, from genserver.From[int]) (receiverState, []molecule.Effect) {
+func (r Receiver) HandleCall(s receiverState, _ Wait, from genserver.From[int]) (receiverState, []actor.Effect) {
 	if s.pongs >= r.Expect {
-		return s, molecule.Do(from.Reply(s.pongs))
+		return s, actor.Do(from.Reply(s.pongs))
 	}
 	// Not all in yet: keep the caller waiting, and reply later.
 	s.waiting = append(s.waiting[:len(s.waiting):len(s.waiting)], from)
@@ -45,8 +45,8 @@ func (r Receiver) HandleCall(s receiverState, _ Wait, from genserver.From[int]) 
 }
 
 // answer replies to every waiting caller.
-func (Receiver) answer(s receiverState) []molecule.Effect {
-	var effs []molecule.Effect
+func (Receiver) answer(s receiverState) []actor.Effect {
+	var effs []actor.Effect
 	for _, from := range s.waiting {
 		effs = append(effs, from.Reply(s.pongs))
 	}

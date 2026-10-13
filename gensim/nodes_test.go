@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/gensim"
 	"github.com/shun159/molecule/proc"
@@ -15,14 +15,14 @@ import (
 // relay casts what it is cast to the counter named "counter" on node.
 type relay struct{ node string }
 
-func (relay) Init(proc.PID) (struct{}, []molecule.Effect, error) { return struct{}{}, nil, nil }
+func (relay) Init(proc.PID) (struct{}, []actor.Effect, error) { return struct{}{}, nil, nil }
 
-func (relay) HandleCall(s struct{}, _ get, _ genserver.From[int]) (struct{}, []molecule.Effect) {
+func (relay) HandleCall(s struct{}, _ get, _ genserver.From[int]) (struct{}, []actor.Effect) {
 	return s, nil
 }
 
-func (r relay) HandleCast(s struct{}, msg add) (struct{}, []molecule.Effect) {
-	return s, molecule.Do(molecule.Cast{To: molecule.Remote{Node: r.node, Name: "counter"}, Req: msg})
+func (r relay) HandleCast(s struct{}, msg add) (struct{}, []actor.Effect) {
+	return s, actor.Do(actor.Cast{To: actor.Remote{Node: r.node, Name: "counter"}, Req: msg})
 }
 
 func TestNodes(t *testing.T) {
@@ -34,7 +34,7 @@ func TestNodes(t *testing.T) {
 	}
 	s.Cast(r, add{2})
 	s.RunUntilIdle()
-	if v, err := s.Call(molecule.Remote{Node: "b", Name: "counter"}, get{}); err != nil || v != 2 {
+	if v, err := s.Call(actor.Remote{Node: "b", Name: "counter"}, get{}); err != nil || v != 2 {
 		t.Errorf("counter of b: %v, %v", v, err)
 	}
 	// A Local name is of the default node, where there is none.
@@ -68,7 +68,7 @@ func TestPartition(t *testing.T) {
 			log, _ := gensim.State[[]any](s, w)
 			want := []any{
 				proc.ExitMsg{From: l, Reason: proc.NoConnection},
-				molecule.Down{Tag: "m", PID: m, Reason: proc.NoConnection},
+				actor.Down{Tag: "m", PID: m, Reason: proc.NoConnection},
 			}
 			if !sameItems(log, want) {
 				t.Errorf("watcher log %#v", log)
@@ -123,11 +123,11 @@ func TestCrashRestart(t *testing.T) {
 	log, _ := gensim.State[[]any](s, w)
 	if !sameItems(log, []any{
 		proc.ExitMsg{From: l, Reason: proc.NoConnection},
-		molecule.Down{Tag: "m", PID: old, Reason: proc.NoConnection},
+		actor.Down{Tag: "m", PID: old, Reason: proc.NoConnection},
 	}) {
 		t.Errorf("watcher log %#v", log)
 	}
-	if _, err := s.Call(molecule.Remote{Node: "b", Name: "counter"}, get{}); !errors.Is(err, proc.NoProc) {
+	if _, err := s.Call(actor.Remote{Node: "b", Name: "counter"}, get{}); !errors.Is(err, proc.NoProc) {
 		t.Errorf("call to a crashed node: %v", err)
 	}
 	if _, err := s.Call(old, get{}); !errors.Is(err, proc.NoConnection) {
@@ -142,7 +142,7 @@ func TestCrashRestart(t *testing.T) {
 	if c == old || s.Alive(old) {
 		t.Error("previous incarnation back")
 	}
-	if v, err := s.Call(molecule.Remote{Node: "b", Name: "counter"}, get{}); err != nil || v != 0 {
+	if v, err := s.Call(actor.Remote{Node: "b", Name: "counter"}, get{}); err != nil || v != 0 {
 		t.Errorf("counter after restart: %v, %v", v, err)
 	}
 }
@@ -158,7 +158,7 @@ func TestLoss(t *testing.T) {
 	s.Cast(local, add{1}) // within a, kept
 	s.RunUntilIdle()
 	for node, want := range map[string]int{"a": 1, "b": 0} {
-		if v, _ := s.Call(molecule.Remote{Node: node, Name: "counter"}, get{}); v != want {
+		if v, _ := s.Call(actor.Remote{Node: node, Name: "counter"}, get{}); v != want {
 			t.Errorf("counter of %s: %v, want %d", node, v, want)
 		}
 	}
@@ -207,7 +207,7 @@ func TestPendingRequest(t *testing.T) {
 		}
 		s.RunUntilIdle()
 		log, _ := gensim.State[[]any](s, r)
-		if len(log) != 2 || !errors.Is(log[1].(molecule.Response).Err, proc.NoConnection) {
+		if len(log) != 2 || !errors.Is(log[1].(actor.Response).Err, proc.NoConnection) {
 			t.Errorf("%s: %#v", fault, log)
 		}
 	}
@@ -245,15 +245,15 @@ func TestRun(t *testing.T) {
 // remoteWatcher monitors and requests the counter of b by name.
 type remoteWatcher struct{ genserver.Default[[]any] }
 
-func (remoteWatcher) HandleCast(log []any, _ goNow) ([]any, []molecule.Effect) {
-	counter := molecule.Remote{Node: "b", Name: "counter"}
-	return log, molecule.Do(
-		molecule.SendRequest{To: counter, Req: get{}, Tag: "get"},
-		molecule.Monitor{Target: counter, Tag: "counter"},
+func (remoteWatcher) HandleCast(log []any, _ goNow) ([]any, []actor.Effect) {
+	counter := actor.Remote{Node: "b", Name: "counter"}
+	return log, actor.Do(
+		actor.SendRequest{To: counter, Req: get{}, Tag: "get"},
+		actor.Monitor{Target: counter, Tag: "counter"},
 	)
 }
 
-func (remoteWatcher) HandleInfo(log []any, msg any) ([]any, []molecule.Effect) {
+func (remoteWatcher) HandleInfo(log []any, msg any) ([]any, []actor.Effect) {
 	return append(log[:len(log):len(log)], msg), nil
 }
 
@@ -265,13 +265,13 @@ func TestRemoteNameEffects(t *testing.T) {
 	s.Cast(w, goNow{})
 	s.RunUntilIdle()
 	log, _ := gensim.State[[]any](s, w)
-	if len(log) != 1 || log[0] != (molecule.Response{Tag: "get", Value: 3}) {
+	if len(log) != 1 || log[0] != (actor.Response{Tag: "get", Value: 3}) {
 		t.Fatalf("log %#v", log)
 	}
 	s.Partition([]string{"a"}, []string{"b"})
 	s.RunUntilIdle()
 	log, _ = gensim.State[[]any](s, w)
-	if len(log) != 2 || log[1] != (molecule.Down{Tag: "counter", PID: c, Reason: proc.NoConnection}) {
+	if len(log) != 2 || log[1] != (actor.Down{Tag: "counter", PID: c, Reason: proc.NoConnection}) {
 		t.Errorf("log %#v", log)
 	}
 	// Cut apart, both fail at once.
@@ -283,11 +283,11 @@ func TestRemoteNameEffects(t *testing.T) {
 	}
 	for _, m := range log[2:] {
 		switch m := m.(type) {
-		case molecule.Response:
+		case actor.Response:
 			if !errors.Is(m.Err, proc.NoConnection) {
 				t.Errorf("response %#v", m)
 			}
-		case molecule.Down:
+		case actor.Down:
 			if m.Reason != proc.NoConnection {
 				t.Errorf("down %#v", m)
 			}
@@ -298,11 +298,11 @@ func TestRemoteNameEffects(t *testing.T) {
 // nodeLog monitors nodes, and keeps what it is told.
 type nodeLog struct{ genserver.Default[[]any] }
 
-func (nodeLog) Init(proc.PID) ([]any, []molecule.Effect, error) {
-	return nil, molecule.Do(molecule.MonitorNodes{On: true}), nil
+func (nodeLog) Init(proc.PID) ([]any, []actor.Effect, error) {
+	return nil, actor.Do(actor.MonitorNodes{On: true}), nil
 }
 
-func (nodeLog) HandleInfo(log []any, msg any) ([]any, []molecule.Effect) {
+func (nodeLog) HandleInfo(log []any, msg any) ([]any, []actor.Effect) {
 	return append(log[:len(log):len(log)], msg), nil
 }
 

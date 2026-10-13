@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/net/gentcp"
 	"github.com/shun159/molecule/proc"
 )
@@ -67,20 +67,20 @@ func TestProtocolPure(t *testing.T) {
 	sock := gentcp.Socket{PID: proc.NewNode("").NewPID()}
 	c, _, _ := p.Init(proc.PID{})
 	c, effs := p.HandleCast(c, sock)
-	if want := molecule.Do(statsRef.CastEffect(connOpened{}), sock.SetActiveEffect(gentcp.Once)); !c.open || !reflect.DeepEqual(effs, want) {
+	if want := actor.Do(statsRef.CastEffect(connOpened{}), sock.SetActiveEffect(gentcp.Once)); !c.open || !reflect.DeepEqual(effs, want) {
 		t.Errorf("on the socket: %+v, %#v", c, effs)
 	}
 	for _, b := range []string{"hi", "there"} {
 		c, effs = p.HandleInfo(c, gentcp.DataMsg{Sock: sock, Bytes: []byte(b)})
-		want := molecule.Do(sock.SendActiveEffect([]byte(b), gentcp.Once))
+		want := actor.Do(sock.SendActiveEffect([]byte(b), gentcp.Once))
 		if !reflect.DeepEqual(effs, want) {
 			t.Errorf("on data: %#v", effs)
 		}
 	}
-	if _, effs = p.HandleInfo(c, gentcp.ClosedMsg{Sock: sock}); !reflect.DeepEqual(effs, molecule.Do(molecule.Stop{})) {
+	if _, effs = p.HandleInfo(c, gentcp.ClosedMsg{Sock: sock}); !reflect.DeepEqual(effs, actor.Do(actor.Stop{})) {
 		t.Errorf("on closed: %#v", effs)
 	}
-	want := molecule.Do(statsRef.CastEffect(echoed{7}), statsRef.CastEffect(connClosed{}))
+	want := actor.Do(statsRef.CastEffect(echoed{7}), statsRef.CastEffect(connClosed{}))
 	if effs = p.Terminate(c, nil); !reflect.DeepEqual(effs, want) {
 		t.Errorf("on terminate: %#v", effs)
 	}

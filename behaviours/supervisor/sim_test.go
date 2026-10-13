@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/gensim"
 	"github.com/shun159/molecule/proc"
@@ -18,7 +18,7 @@ type crasher struct{ genserver.Default[int] }
 
 type crashNow struct{}
 
-func (crasher) HandleCast(n int, _ crashNow) (int, []molecule.Effect) { panic("crash") }
+func (crasher) HandleCast(n int, _ crashNow) (int, []actor.Effect) { panic("crash") }
 
 func worker(id string, r Restart) ChildSpec {
 	return ChildSpec{ID: id, Start: genserver.Child(crasher{}), Restart: r}

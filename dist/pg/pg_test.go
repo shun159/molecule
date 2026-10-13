@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/shun159/molecule"
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/dist/pg"
 	"github.com/shun159/molecule/gensim"
@@ -16,20 +16,20 @@ import (
 // inbox is a server logging the plain messages it gets.
 type inbox struct{}
 
-func (inbox) Init(proc.PID) ([]any, []molecule.Effect, error) { return nil, nil, nil }
-func (inbox) HandleCall(l []any, _ struct{}, _ genserver.From[struct{}]) ([]any, []molecule.Effect) {
+func (inbox) Init(proc.PID) ([]any, []actor.Effect, error) { return nil, nil, nil }
+func (inbox) HandleCall(l []any, _ struct{}, _ genserver.From[struct{}]) ([]any, []actor.Effect) {
 	return l, nil
 }
 
 // HandleCast runs the effects it is cast, as a behaviour would return.
-func (inbox) HandleCast(l []any, effs []molecule.Effect) ([]any, []molecule.Effect) { return l, effs }
+func (inbox) HandleCast(l []any, effs []actor.Effect) ([]any, []actor.Effect) { return l, effs }
 
-func (inbox) HandleInfo(l []any, msg any) ([]any, []molecule.Effect) {
+func (inbox) HandleInfo(l []any, msg any) ([]any, []actor.Effect) {
 	return append(slices.Clip(l), msg), nil
 }
 
 // sim is a simulation with a scope "pg" and three inboxes.
-func sim(t *testing.T, seed uint64) (*gensim.Sim, molecule.Local, []proc.PID) {
+func sim(t *testing.T, seed uint64) (*gensim.Sim, actor.Local, []proc.PID) {
 	t.Helper()
 	s := gensim.New(seed)
 	if _, err := gensim.Spawn(s, genserver.Gen(pg.Scope{}), nil, gensim.Named("pg")); err != nil {
@@ -43,10 +43,10 @@ func sim(t *testing.T, seed uint64) (*gensim.Sim, molecule.Local, []proc.PID) {
 		}
 		pids = append(pids, pid)
 	}
-	return s, molecule.Local("pg"), pids
+	return s, actor.Local("pg"), pids
 }
 
-func call[T any](t *testing.T, s *gensim.Sim, scope molecule.Dest, req any) T {
+func call[T any](t *testing.T, s *gensim.Sim, scope actor.Dest, req any) T {
 	t.Helper()
 	v, err := s.Call(scope, req)
 	if err != nil {
@@ -58,17 +58,17 @@ func call[T any](t *testing.T, s *gensim.Sim, scope molecule.Dest, req any) T {
 
 // The requests are those the client functions send; casting effects to an
 // inbox has it run them, as a behaviour returning them.
-func run(s *gensim.Sim, pid proc.PID, effs ...molecule.Effect) {
+func run(s *gensim.Sim, pid proc.PID, effs ...actor.Effect) {
 	s.Cast(pid, effs)
 	s.RunUntilIdle()
 }
 
-func members(t *testing.T, s *gensim.Sim, scope molecule.Dest, group any) []proc.PID {
+func members(t *testing.T, s *gensim.Sim, scope actor.Dest, group any) []proc.PID {
 	t.Helper()
 	return call[[]proc.PID](t, s, scope, pg.MembersRequest{Group: group})
 }
 
-func which(t *testing.T, s *gensim.Sim, scope molecule.Dest) []any {
+func which(t *testing.T, s *gensim.Sim, scope actor.Dest) []any {
 	t.Helper()
 	return call[[]any](t, s, scope, pg.WhichRequest{})
 }
@@ -127,23 +127,23 @@ func TestSendEffect(t *testing.T) {
 func TestRealProcesses(t *testing.T) {
 	n := proc.NewNode("")
 	ctx := context.Background()
-	if _, err := pg.Start(ctx, n, molecule.Local("pg")); err != nil {
+	if _, err := pg.Start(ctx, n, actor.Local("pg")); err != nil {
 		t.Fatal(err)
 	}
 	a := n.Spawn(func(s *proc.Self) error { _, err := s.Receive(ctx); return err })
 	b := n.Spawn(func(s *proc.Self) error { _, err := s.Receive(ctx); return err })
-	if err := pg.Join(ctx, n, molecule.Local("pg"), "g", a, b); err != nil {
+	if err := pg.Join(ctx, n, actor.Local("pg"), "g", a, b); err != nil {
 		t.Fatal(err)
 	}
-	got, err := pg.Members(ctx, n, molecule.Local("pg"), "g")
+	got, err := pg.Members(ctx, n, actor.Local("pg"), "g")
 	if err != nil || !reflect.DeepEqual(got, []proc.PID{a, b}) {
 		t.Errorf("Members = %v, %v", got, err)
 	}
-	if err := pg.Leave(ctx, n, molecule.Local("pg"), "g", a); err != nil {
+	if err := pg.Leave(ctx, n, actor.Local("pg"), "g", a); err != nil {
 		t.Fatal(err)
 	}
-	groups, err := pg.Which(ctx, n, molecule.Local("pg"))
-	got, _ = pg.Members(ctx, n, molecule.Local("pg"), "g")
+	groups, err := pg.Which(ctx, n, actor.Local("pg"))
+	got, _ = pg.Members(ctx, n, actor.Local("pg"), "g")
 	if err != nil || !reflect.DeepEqual(groups, []any{"g"}) || !reflect.DeepEqual(got, []proc.PID{b}) {
 		t.Errorf("after Leave: %v %v, %v", groups, got, err)
 	}
