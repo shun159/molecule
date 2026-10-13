@@ -31,6 +31,7 @@ type Node struct {
 	names map[string]PID // guarded by regMu, as is process.name
 
 	logger *slog.Logger // nil: slog.Default()
+	events func(any)    // see WithEvents
 }
 
 // NewNode creates a node. Each node gets a fresh, non-zero creation so

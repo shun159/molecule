@@ -15,6 +15,14 @@ import (
 // its process with the behaviour, say.
 func (s *Self) SetLabel(label string) { s.p.label.Store(&label) }
 
+// labelString returns the label of p, if any.
+func (p *process) labelString() string {
+	if l := p.label.Load(); l != nil {
+		return *l
+	}
+	return ""
+}
+
 // ProcessInfo is what Info tells of a process.
 type ProcessInfo struct {
 	PID   PID
@@ -46,9 +54,7 @@ func (p *process) info() ProcessInfo {
 		MessageQueueLen: p.mbox.len(),
 		TrapExit:        p.trapExit.Load(),
 	}
-	if l := p.label.Load(); l != nil {
-		info.Label = *l
-	}
+	info.Label = p.labelString()
 	p.node.regMu.Lock()
 	info.Name = p.name
 	p.node.regMu.Unlock()

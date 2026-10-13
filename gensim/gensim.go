@@ -45,6 +45,7 @@ type Sim struct {
 	trace []Event
 
 	noPurity bool
+	events   func(any) // see WithEvents
 
 	// CallTimeout bounds the virtual time a Call waits.
 	CallTimeout time.Duration
@@ -121,6 +122,12 @@ type Option func(*Sim)
 // WithLogger sends the reports of the simulated behaviours to l. They are
 // discarded otherwise.
 func WithLogger(l *slog.Logger) Option { return func(s *Sim) { s.logger = l } }
+
+// WithEvents makes the simulation hand h the events of its processes, as
+// proc.WithEvents does those of a node: proc.Crashed, proc.Overflowed, and
+// those its behaviours emit. h is called as the event happens, in the
+// order of the run.
+func WithEvents(h func(event any)) Option { return func(s *Sim) { s.events = h } }
 
 // New returns a simulation whose order of events is decided by seed: the
 // same seed, the same behaviours and the same calls make the same run.
@@ -265,13 +272,13 @@ func (s *Sim) start(node *node, parent *process, what string, newRunner func(gen
 		if errors.Is(err, actor.ErrIgnore) {
 			reason = proc.Normal
 		}
-		s.exit(p, reason)
+		s.end(p, reason)
 		return proc.PID{}, err
 	}
 	done, reason := runner.Flush()
 	p.busy = false
 	if done {
-		s.exit(p, reason)
+		s.end(p, reason)
 	}
 	// A start held back runs on, until it is told over, or the process
 	// dies.
@@ -507,7 +514,23 @@ func (s *Sim) deliver(l *link) {
 func (s *Sim) enqueue(p *process, msg any) {
 	p.mailbox = append(p.mailbox, msg)
 	if p.maxMessages > 0 && len(p.mailbox) > p.maxMessages {
+		s.emit(proc.Overflowed{PID: p.pid, Name: p.name, Label: p.runner.Label(), Len: len(p.mailbox)})
 		s.exit(p, proc.MailboxFull)
+	}
+}
+
+// end makes p dead with reason, its behaviour ended: crashed, if reason
+// is abnormal, as a process whose function failed.
+func (s *Sim) end(p *process, reason error) {
+	if p.alive && proc.IsAbnormal(reason) {
+		s.emit(proc.Crashed{PID: p.pid, Name: p.name, Label: p.runner.Label(), Reason: reason})
+	}
+	s.exit(p, reason)
+}
+
+func (s *Sim) emit(event any) {
+	if s.events != nil {
+		s.events(event)
 	}
 }
 
@@ -530,7 +553,7 @@ func (s *Sim) handle(p *process) {
 		panic(&ImpureError{PID: p.pid, Msg: msg, What: "changed the state it was given, handling a message"})
 	}
 	if done {
-		s.exit(p, reason)
+		s.end(p, reason)
 	}
 }
 

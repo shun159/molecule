@@ -125,6 +125,14 @@
 // call, and the stack of a panic. A process killed or terminated by an exit
 // signal is not reported: no code of its own failed.
 //
+// # Events
+//
+// A node given a handler, see [WithEvents], hands it events as they happen,
+// for a program to count, as metrics: [Crashed] for a crash report,
+// [Overflowed] for a process killed for its mailbox, and those behaviours
+// and calls emit through [Node.Emit]. The events are plain structs;
+// exporting them, to Prometheus say, is the program's.
+//
 // # Looking in
 //
 // [Node.Processes] lists the live processes of a node, and [Node.Info]

@@ -181,10 +181,12 @@ func (p *process) overflow() {
 	if name != "" {
 		attrs = append(attrs, slog.String("registered_name", name))
 	}
-	if l := p.label.Load(); l != nil {
-		attrs = append(attrs, slog.String("label", *l))
+	label := p.labelString()
+	if label != "" {
+		attrs = append(attrs, slog.String("label", label))
 	}
 	p.node.Logger().Error("mailbox full", attrs...)
+	p.node.Emit(Overflowed{PID: p.pid, Name: name, Label: label, Len: n})
 }
 
 // signalExit handles an exit signal sent to p by from. Signals that kill p

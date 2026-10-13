@@ -86,6 +86,9 @@ type Runner interface {
 	Abort()
 	// State returns the state of the behaviour.
 	State() any
+	// Label tells what the behaviour is, as the label of its process,
+	// see Labeler.
+	Label() string
 }
 
 // NewRunner returns a runner of b acting on env, as started with opts.
