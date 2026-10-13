@@ -48,6 +48,7 @@
 // net_ticktime: an idle connection sends ticks to show it lives.
 // With Config.MaxQueue, one with too many frames waiting is dropped as
 // well, for a node that cannot keep up not to take the memory of this one.
+// With Config.MaxFrame, one receiving a frame too large is dropped too.
 //
 // # What there is not yet
 //

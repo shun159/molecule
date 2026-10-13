@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -295,6 +296,34 @@ func clusterWith(t *testing.T, cfgs map[string]dist.Config) ([]*proc.Node, []*di
 		dists = append(dists, d)
 	}
 	return nodes, dists
+}
+
+// TestMaxFrame sends b a frame larger than its MaxFrame: b drops the
+// connection, and the monitor through it fails.
+func TestMaxFrame(t *testing.T) {
+	nodes, _ := clusterWith(t, map[string]dist.Config{"b@test": {MaxFrame: 1 << 10}})
+	a, b := nodes[0], nodes[1]
+	pb, cb := inbox(b)
+	a.Send(pb, "small")
+	if m := next(t, cb); m != "small" {
+		t.Fatalf("got %#v", m)
+	}
+	ctx, stop := a.Watch(context.Background(), pb)
+	defer stop()
+	a.Send(pb, strings.Repeat("x", 2<<10))
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("connection kept")
+	}
+	if err := context.Cause(ctx); err != proc.NoConnection {
+		t.Errorf("cause %v", err)
+	}
+	select {
+	case m := <-cb:
+		t.Errorf("got %#v", m)
+	default:
+	}
 }
 
 func TestUnknownNode(t *testing.T) {

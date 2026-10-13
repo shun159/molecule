@@ -45,6 +45,10 @@ type Config struct {
 	// it fail with proc.NoConnection, and the next send connects anew.
 	// Zero means no bound.
 	MaxQueue int
+	// MaxFrame, if positive, bounds the size in bytes of a frame received
+	// from a node. A larger one fails the connection, as one lost. Zero
+	// means no bound but that of its 4-byte length.
+	MaxFrame int
 }
 
 // DefaultTickTime is Config.TickTime when zero.
