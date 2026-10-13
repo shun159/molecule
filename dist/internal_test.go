@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -213,5 +214,71 @@ func TestPeerKilled(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("not connected again")
+	}
+}
+
+// stuck listens for a node b@test that does not read: past the handshake,
+// if shake, or from the start.
+func stuck(t *testing.T, shake bool) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done); ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if shake {
+			b := hello{name: "b@test", creation: 1, challenge: newChallenge()}
+			if _, err := acceptHandshake(conn, b, "c", func(peerInfo) string { return "" }); err != nil {
+				return
+			}
+		}
+		<-done
+	}()
+	return ln.Addr().String()
+}
+
+// TestMaxQueue sends to a node past MaxQueue, while connecting and behind
+// a node that does not read: the connection is dropped, the monitor
+// through it fails.
+func TestMaxQueue(t *testing.T) {
+	big := strings.Repeat("x", 1<<20)
+	for _, shake := range []bool{false, true} {
+		addr := stuck(t, shake)
+		n := proc.NewNode("a@test")
+		d, err := Start(n, Config{
+			Cookie:   "c",
+			Resolve:  func(string) (string, bool) { return addr, true },
+			MaxQueue: 4,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer d.Stop()
+		if shake {
+			if err := d.Connect(context.Background(), "b@test"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		pb := proc.NewNode("b@test").NewPID()
+		ctx, stop := n.Watch(context.Background(), pb)
+		defer stop()
+		for range 200 {
+			n.Send(pb, big)
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(5 * time.Second):
+			t.Fatalf("connected %v: connection kept", shake)
+		}
+		if err := context.Cause(ctx); err != proc.NoConnection {
+			t.Errorf("connected %v: cause %v", shake, err)
+		}
 	}
 }

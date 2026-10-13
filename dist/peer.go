@@ -2,6 +2,7 @@ package dist
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -29,6 +30,7 @@ type (
 // through it fail.
 func (d *Dist) runPeer(self *proc.Self, p *peer) error {
 	self.SetLabel("dist connection " + p.node)
+	self.SetMaxMessages(d.cfg.MaxQueue)
 	if p.dialing {
 		go d.dial(p)
 	}
@@ -45,6 +47,9 @@ func (d *Dist) runPeer(self *proc.Self, p *peer) error {
 		switch m := msg.(type) {
 		case frame:
 			queue = append(queue, m)
+			if d.cfg.MaxQueue > 0 && len(queue) > d.cfg.MaxQueue {
+				return d.lost(p, proc.MailboxFull)
+			}
 		case waitUp:
 			waiters = append(waiters, m.ref)
 		case wake:
@@ -134,6 +139,9 @@ func (d *Dist) down(p *peer) error {
 // links and monitors through it, as a connection closing does. Its
 // socket, if any, closes with it, its owner.
 func (d *Dist) lost(p *peer, err error) error {
+	if errors.Is(err, proc.MailboxFull) {
+		d.n.Logger().Warn("dist: frames past MaxQueue, connection dropped", "node", p.node)
+	}
 	d.mu.Lock()
 	d.forget(p)
 	d.mu.Unlock()
