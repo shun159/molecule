@@ -40,7 +40,7 @@ func (d *Dist) runPeer(self *proc.Self, p *peer) error {
 	for conn == nil {
 		msg, err := self.Receive(context.Background())
 		if err != nil {
-			return err
+			return d.lost(p, err)
 		}
 		switch m := msg.(type) {
 		case frame:
@@ -86,7 +86,7 @@ func (d *Dist) runPeer(self *proc.Self, p *peer) error {
 	for {
 		msg, err := self.Receive(context.Background())
 		if err != nil {
-			return err
+			return d.lost(p, err)
 		}
 		switch m := msg.(type) {
 		case frame:
@@ -128,6 +128,17 @@ func (d *Dist) forget(p *peer) {
 func (d *Dist) down(p *peer) error {
 	d.remote.NodeDown(p.node)
 	return nil
+}
+
+// lost forgets p, its process ended by an exit signal, and fails the
+// links and monitors through it, as a connection closing does. Its
+// socket, if any, closes with it, its owner.
+func (d *Dist) lost(p *peer, err error) error {
+	d.mu.Lock()
+	d.forget(p)
+	d.mu.Unlock()
+	d.down(p)
+	return err
 }
 
 // connection is a connection up.

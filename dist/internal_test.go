@@ -141,3 +141,77 @@ func TestIdleConnection(t *testing.T) {
 		t.Errorf("connected to %v", got)
 	}
 }
+
+// TestPeerKilled kills the process of a connection: the links through it
+// fail, as when the connection is lost, and the next send connects anew.
+func TestPeerKilled(t *testing.T) {
+	a, b := proc.NewNode("a@test"), proc.NewNode("b@test")
+	db, err := Start(b, Config{Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Stop()
+	addr := db.Addr().String()
+	da, err := Start(a, Config{Resolve: func(string) (string, bool) { return addr, true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer da.Stop()
+
+	got := make(chan any, 8)
+	ready := make(chan struct{})
+	pb := b.Spawn(func(s *proc.Self) error {
+		s.TrapExit(true)
+		close(ready)
+		for {
+			msg, err := s.Receive(context.Background())
+			if err != nil {
+				return err
+			}
+			got <- msg
+		}
+	})
+	<-ready
+	gotA := make(chan any, 8)
+	a.Spawn(func(s *proc.Self) error {
+		s.TrapExit(true)
+		s.Link(pb)
+		s.Send(pb, "linked")
+		msg, err := s.Receive(context.Background())
+		gotA <- msg
+		return err
+	})
+	if m := <-got; m != "linked" {
+		t.Fatalf("got %#v", m)
+	}
+
+	da.mu.Lock()
+	peer := da.peers["b@test"].pid
+	da.mu.Unlock()
+	a.Spawn(func(s *proc.Self) error { s.Exit(peer, proc.Kill); return nil })
+	select {
+	case m := <-got:
+		if e, ok := m.(proc.ExitMsg); !ok || e.Reason != proc.NoConnection {
+			t.Errorf("got %#v", m)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the link did not fail at b")
+	}
+	select {
+	case m := <-gotA:
+		if e, ok := m.(proc.ExitMsg); !ok || e.Reason != proc.NoConnection {
+			t.Errorf("at a: got %#v", m)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the link did not fail at a")
+	}
+	a.Send(pb, "again")
+	select {
+	case m := <-got:
+		if m != "again" {
+			t.Errorf("got %#v", m)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("not connected again")
+	}
+}
