@@ -45,8 +45,11 @@ type runtime[S any] struct {
 	tags     map[proc.Ref]any // ref -> tag
 	timers   map[any]timer    // key -> timer
 	timerGen uint64
-	asyncs   map[any]async // key -> async running
+	asyncs   map[any]async // key -> async running, or waiting
 	asyncGen uint64
+	maxAsync int      // the most running at once, if > 0
+	running  int      // asyncs running
+	waiting  []queued // asyncs waiting for one running to end, in order
 	requests map[proc.Ref]request
 
 	stopping   bool
@@ -67,9 +70,17 @@ type timer struct {
 	msg    any
 }
 
+// async is an Async started: running, or, with no cancel, waiting.
 type async struct {
 	cancel func()
 	gen    uint64
+}
+
+// queued is an Async waiting to run; it runs only if still in asyncs
+// under its gen, not cancelled or replaced meanwhile.
+type queued struct {
+	e   molecule.Async
+	gen uint64
 }
 
 // request is a SendRequest waiting for its answer.
@@ -80,10 +91,11 @@ type request struct {
 	cancel  func() // of its timeout, if any
 }
 
-func newRuntime[S any](b Behaviour[S], env Env) *runtime[S] {
+func newRuntime[S any](b Behaviour[S], env Env, o molecule.StartOptions) *runtime[S] {
 	return &runtime[S]{
 		env:      env,
 		b:        b,
+		maxAsync: o.MaxAsync,
 		monitors: make(map[any]proc.Ref),
 		tags:     make(map[proc.Ref]any),
 		timers:   make(map[any]timer),
@@ -257,6 +269,8 @@ func (r *runtime[S]) translate(msg any) (Msg, bool) {
 			return nil, false // cancelled, or replaced
 		}
 		delete(r.asyncs, m.key)
+		r.running--
+		r.runWaiting()
 		return InfoMsg{Msg: molecule.AsyncResult{Key: m.key, Value: m.value, Err: m.err}}, true
 	case answer:
 		req, ok := r.requests[m.ref]
@@ -317,6 +331,7 @@ func (r *runtime[S]) Abort() {
 	for key := range r.asyncs {
 		r.cancelAsync(key)
 	}
+	r.waiting = nil
 	for ref, req := range r.requests {
 		r.endRequest(ref, req)
 	}
@@ -408,6 +423,7 @@ func (r *runtime[S]) apply(effs []molecule.Effect) {
 			r.startAsync(e)
 		case molecule.CancelAsync:
 			r.cancelAsync(e.Key)
+			r.runWaiting()
 		case molecule.Link:
 			r.env.Link(e.PID)
 		case molecule.Unlink:
@@ -481,21 +497,56 @@ func (r *runtime[S]) cancelTimer(key any) {
 	}
 }
 
+// startAsync runs e, or, with maxAsync running, has it wait its turn
+// after those waiting already.
 func (r *runtime[S]) startAsync(e molecule.Async) {
 	r.cancelAsync(e.Key)
+	r.runWaiting()
 	r.asyncGen++
-	key, gen := e.Key, r.asyncGen
+	if r.maxAsync > 0 && r.running >= r.maxAsync {
+		r.asyncs[e.Key] = async{gen: r.asyncGen}
+		r.waiting = append(r.waiting, queued{e, r.asyncGen})
+		return
+	}
+	r.runAsync(e, r.asyncGen)
+}
+
+func (r *runtime[S]) runAsync(e molecule.Async, gen uint64) {
+	key := e.Key
 	cancel := r.env.Async(e.Run, func(v any, err error) any {
 		return asyncDone{key: key, gen: gen, value: v, err: err}
 	})
-	r.asyncs[e.Key] = async{cancel: cancel, gen: gen}
+	r.asyncs[key] = async{cancel: cancel, gen: gen}
+	r.running++
 }
 
-func (r *runtime[S]) cancelAsync(key any) {
-	if a, ok := r.asyncs[key]; ok {
-		a.cancel()
-		delete(r.asyncs, key)
+// runWaiting runs the asyncs waiting, in order, while under maxAsync.
+func (r *runtime[S]) runWaiting() {
+	for len(r.waiting) > 0 && (r.maxAsync <= 0 || r.running < r.maxAsync) {
+		q := r.waiting[0]
+		r.waiting[0] = queued{}
+		r.waiting = r.waiting[1:]
+		if len(r.waiting) == 0 {
+			r.waiting = nil
+		}
+		if a, ok := r.asyncs[q.e.Key]; ok && a.gen == q.gen {
+			r.runAsync(q.e, q.gen)
+		}
 	}
+}
+
+// cancelAsync cancels the async under key, running or waiting. A slot it
+// frees is for the caller to fill, with runWaiting.
+func (r *runtime[S]) cancelAsync(key any) {
+	a, ok := r.asyncs[key]
+	if !ok {
+		return
+	}
+	if a.cancel != nil {
+		a.cancel()
+		r.running--
+	}
+	delete(r.asyncs, key)
 }
 
 func (r *runtime[S]) sendRequest(e molecule.SendRequest) {
