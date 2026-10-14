@@ -143,7 +143,9 @@ type Exit struct {
 // MonitorNodes makes the process monitor the connections of its node to
 // others, or stop, like net_kernel:monitor_nodes: a proc.NodeUp arrives
 // at once for each node connected, then a proc.NodeUp and a
-// proc.NodeDown each time a connection is made and lost.
+// proc.NodeDown each time a connection is made and lost, and a
+// proc.NodeSilent and a proc.NodeHeard each time a node connected falls
+// silent and is heard again; see proc.Self.MonitorNodes.
 type MonitorNodes struct {
 	On bool
 }

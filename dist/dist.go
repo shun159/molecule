@@ -38,6 +38,13 @@ type Config struct {
 	// four times as often. A send blocked as long fails it too. Zero
 	// means DefaultTickTime.
 	TickTime time.Duration
+	// Silent is how long a connection may stay silent before its node is
+	// told silent: the processes monitoring nodes get a proc.NodeSilent,
+	// and a proc.NodeHeard once it is heard from again, any byte of it.
+	// The connection stays, until TickTime. A connection idle sends a
+	// tick four times as often. Zero means DefaultSilent; one past
+	// TickTime, never.
+	Silent time.Duration
 	// MaxQueue, if positive, bounds the frames waiting at the connection
 	// to a node: to be sent, while it connects or sends slower than the
 	// node is sent to, or received, not yet handed on. Past it, the
@@ -53,6 +60,9 @@ type Config struct {
 
 // DefaultTickTime is Config.TickTime when zero.
 const DefaultTickTime = 60 * time.Second
+
+// DefaultSilent is Config.Silent when zero.
+const DefaultSilent = time.Second
 
 // Dist is the distribution of a node, the counterpart of net_kernel: it
 // connects the node to the others it sends to, and accepts their
@@ -93,6 +103,9 @@ func Start(n *proc.Node, cfg Config) (*Dist, error) {
 	}
 	if cfg.TickTime <= 0 {
 		cfg.TickTime = DefaultTickTime
+	}
+	if cfg.Silent <= 0 {
+		cfg.Silent = DefaultSilent
 	}
 	d := &Dist{n: n, cfg: cfg, peers: make(map[string]*peer)}
 	if cfg.Listen != "" {

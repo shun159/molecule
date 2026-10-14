@@ -71,7 +71,8 @@
 //	Unlink       unlink from a process
 //	TrapExit     trap exit signals, or stop trapping them
 //	MonitorNodes have a proc.NodeUp and a proc.NodeDown arrive, as nodes
-//	             connect and go
+//	             connect and go, and a proc.NodeSilent and a
+//	             proc.NodeHeard, as they fall silent and are heard
 //
 // Effects run in the order returned. An operation whose outcome the
 // behaviour needs is named by a tag or a key the behaviour chooses, and its

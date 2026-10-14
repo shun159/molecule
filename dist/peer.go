@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/shun159/molecule/net/gentcp"
@@ -72,14 +73,16 @@ func (d *Dist) runPeer(self *proc.Self, p *peer) error {
 		}
 	}
 
+	conn, reads := counted(conn)
 	sock := gentcp.Start(d.n, conn, self.PID(), gentcp.Options{
 		Packet:      gentcp.Packet4,
 		PacketSize:  d.cfg.MaxFrame,
 		Active:      gentcp.Always,
 		SendTimeout: d.cfg.TickTime,
 	})
-	c := &connection{d: d, self: self, p: p, sock: sock, enc: d.cfg.Codec.NewEncoder(), dec: d.cfg.Codec.NewDecoder()}
-	go ticker(d.n, self.PID(), self.Done(), d.cfg.TickTime/ticksPerTime)
+	c := &connection{d: d, self: self, p: p, sock: sock, enc: d.cfg.Codec.NewEncoder(), dec: d.cfg.Codec.NewDecoder(),
+		reads: reads, heard: time.Now()}
+	go ticker(d.n, self.PID(), self.Done(), min(d.cfg.TickTime, d.cfg.Silent)/ticksPerTime)
 	d.remote.NodeUp(p.node)
 	for _, ref := range waiters {
 		d.n.SendAlias(ref, nil)
@@ -100,7 +103,7 @@ func (d *Dist) runPeer(self *proc.Self, p *peer) error {
 				return c.close()
 			}
 		case gentcp.DataMsg:
-			c.heard = true
+			c.hear()
 			c.receive(m.Bytes)
 		case tick:
 			if !c.tick() {
@@ -164,11 +167,15 @@ type connection struct {
 	dec  Decoder
 	buf  []byte
 
-	said, heard bool // since the last tick
-	silent      int  // ticks without hearing from the node
+	reads  *atomic.Uint64 // the reads of the socket that got bytes
+	read   uint64         // as of the last tick
+	heard  time.Time      // when the node was heard from last
+	silent bool           // told silent
+	said   bool           // since the last tick
 }
 
-// A connection checks it lives ticksPerTime times per TickTime.
+// A connection checks it lives ticksPerTime times per TickTime, or per
+// Silent if shorter.
 const ticksPerTime = 4
 
 func ticker(n *proc.Node, pid proc.PID, done <-chan struct{}, every time.Duration) {
@@ -184,15 +191,22 @@ func ticker(n *proc.Node, pid proc.PID, done <-chan struct{}, every time.Duratio
 	}
 }
 
-// tick sends a tick if nothing was sent since the last, and reports
-// whether the node was heard from within TickTime.
+// tick sends a tick if nothing was sent since the last, tells the node
+// silent if not heard from within Silent, and reports whether it was
+// within TickTime. Any byte read is heard, of a frame whole or not.
 func (c *connection) tick() bool {
-	if c.heard {
-		c.silent = 0
-	} else if c.silent++; c.silent >= ticksPerTime {
+	if read := c.reads.Load(); read != c.read {
+		c.read = read
+		c.hear()
+	}
+	silence := time.Since(c.heard)
+	if silence >= c.d.cfg.TickTime {
 		return false
 	}
-	c.heard = false
+	if silence >= c.d.cfg.Silent && !c.silent {
+		c.silent = true
+		c.d.remote.NodeSilent(c.p.node)
+	}
 	if !c.said {
 		c.buf = appendFrame(c.buf[:0], frame{op: opTick})
 		if c.sock.Send(context.Background(), c.self, c.buf) != nil {
@@ -201,6 +215,16 @@ func (c *connection) tick() bool {
 	}
 	c.said = false
 	return true
+}
+
+// hear notes the node heard from now, and tells it heard if it was told
+// silent.
+func (c *connection) hear() {
+	c.heard = time.Now()
+	if c.silent {
+		c.silent = false
+		c.d.remote.NodeHeard(c.p.node)
+	}
 }
 
 // send sends f, and reports whether the connection is still up. A message
