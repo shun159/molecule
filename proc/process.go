@@ -123,12 +123,14 @@ func (p *process) die(reason error) {
 	if p.cancel != nil {
 		p.cancel(reason)
 	}
+	// Out of the table before done is closed, for whoever waits on it to
+	// find it gone.
+	p.node.procs.del(p.pid.id)
 	close(p.done) // last: once it is closed, the context is cancelled too
 	links, monitors, monitoring := p.links, p.monitors, p.monitoring
 	p.links, p.monitors, p.monitoring = nil, nil, nil
 	p.mu.Unlock()
 
-	p.node.procs.del(p.pid.id)
 	// The name goes before anyone is told, so a supervisor reacting to the
 	// death can register a replacement under the same name at once.
 	p.node.unregisterDead(p)
