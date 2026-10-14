@@ -19,9 +19,10 @@ func WithLogger(l *slog.Logger) Option {
 // WithCreation gives the node a fixed creation rather than a random one,
 // for runs that must be reproducible, such as simulations. A real node
 // keeps the random one, so that PIDs of a previous incarnation of the node
-// never match those of a new one.
+// never match those of a new one. A creation is never 0, which is taken
+// for 1.
 func WithCreation(c uint32) Option {
-	return func(n *Node) { n.creation = c | 1 }
+	return func(n *Node) { n.creation = max(c, 1) }
 }
 
 // Logger returns the logger for reports about the node's processes:
