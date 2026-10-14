@@ -31,6 +31,10 @@ type Sim struct {
 	nodeWatchers map[proc.PID]bool  // the processes monitoring nodes
 	def          *node              // where processes run unless told otherwise
 	cuts         map[[2]string]bool // pairs of nodes that cannot reach each other
+	held         map[[2]string]bool // pairs of nodes holding what they send each other
+	paused       map[string]bool
+	told         map[[2]string]bool      // x, y: x told y silent
+	silences     map[[2]string]*simTimer // x, y: to tell x y silent
 
 	procs []*process // in creation order
 	byPID map[proc.PID]*process
@@ -55,6 +59,9 @@ type Sim struct {
 	// while connected; a protocol that must bear it, as Raft, is tested
 	// with it.
 	Loss float64
+	// Silent is how long a node goes unheard, paused or silenced, before
+	// the others are told it silent, as dist.Config.Silent.
+	Silent time.Duration
 }
 
 // DefaultNode is the node of the processes spawned without On.
@@ -159,10 +166,15 @@ func New(seed uint64, opts ...Option) *Sim {
 		nodes:        make(map[string]*node),
 		nodeWatchers: make(map[proc.PID]bool),
 		cuts:         make(map[[2]string]bool),
+		held:         make(map[[2]string]bool),
+		paused:       make(map[string]bool),
+		told:         make(map[[2]string]bool),
+		silences:     make(map[[2]string]*simTimer),
 		byPID:        make(map[proc.PID]*process),
 		byLink:       make(map[[2]proc.PID]*link),
 		aliases:      make(map[proc.Ref]*alias),
 		CallTimeout:  DefaultCallTimeout,
+		Silent:       DefaultSilent,
 	}
 	s.def = s.nodeNamed(DefaultNode)
 	for _, opt := range opts {
@@ -183,6 +195,7 @@ func (s *Sim) nodeNamed(name string) *node {
 				s.nodeEvent(name, other, true)
 			}
 		}
+		s.listen()
 	}
 	return n
 }
@@ -401,13 +414,13 @@ func State[S any](s *Sim, pid proc.PID) (S, bool) {
 func (s *Sim) Step() bool {
 	var choices []func()
 	for _, l := range s.links {
-		if len(l.queue) > 0 {
+		if len(l.queue) > 0 && s.flows(l) {
 			choices = append(choices, func() { s.deliver(l) })
 		}
 	}
 	for _, p := range s.procs {
 		// A process busy starting another handles nothing meanwhile.
-		if p.alive && !p.busy && len(p.mailbox) > 0 {
+		if p.alive && !p.busy && len(p.mailbox) > 0 && !s.paused[p.node.name] {
 			choices = append(choices, func() { s.handle(p) })
 		}
 	}
@@ -718,6 +731,10 @@ func (s *Sim) fireTimer(limit time.Time) bool {
 	if t.at.After(s.now) {
 		s.now = t.at
 	}
+	if t.fn != nil {
+		t.fn()
+		return true
+	}
 	if p := s.byPID[t.pid]; p != nil && p.alive {
 		s.record(Event{Kind: Fired, To: t.pid, Msg: t.msg})
 		s.enqueue(p, t.msg)
@@ -739,13 +756,23 @@ func sortedPIDs(set map[proc.PID]bool) []proc.PID {
 	return pids
 }
 
-// simTimer is a message to deliver at a virtual time.
+// simTimer is a message to deliver at a virtual time, or a function of
+// the simulation to run then.
 type simTimer struct {
 	at        time.Time
 	seq       uint64
 	pid       proc.PID
 	msg       any
+	fn        func()
 	cancelled bool
+}
+
+// after runs fn after d of virtual time.
+func (s *Sim) after(d time.Duration, fn func()) *simTimer {
+	s.seq++
+	t := &simTimer{at: s.now.Add(d), seq: s.seq, fn: fn}
+	heap.Push(&s.timers, t)
+	return t
 }
 
 type timerHeap []*simTimer
@@ -922,6 +949,11 @@ func (e *env) MonitorNodes(on bool) {
 	for _, other := range e.s.nodeNames() {
 		if other != e.p.node.name && e.s.connected(e.p.node.name, other) {
 			e.s.deliverLocal(e.p, proc.NodeUp{Node: other})
+		}
+	}
+	for _, other := range e.s.nodeNames() {
+		if e.s.told[[2]string{e.p.node.name, other}] {
+			e.s.deliverLocal(e.p, proc.NodeSilent{Node: other})
 		}
 	}
 }

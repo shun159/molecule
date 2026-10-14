@@ -50,6 +50,8 @@
 // chooses, the order of all else decided by the seed:
 //
 //	Partition  cuts groups of nodes from each other; Heal undoes it
+//	Silence    holds what groups of nodes send each other; Heal delivers it
+//	Pause      stops a node a while, its timers firing; Resume starts it
 //	Crash      stops a node: its processes vanish, without Terminate
 //	Restart    starts it again, a new incarnation, for the test to spawn on
 //	Loss       loses messages between nodes, at random, beyond Erlang
@@ -57,6 +59,14 @@
 // When two nodes lose each other, what is in flight between them is lost,
 // and links, monitors and pending requests between them fail with
 // proc.NoConnection, on both sides.
+//
+// A node paused, or silenced, stays connected, as in dist until TickTime:
+// what is sent to it is held, not lost, and arrives once it is heard
+// again. Not heard for Silent, and a quarter more at most, drawn for
+// each node, it is told silent to the others, a proc.NodeSilent, then
+// heard, a proc.NodeHeard. A Raft leader paused, its timers frozen, wakes
+// with reads to answer and its followers having elected another: what
+// dist does, and Partition cannot show.
 //
 // # Fuzzing
 //
