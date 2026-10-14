@@ -35,6 +35,24 @@
 // entries in memory may hold writes the log has not. The program closes
 // it and opens it again, as a supervisor would restart a process.
 //
+// # Supervision
+//
+// [Child] makes a table a child of a supervision tree, which opens it as
+// it starts and closes it as it stops. The processes after it find it by
+// its directory, with [Opened]:
+//
+//	Strategy: supervisor.OneForAll,
+//	Children: []supervisor.ChildSpec{
+//		{ID: "table", Start: kvs.Child(dir, kvs.Options[string, Lease]{})},
+//		{ID: "server", Start: genserver.Child(Server{Dir: dir})},
+//	},
+//	...
+//	leases, err := kvs.Opened[string, Lease](s.Dir)
+//
+// Under OneForAll, the table and its users restart together: a user that
+// stops on a write failed has the table opened again, and a table opened
+// again has its users find it anew.
+//
 // # Concurrency
 //
 // The methods of a table may be called from any goroutine, by any number

@@ -18,11 +18,11 @@ const storeName = actor.Local("kvring_store")
 type Table = kvs.Table[string, string]
 
 // Store is the gen_server of the part of the table on one node, the keys
-// the ring gives the node.
+// the ring gives the node, the table in Dir.
 type Store struct {
 	genserver.Default[struct{}]
-	Node  string
-	Table *Table
+	Node string
+	Dir  string
 }
 
 // request is a getReq or a putReq.
@@ -62,11 +62,15 @@ func call(ctx context.Context, caller actor.Caller, ring Ring, req request) (Rep
 }
 
 func (s Store) HandleCall(st struct{}, req request, from genserver.From[Reply]) (struct{}, []actor.Effect) {
+	table, err := kvs.Opened[string, string](s.Dir)
+	if err != nil {
+		return st, actor.Do(actor.Stop{Reason: err})
+	}
 	switch r := req.(type) {
 	case getReq:
-		return st, s.get(r, from)
+		return st, s.get(table, r, from)
 	case putReq:
-		return st, s.put(r, from)
+		return st, s.put(table, r, from)
 	}
 	return st, nil
 }
@@ -78,18 +82,19 @@ func (s Store) HandleInfo(st struct{}, msg any) (struct{}, []actor.Effect) {
 	return st, nil
 }
 
-func (s Store) get(r getReq, from genserver.From[Reply]) []actor.Effect {
-	v, ok := s.Table.Get(r.Key)
+func (s Store) get(table *Table, r getReq, from genserver.From[Reply]) []actor.Effect {
+	v, ok := table.Get(r.Key)
 	return actor.Do(from.Reply(Reply{Value: v, Found: ok, Node: s.Node}))
 }
 
 // put writes, and leaves the reply for when the write is durable.
-func (s Store) put(r putReq, from genserver.From[Reply]) []actor.Effect {
-	return actor.Do(s.Table.PutEffect(r.Key, r.Value, from))
+func (s Store) put(table *Table, r putReq, from genserver.From[Reply]) []actor.Effect {
+	return actor.Do(table.PutEffect(r.Key, r.Value, from))
 }
 
 // durable replies to the put of d, now on disk. A table failing a write
-// fails every one after: the store stops.
+// fails every one after: the store stops, and the table is opened again
+// with it.
 func (s Store) durable(d kvs.Durable) []actor.Effect {
 	if d.Err != nil {
 		return actor.Do(actor.Stop{Reason: d.Err})
