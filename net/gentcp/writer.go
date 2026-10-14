@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/shun159/molecule/actor"
@@ -22,16 +23,16 @@ type writer struct {
 	timeout time.Duration
 	done    <-chan struct{} // the socket process is dead
 	// vectored tells a connection writing several buffers at once, as a
-	// TCP connection does with writev. Another, such as TLS, gets a
-	// packet in one write, joined in buf, rather than one per buffer.
+	// TCP or a Unix connection does with writev, a syscall.Conn, wrapped
+	// or not. Another, such as TLS, gets a packet in one write, joined in
+	// buf, rather than one per buffer.
 	vectored bool
 	buf      []byte
 }
 
 func newWriter(conn net.Conn, opts Options) *writer {
-	_, tcp := conn.(*net.TCPConn)
-	_, unix := conn.(*net.UnixConn)
-	return &writer{conn: conn, packet: opts.Packet, timeout: opts.SendTimeout, vectored: tcp || unix}
+	_, vectored := conn.(syscall.Conn)
+	return &writer{conn: conn, packet: opts.Packet, timeout: opts.SendTimeout, vectored: vectored}
 }
 
 // sendFailed tells the socket process that a write failed.

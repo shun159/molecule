@@ -106,8 +106,8 @@ func (d *Dist) runPeer(self *proc.Self, p *peer) error {
 			c.hear()
 			c.receive(m.Bytes)
 		case tick:
-			if !c.tick() {
-				d.n.Logger().Warn("dist: connection silent, dropped", "node", p.node)
+			if err := c.tick(); err != nil {
+				d.n.Logger().Warn("dist: connection dropped", "node", p.node, "error", err)
 				return c.close()
 			}
 		case gentcp.ErrorMsg:
@@ -191,17 +191,21 @@ func ticker(n *proc.Node, pid proc.PID, done <-chan struct{}, every time.Duratio
 	}
 }
 
-// tick sends a tick if nothing was sent since the last, tells the node
-// silent if not heard from within Silent, and reports whether it was
-// within TickTime. Any byte read is heard, of a frame whole or not.
-func (c *connection) tick() bool {
+// errSilent is the error of a connection silent for TickTime.
+var errSilent = errors.New("silent for TickTime")
+
+// tick sends a tick if nothing was sent since the last, and tells the node
+// silent if not heard from within Silent. It fails if the node was not
+// heard from within TickTime, or the tick could not be sent. Any byte read
+// is heard, of a frame whole or not.
+func (c *connection) tick() error {
 	if read := c.reads.Load(); read != c.read {
 		c.read = read
 		c.hear()
 	}
 	silence := time.Since(c.heard)
 	if silence >= c.d.cfg.TickTime {
-		return false
+		return errSilent
 	}
 	if silence >= c.d.cfg.Silent && !c.silent {
 		c.silent = true
@@ -209,12 +213,12 @@ func (c *connection) tick() bool {
 	}
 	if !c.said {
 		c.buf = appendFrame(c.buf[:0], frame{op: opTick})
-		if c.sock.Send(context.Background(), c.self, c.buf) != nil {
-			return false
+		if err := c.sock.Send(context.Background(), c.self, c.buf); err != nil {
+			return err
 		}
 	}
 	c.said = false
-	return true
+	return nil
 }
 
 // hear notes the node heard from now, and tells it heard if it was told
