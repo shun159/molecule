@@ -33,12 +33,15 @@ func (s *Sim) Partition(groups ...[]string) {
 			}
 		}
 	}
+	s.listen()
 }
 
-// Heal undoes the partitions: all nodes up reach each other again.
+// Heal undoes the partitions and the silences: all nodes up reach each
+// other again, and what was held arrives.
 func (s *Sim) Heal() {
 	cut := s.cuts
 	s.cuts = make(map[[2]string]bool)
+	s.held = make(map[[2]string]bool)
 	s.record(Event{Kind: Fault, Msg: "heal"})
 	for _, x := range s.nodeNames() {
 		for _, y := range s.nodeNames() {
@@ -47,6 +50,7 @@ func (s *Sim) Heal() {
 			}
 		}
 	}
+	s.listen()
 }
 
 // Crash stops the node name: its processes vanish, without running
@@ -66,6 +70,8 @@ func (s *Sim) Crash(name string) {
 		}
 	}
 	n.up = false
+	delete(s.paused, name)
+	s.listen()
 	for _, l := range s.links {
 		if l.from.Node() == name || l.to.Node() == name {
 			s.dropQueue(l)
@@ -106,6 +112,7 @@ func (s *Sim) Restart(name string) {
 			s.nodeEvent(name, other, true)
 		}
 	}
+	s.listen()
 }
 
 // connected reports whether the nodes x and y reach each other.
