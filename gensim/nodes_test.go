@@ -147,6 +147,22 @@ func TestCrashRestart(t *testing.T) {
 	}
 }
 
+// TestRestartsApart restarts a node again and again: the first process
+// of each incarnation is another.
+func TestRestartsApart(t *testing.T) {
+	s := gensim.New(1)
+	seen := map[proc.PID]bool{}
+	for range 5 {
+		pid := spawn(t, s, genserver.Gen(counter{}), gensim.On("b"))
+		if seen[pid] {
+			t.Fatalf("%v of an earlier incarnation again", pid)
+		}
+		seen[pid] = true
+		s.Crash("b")
+		s.Restart("b")
+	}
+}
+
 func TestLoss(t *testing.T) {
 	s := gensim.New(1)
 	s.Loss = 1
