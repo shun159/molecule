@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -385,4 +386,27 @@ func TestMaxQueue(t *testing.T) {
 			t.Errorf("connected %v: cause %v", shake, err)
 		}
 	}
+}
+
+// A connection counting its reads stays a TCP one, for the socket to
+// write a frame's buffers at once.
+func TestCountedTCP(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if c, _ := counted(conn); !isSyscallConn(c) {
+		t.Errorf("%T is no syscall.Conn", c)
+	}
+}
+
+func isSyscallConn(c net.Conn) bool {
+	_, ok := c.(syscall.Conn)
+	return ok
 }
