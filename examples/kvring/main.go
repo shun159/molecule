@@ -2,8 +2,9 @@
 // consistent hashing: each node keeps the keys the ring gives it, in a kvs
 // table, and a client asks the node of the key.
 //
-//	kvring_sup (one_for_one)
-//	└── kvring_store  gen_server of the keys of this node, on disk
+//	kvring_sup (one_for_all)
+//	├── kvring_table  the table of this node, on disk
+//	└── kvring_store  gen_server of the keys of this node, in the table
 //
 // Each file holds one "module": kvring_app.go is the application,
 // kvring_sup.go the supervisor, kvring_store.go the gen_server and its
@@ -38,7 +39,6 @@ import (
 	"time"
 
 	"github.com/shun159/molecule/dist"
-	"github.com/shun159/molecule/kvs"
 	"github.com/shun159/molecule/proc"
 )
 
@@ -58,12 +58,6 @@ func main() {
 	}
 	ring := NewRing(slices.Sorted(maps.Keys(addrs)), vnodes)
 
-	table, err := kvs.Open(filepath.Join(*dir, *name), kvs.Options[string, string]{})
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer table.Close()
-
 	n := proc.NewNode(*name)
 	d, err := startDist(n, addrs)
 	if err != nil {
@@ -71,7 +65,7 @@ func main() {
 	}
 	defer d.Stop()
 
-	app, err := startKvring(context.Background(), n, table)
+	app, err := startKvring(context.Background(), n, filepath.Join(*dir, *name))
 	if err != nil {
 		log.Fatal(err)
 	}

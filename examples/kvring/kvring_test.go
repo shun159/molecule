@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/shun159/molecule/actor"
-	"github.com/shun159/molecule/behaviours/genserver"
+	"github.com/shun159/molecule/behaviours/supervisor"
 	"github.com/shun159/molecule/gensim"
 	"github.com/shun159/molecule/kvs"
 )
@@ -56,15 +56,15 @@ func TestStores(t *testing.T) {
 	ring := NewRing(nodes, 64)
 	s := gensim.New(1)
 	for _, n := range nodes {
-		table, err := kvs.Open(t.TempDir(), kvs.Options[string, string]{})
-		if err != nil {
+		dir := t.TempDir()
+		if _, err := gensim.Start(s, supervisor.Child(kvringSup(n, dir)), gensim.On(n)); err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { table.Close() })
-		store := Store{Node: n, Table: table}
-		if _, err := gensim.Spawn(s, genserver.Gen(store), nil, gensim.On(n), gensim.Named(string(storeName))); err != nil {
-			t.Fatal(err)
-		}
+		t.Cleanup(func() { // a node crashed, or the simulation ended, leaves it open
+			if table, err := kvs.Opened[string, string](dir); err == nil {
+				table.Close()
+			}
+		})
 	}
 	do := func(req request) (Reply, error) {
 		v, err := s.Call(actor.Remote{Node: ring.Owner(req.key()), Name: string(storeName)}, req)
