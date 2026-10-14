@@ -45,7 +45,12 @@
 // a reason wrapping it.
 //
 // A connection silent for Config.TickTime is taken for lost, like
-// net_ticktime: an idle connection sends ticks to show it lives.
+// net_ticktime: an idle connection sends ticks to show it lives. Silent
+// for Config.Silent, a second by default, its node is told silent to the
+// processes monitoring nodes, a proc.NodeSilent, and heard once it is
+// again, a proc.NodeHeard: they learn soon that it may be down, its
+// connection kept, as a failure detector tells. Any byte heard counts,
+// of a frame whole or not: a large one received keeps its node heard.
 // With Config.MaxQueue, one with too many frames waiting is dropped as
 // well, for a node that cannot keep up not to take the memory of this one.
 // With Config.MaxFrame, one receiving a frame too large is dropped too.

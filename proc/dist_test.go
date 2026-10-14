@@ -579,3 +579,48 @@ func TestMonitorNodes(t *testing.T) {
 	ra.NodeUp("b")
 	nothing(t, ca)
 }
+
+// A node connected falls silent and is heard again, told once each; a
+// process monitoring nodes after learns it silent at once, and a node not
+// connected, or down, is neither.
+func TestNodeSilent(t *testing.T) {
+	f, nodes := newFakeNet(t, "a", "b", "c")
+	a := nodes[0]
+	ra := f.remotes["a"]
+	pa, ca := inbox(a)
+	in(a, pa, func(s *Self) { s.MonitorNodes(true) })
+	ra.NodeSilent("b") // not connected: nothing
+	nothing(t, ca)
+
+	ra.NodeUp("b")
+	next(t, ca)
+	ra.NodeSilent("b")
+	ra.NodeSilent("b") // once only
+	if m := next(t, ca); m != (NodeSilent{"b"}) {
+		t.Errorf("got %#v", m)
+	}
+	pb, cb := inbox(a)
+	in(a, pb, func(s *Self) { s.MonitorNodes(true) })
+	if m, m2 := next(t, cb), next(t, cb); m != (NodeUp{"b"}) || m2 != (NodeSilent{"b"}) {
+		t.Errorf("at once: %#v, %#v", m, m2)
+	}
+	ra.NodeHeard("b")
+	ra.NodeHeard("b") // once only
+	if m := next(t, ca); m != (NodeHeard{"b"}) {
+		t.Errorf("got %#v", m)
+	}
+	nothing(t, ca)
+
+	ra.NodeSilent("b")
+	next(t, ca)
+	f.disconnect("a", "b")
+	if m := next(t, ca); m != (NodeDown{"b"}) {
+		t.Errorf("got %#v", m)
+	}
+	ra.NodeHeard("b") // down: nothing
+	ra.NodeUp("b")
+	if m := next(t, ca); m != (NodeUp{"b"}) { // not silent, connected anew
+		t.Errorf("got %#v", m)
+	}
+	nothing(t, ca)
+}

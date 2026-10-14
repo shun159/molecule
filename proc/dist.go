@@ -208,6 +208,15 @@ func (r Remote) Down(ref Ref, target PID, reason error) {
 // a NodeUp, unless it was connected already.
 func (r Remote) NodeUp(node string) { r.n.nodes.up(node) }
 
+// NodeSilent tells that node, connected, has not been heard from for a
+// while: the processes monitoring nodes get a NodeSilent, unless it was
+// silent already. Its connection, and what goes through it, stays.
+func (r Remote) NodeSilent(node string) { r.n.nodes.silenced(node, true) }
+
+// NodeHeard tells that node, silent, is heard from again: the processes
+// monitoring nodes get a NodeHeard.
+func (r Remote) NodeHeard(node string) { r.n.nodes.silenced(node, false) }
+
 // NodeDown tells that node is unreachable, its connection lost or never
 // made: the local processes linked to its processes get an exit signal
 // with NoConnection, the monitors of its processes fire with

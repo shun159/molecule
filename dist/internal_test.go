@@ -2,6 +2,7 @@ package dist
 
 import (
 	"context"
+	"encoding/binary"
 	"io"
 	"net"
 	"strings"
@@ -101,6 +102,109 @@ func TestSilentNode(t *testing.T) {
 	if e := time.Since(start); e < tickTime/2 {
 		t.Errorf("dropped after %v only", e)
 	}
+}
+
+// TestSilentHeard has a node say nothing for a while, then tick: it is
+// told silent, then heard, its connection kept. Trickling a frame for as
+// long, it is heard throughout.
+func TestSilentHeard(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	say := make(chan []byte)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		b := hello{name: "b@test", creation: 1, challenge: newChallenge()}
+		if _, err := acceptHandshake(conn, b, "c", func(peerInfo) string { return "" }); err != nil {
+			return
+		}
+		go io.Copy(io.Discard, conn)
+		for bytes := range say {
+			if _, err := conn.Write(bytes); err != nil {
+				return
+			}
+		}
+	}()
+	defer close(say)
+
+	n := proc.NewNode("a@test")
+	const silent = 100 * time.Millisecond
+	d, err := Start(n, Config{
+		Cookie:   "c",
+		Resolve:  func(string) (string, bool) { return ln.Addr().String(), true },
+		TickTime: time.Minute,
+		Silent:   silent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Stop()
+	events := make(chan any, 16)
+	n.Spawn(func(s *proc.Self) error {
+		s.MonitorNodes(true)
+		for {
+			msg, err := s.Receive(context.Background())
+			if err != nil {
+				return err
+			}
+			events <- msg
+		}
+	})
+	if err := d.Connect(context.Background(), "b@test"); err != nil {
+		t.Fatal(err)
+	}
+	next := func(want any, within time.Duration) {
+		t.Helper()
+		select {
+		case got := <-events:
+			if got != want {
+				t.Fatalf("got %#v, want %#v", got, want)
+			}
+		case <-time.After(within):
+			t.Fatalf("no %#v within %v", want, within)
+		}
+	}
+	next(proc.NodeUp{Node: "b@test"}, time.Second)
+	start := time.Now()
+	next(proc.NodeSilent{Node: "b@test"}, 5*silent)
+	if e := time.Since(start); e < silent/2 {
+		t.Errorf("silent after %v only", e)
+	}
+	say <- packet(appendFrame(nil, frame{op: opTick}))
+	next(proc.NodeHeard{Node: "b@test"}, 5*silent)
+
+	// A frame of 64 KiB, a KiB at a time, over four times Silent.
+	payload, err := gobCodec{}.NewEncoder().Encode(strings.Repeat("x", 64<<10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	big := packet(appendFrame(nil, frame{op: opSendName, name: "nobody", payload: payload}))
+	every := 4 * silent / time.Duration(len(big)/1024)
+	for len(big) > 0 {
+		k := min(1024, len(big))
+		say <- big[:k]
+		big = big[k:]
+		time.Sleep(every)
+	}
+	select {
+	case got := <-events:
+		t.Errorf("amid a frame: %#v", got)
+	default:
+	}
+	if got := d.Nodes(); len(got) != 1 {
+		t.Errorf("connected to %v", got)
+	}
+}
+
+// packet prefixes f with its length, as the socket does.
+func packet(f []byte) []byte {
+	return append(binary.BigEndian.AppendUint32(nil, uint32(len(f))), f...)
 }
 
 // TestIdleConnection keeps two idle nodes connected: ticks show they
