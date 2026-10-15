@@ -2,9 +2,11 @@ package genserver_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
 	"github.com/shun159/molecule/proc"
 )
@@ -140,4 +142,64 @@ func BenchmarkCast(b *testing.B) {
 			b.Fatalf("count = %d, want %d", v, b.N)
 		}
 	})
+}
+
+// asker has requests out to a counter, depth at once, until it has the
+// answers of n, as a behaviour asks: SendRequest, the answer a message.
+type asker struct {
+	genserver.Default[asking]
+	counter genserver.Ref[CounterReq, int, Add]
+}
+
+type (
+	asking struct {
+		left, out int
+		done      chan struct{}
+	}
+	ask struct {
+		n, depth int
+		done     chan struct{}
+	}
+)
+
+func (a asker) HandleCast(_ asking, m ask) (asking, []actor.Effect) {
+	s := asking{left: m.n, done: m.done}
+	var effs []actor.Effect
+	for range min(m.depth, m.n) {
+		s.left, s.out = s.left-1, s.out+1
+		effs = append(effs, a.counter.CallEffect(Get{}, nil))
+	}
+	return s, effs
+}
+
+func (a asker) HandleInfo(s asking, msg any) (asking, []actor.Effect) {
+	if _, ok := msg.(actor.Response); !ok {
+		return s, nil
+	}
+	s.out--
+	if s.left > 0 {
+		s.left, s.out = s.left-1, s.out+1
+		return s, actor.Do(a.counter.CallEffect(Get{}, nil))
+	}
+	if s.out == 0 {
+		close(s.done)
+	}
+	return s, nil
+}
+
+func BenchmarkSendRequest(b *testing.B) {
+	for _, depth := range []int{1, 64} {
+		b.Run(fmt.Sprintf("out-%d", depth), func(b *testing.B) {
+			n, c := startCounter(b)
+			a, err := genserver.Start(context.Background(), n, asker{counter: c})
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			done := make(chan struct{})
+			a.Cast(n, ask{n: b.N, depth: depth, done: done})
+			<-done
+		})
+	}
 }

@@ -181,3 +181,54 @@ func TestPIDWhereIs(t *testing.T) {
 		t.Error("Node() is not the node itself")
 	}
 }
+
+// A MonitorAliasFunc hands its one message to its func, with its ref: the
+// reply, or the death of the process, or at once that there is none; and
+// nothing once released.
+func TestMonitorAliasFunc(t *testing.T) {
+	n := NewNode("")
+	got := make(chan AliasMsg, 4)
+	var refs []Ref
+	deliver := func(ref Ref, m AliasMsg) {
+		refs = append(refs, ref)
+		got <- m
+	}
+
+	p, _ := actor(n, nil)
+	a := n.MonitorAliasFunc(p.pid, deliver)
+	if a.C != nil {
+		t.Error("a func alias has a channel")
+	}
+	n.SendAlias(a.Ref, "reply")
+	n.SendAlias(a.Ref, "again")
+	if m := <-got; m.Msg != "reply" || refs[0] != a.Ref || len(got) != 0 {
+		t.Errorf("reply: got %+v under %v, %d more", m, refs[0], len(got))
+	}
+	a.Release()
+
+	a = n.MonitorAliasFunc(p.pid, deliver)
+	n.Send(p.pid, exitWith{errBoom})
+	if m := <-got; !m.Down || m.Reason != errBoom {
+		t.Errorf("death: got %+v", m)
+	}
+	a.Release()
+
+	a = n.MonitorAliasFunc(p.pid, deliver) // dead now
+	select {
+	case m := <-got:
+		if !m.Down || m.Reason != NoProc {
+			t.Errorf("of a dead process: got %+v", m)
+		}
+	default:
+		t.Error("of a dead process: nothing at once")
+	}
+	a.Release()
+
+	q, _ := actor(n, nil)
+	a = n.MonitorAliasFunc(q.pid, deliver)
+	a.Release()
+	n.SendAlias(a.Ref, "released")
+	if len(got) != 0 || n.aliases.len() != 0 {
+		t.Errorf("after Release: %d delivered, %d aliases", len(got), n.aliases.len())
+	}
+}

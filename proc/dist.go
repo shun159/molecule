@@ -317,29 +317,37 @@ func (n *Node) monitorRemoteName(d Distribution, ref Ref, node, name string, w w
 // the monitor reaches node. If there is none, C has a death with NoProc.
 // A message sent to name after MonitorAliasName finds the monitor in
 // place, so that a reply or the death of the process arrives.
-func (n *Node) MonitorAliasName(node, name string) Alias {
+func (n *Node) MonitorAliasName(node, name string) Alias { return n.monitorAliasName(node, name, nil) }
+
+// MonitorAliasNameFunc is MonitorAliasName, its AliasMsg handed to
+// deliver, as MonitorAliasFunc does.
+func (n *Node) MonitorAliasNameFunc(node, name string, deliver func(Ref, AliasMsg)) Alias {
+	return n.monitorAliasName(node, name, deliver)
+}
+
+func (n *Node) monitorAliasName(node, name string, f func(Ref, AliasMsg)) Alias {
 	if node == n.name {
 		if pid, ok := n.WhereIs(name); ok {
-			return n.MonitorAlias(pid)
+			return n.monitorAlias(pid, f)
 		}
-		return n.downAlias(NoProc)
+		return n.downAlias(NoProc, f)
 	}
 	d := n.distribution()
 	if d == nil {
-		return n.downAlias(NoConnection)
+		return n.downAlias(NoConnection, f)
 	}
-	ref := n.MakeRef()
-	ch := make(chan AliasMsg, 1)
-	n.aliases.put(ref.id, ch)
-	n.monitorRemoteName(d, ref, node, name, watcher{alias: true})
-	return Alias{Ref: ref, C: ch, n: n, remote: PID{node: node}}
+	a, s := n.newAlias(n.MakeRef(), f)
+	n.aliases.put(a.Ref.id, s)
+	n.monitorRemoteName(d, a.Ref, node, name, watcher{alias: true})
+	a.remote = PID{node: node}
+	return a
 }
 
 // downAlias returns an alias whose process is already dead with reason.
-func (n *Node) downAlias(reason error) Alias {
-	ch := make(chan AliasMsg, 1)
-	ch <- AliasMsg{Down: true, Reason: reason}
-	return Alias{Ref: n.MakeRef(), C: ch, n: n}
+func (n *Node) downAlias(reason error, f func(Ref, AliasMsg)) Alias {
+	a, s := n.newAlias(n.MakeRef(), f)
+	s.deliver(AliasMsg{Down: true, Reason: reason})
+	return a
 }
 
 // demonitorRemote stops the monitor ref of target, or of a name on its
