@@ -71,3 +71,26 @@ func TestClockedWrongType(t *testing.T) {
 		t.Error("started")
 	}
 }
+
+// Skew sets the clock a node's processes read off, the others' as it was;
+// the simulation's time passes as before.
+func TestSkew(t *testing.T) {
+	s := gensim.New(1)
+	a := spawn(t, s, genserver.Gen(stamp{}), gensim.On("a"))
+	b := spawn(t, s, genserver.Gen(stamp{}), gensim.On("b"))
+	s.Skew("b", -time.Minute)
+	for pid, want := range map[proc.PID]time.Time{a: s.Now(), b: s.Now().Add(-time.Minute)} {
+		if v, err := s.Call(pid, get{}); err != nil || !v.(time.Time).Equal(want) {
+			t.Errorf("%v: %v, %v; want %v", pid, v, err, want)
+		}
+	}
+	s.Skew("b", time.Hour) // the clock jumps
+	if v, _ := s.Call(b, get{}); !v.(time.Time).Equal(s.Now().Add(time.Hour)) {
+		t.Errorf("b after the jump: %v, want %v", v, s.Now().Add(time.Hour))
+	}
+	before := s.Now()
+	s.Advance(time.Second)
+	if d := s.Now().Sub(before); d != time.Second {
+		t.Errorf("a second advanced %v", d)
+	}
+}

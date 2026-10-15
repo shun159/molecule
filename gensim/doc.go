@@ -54,6 +54,7 @@
 //	Pause      stops a node a while, its timers firing; Resume starts it
 //	Crash      stops a node: its processes vanish, without Terminate
 //	Restart    starts it again, a new incarnation, for the test to spawn on
+//	Skew       sets the clock of a node off, as it reads it
 //	Loss       loses messages between nodes, at random, beyond Erlang
 //
 // When two nodes lose each other, what is in flight between them is lost,
