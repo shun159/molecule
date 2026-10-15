@@ -308,7 +308,7 @@ func (t *Table[K, V]) Delete(k K) error {
 
 func (t *Table[K, V]) put(k K, v V, match matcher[V]) (*batch, error) {
 	bp := t.buf()
-	defer t.bufs.Put(bp)
+	defer t.putBuf(bp)
 	body, err := t.encode(bp, opPut, k, v)
 	if err != nil {
 		return nil, err
@@ -323,7 +323,7 @@ func (t *Table[K, V]) put(k K, v V, match matcher[V]) (*batch, error) {
 
 func (t *Table[K, V]) delete(k K, match matcher[V]) (*batch, error) {
 	bp := t.buf()
-	defer t.bufs.Put(bp)
+	defer t.putBuf(bp)
 	var zero V
 	body, err := t.encode(bp, opDel, k, zero)
 	if err != nil {
@@ -334,6 +334,17 @@ func (t *Table[K, V]) delete(k K, match matcher[V]) (*batch, error) {
 		t.maybeCompact()
 	}
 	return b, err
+}
+
+// keptBuffer is the most a buffer kept for the next write holds: one a
+// large record grew is let go.
+const keptBuffer = 1 << 20
+
+// putBuf keeps bp for the next encoding, unless a large record grew it.
+func (t *Table[K, V]) putBuf(bp *[]byte) {
+	if cap(*bp) <= keptBuffer {
+		t.bufs.Put(bp)
+	}
 }
 
 func (t *Table[K, V]) buf() *[]byte {
