@@ -48,6 +48,9 @@ func fingerprint(v any) string {
 type fingerprinter struct {
 	b    strings.Builder
 	seen map[uintptr]int // pointers followed, numbered, for cycles and sharing
+	// identity writes a pointer as its address, not followed: for the
+	// keys of a map, to order them alike from a fingerprint to the next.
+	identity bool
 }
 
 var locationType = reflect.TypeFor[time.Location]()
@@ -79,6 +82,10 @@ func (f *fingerprinter) value(v reflect.Value) {
 		// A location keeps a cache of its own: it is told by identity.
 		if v.Type().Elem() == locationType {
 			fmt.Fprintf(b, "loc%x", v.Pointer())
+			return
+		}
+		if f.identity {
+			fmt.Fprintf(b, "ptr%x", v.Pointer())
 			return
 		}
 		if n, ok := f.seen[v.Pointer()]; ok {
@@ -120,20 +127,25 @@ func (f *fingerprinter) value(v reflect.Value) {
 			b.WriteString("nil")
 			return
 		}
-		type entry struct{ k, v string }
-		var entries []entry
-		for it := v.MapRange(); it.Next(); {
-			kf, vf := fingerprinter{seen: f.seen}, fingerprinter{seen: f.seen}
-			kf.value(it.Key())
-			vf.value(it.Value())
-			entries = append(entries, entry{kf.b.String(), vf.b.String()})
+		// In an order of their own, not Go's, which changes: of a pointer
+		// two entries share, the first followed is written, and the next
+		// told by its number, as are the pointers met after.
+		type key struct {
+			v  reflect.Value
+			id string
 		}
-		slices.SortFunc(entries, func(a, b entry) int { return cmp.Compare(a.k, b.k) })
+		var keys []key
+		for _, k := range v.MapKeys() {
+			id := fingerprinter{identity: true}
+			id.value(k)
+			keys = append(keys, key{k, id.b.String()})
+		}
+		slices.SortFunc(keys, func(a, b key) int { return cmp.Compare(a.id, b.id) })
 		b.WriteString("map[")
-		for _, e := range entries {
-			b.WriteString(e.k)
+		for _, k := range keys {
+			f.value(k.v)
 			b.WriteByte(':')
-			b.WriteString(e.v)
+			f.value(v.MapIndex(k.v))
 			b.WriteByte(',')
 		}
 		b.WriteByte(']')

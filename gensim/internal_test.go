@@ -65,3 +65,26 @@ func TestNoLeftovers(t *testing.T) {
 		t.Errorf("clock at %v", s.Now())
 	}
 }
+
+// A map whose entries share a pointer, with each other or with what comes
+// after it, is fingerprinted alike every time, whatever order Go ranges
+// over it in; a change of what they share still shows.
+func TestFingerprintMapSharing(t *testing.T) {
+	type holder struct{ N int }
+	p := &holder{1}
+	type state struct {
+		M     map[string]*holder
+		After *holder
+	}
+	s := state{M: map[string]*holder{"a": p, "b": p, "c": {2}, "d": {3}}, After: p}
+	fp := fingerprint(s)
+	for range 100 {
+		if got := fingerprint(s); got != fp {
+			t.Fatalf("one state fingerprinted %s, then %s", fp, got)
+		}
+	}
+	p.N = 9
+	if fingerprint(s) == fp {
+		t.Error("a change of the pointer shared goes unseen")
+	}
+}
