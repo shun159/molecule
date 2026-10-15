@@ -262,7 +262,11 @@ func (w *wal) syncNow() {
 
 	start := time.Now()
 	_, err := s.f.WriteAt(buf, at)
-	w.spare = buf
+	if cap(buf) <= keptBuffer {
+		w.spare = buf
+	} else {
+		w.spare = nil // keep no buffer of a large batch
+	}
 	if err == nil {
 		w.syncs.Add(1)
 		err = datasync(s.f)
