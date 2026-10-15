@@ -191,6 +191,17 @@ func (w *wal) kickRun() {
 	}
 }
 
+// syncWritten returns once all written so far is durable, synced now if the
+// log syncs every period.
+func (w *wal) syncWritten() error {
+	b, err := w.barrier()
+	if err != nil {
+		return err
+	}
+	w.kickRun()
+	return w.wait(b)
+}
+
 // wait returns once b is durable, syncing it if no one else does.
 func (w *wal) wait(b *batch) error {
 	select {
