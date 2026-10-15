@@ -89,3 +89,52 @@ func TestEffectsInSim(t *testing.T) {
 		t.Fatalf("k = %d, Info = %+v", v, tab.Info())
 	}
 }
+
+// batcher is a server making writes at once, answering once they are
+// durable, with their error.
+type batcher struct{ tab *kvs.Table[string, any] }
+
+func (batcher) Init(proc.PID) (struct{}, []actor.Effect, error) { return struct{}{}, nil, nil }
+
+func (b batcher) HandleCall(s struct{}, ws []kvs.Write[string, any], from genserver.From[error]) (struct{}, []actor.Effect) {
+	return s, actor.Do(b.tab.WritesEffect(from, ws...))
+}
+
+func (batcher) HandleCast(s struct{}, _ struct{}) (struct{}, []actor.Effect) { return s, nil }
+
+func (batcher) HandleInfo(s struct{}, msg any) (struct{}, []actor.Effect) {
+	if d, ok := msg.(kvs.Durable); ok {
+		return s, actor.Do(d.Tag.(genserver.From[error]).Reply(d.Err))
+	}
+	return s, nil
+}
+
+// Writes made at once are all made, with one answer; none, if one fails
+// to encode, as a channel does.
+func TestWritesEffect(t *testing.T) {
+	tab := open(t, t.TempDir(), kvs.Options[string, any]{})
+	defer tab.Close()
+	n := proc.NewNode("")
+	ctx := context.Background()
+	srv, err := genserver.Start(ctx, n, batcher{tab})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type W = kvs.Write[string, any]
+	if rep, err := srv.Call(ctx, n, []W{{Key: "a", Val: 1}, {Key: "b", Val: 2}, {Key: "none", Delete: true}}); rep != nil || err != nil {
+		t.Fatalf("writes: %v, %v", rep, err)
+	}
+	if a, _ := tab.Get("a"); a != 1 || tab.Len() != 2 {
+		t.Fatalf("a %v, %d entries", a, tab.Len())
+	}
+	rep, err := srv.Call(ctx, n, []W{{Key: "x", Val: 1}, {Key: "y", Val: make(chan int)}, {Key: "a", Delete: true}})
+	if rep == nil || err != nil {
+		t.Fatalf("writes of a channel: %v, %v; want an error", rep, err)
+	}
+	if _, ok := tab.Get("x"); ok || tab.Len() != 2 {
+		t.Errorf("writes failing made some: %d entries", tab.Len())
+	}
+	if rep, err := srv.Call(ctx, n, []W(nil)); rep != nil || err != nil {
+		t.Errorf("no writes: %v, %v", rep, err)
+	}
+}
