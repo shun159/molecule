@@ -138,3 +138,25 @@ func TestWritesEffect(t *testing.T) {
 		t.Errorf("no writes: %v, %v", rep, err)
 	}
 }
+
+// Writes makes writes as WritesEffect does, returning once durable.
+func TestWrites(t *testing.T) {
+	tab := open(t, t.TempDir(), kvs.Options[string, any]{})
+	defer tab.Close()
+	type W = kvs.Write[string, any]
+	if err := tab.Writes(W{Key: "a", Val: 1}, W{Key: "b", Val: 2}, W{Key: "none", Delete: true}); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := tab.Get("a"); a != 1 || tab.Len() != 2 || tab.Info().DurableSeq < 2 {
+		t.Fatalf("a %v, %d entries, %+v", a, tab.Len(), tab.Info())
+	}
+	if err := tab.Writes(W{Key: "x", Val: 1}, W{Key: "y", Val: make(chan int)}); err == nil {
+		t.Fatal("writes of a channel made")
+	}
+	if _, ok := tab.Get("x"); ok {
+		t.Error("writes failing made some")
+	}
+	if err := tab.Writes(); err != nil {
+		t.Errorf("no writes: %v", err)
+	}
+}
