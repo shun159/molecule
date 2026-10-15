@@ -33,8 +33,9 @@ type Sim struct {
 	cuts         map[[2]string]bool // pairs of nodes that cannot reach each other
 	held         map[[2]string]bool // pairs of nodes holding what they send each other
 	paused       map[string]bool
-	told         map[[2]string]bool      // x, y: x told y silent
-	silences     map[[2]string]*simTimer // x, y: to tell x y silent
+	skews        map[string]time.Duration // how far the clock of each node is off
+	told         map[[2]string]bool       // x, y: x told y silent
+	silences     map[[2]string]*simTimer  // x, y: to tell x y silent
 
 	procs []*process // in creation order
 	byPID map[proc.PID]*process
@@ -168,6 +169,7 @@ func New(seed uint64, opts ...Option) *Sim {
 		cuts:         make(map[[2]string]bool),
 		held:         make(map[[2]string]bool),
 		paused:       make(map[string]bool),
+		skews:        make(map[string]time.Duration),
 		told:         make(map[[2]string]bool),
 		silences:     make(map[[2]string]*simTimer),
 		byPID:        make(map[proc.PID]*process),
@@ -958,7 +960,7 @@ func (e *env) MonitorNodes(on bool) {
 	}
 }
 
-func (e *env) Now() time.Time { return e.s.now }
+func (e *env) Now() time.Time { return e.s.now.Add(e.s.skews[e.p.pid.Node()]) }
 
 func (e *env) SendAfter(d time.Duration, msg any) func() {
 	e.s.seq++

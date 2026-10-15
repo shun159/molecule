@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/shun159/molecule/proc"
 )
@@ -113,6 +114,15 @@ func (s *Sim) Restart(name string) {
 		}
 	}
 	s.listen()
+}
+
+// Skew sets the clock of the node name off by d from the simulation's,
+// as a clock set wrong, or one that jumps: its Clocked processes read Now
+// plus d. Timers are not skewed: they wait as long, as on a monotonic
+// clock.
+func (s *Sim) Skew(name string, d time.Duration) {
+	s.record(Event{Kind: Fault, Msg: fmt.Sprintf("skew %s %v", name, d)})
+	s.skews[name] = d
 }
 
 // connected reports whether the nodes x and y reach each other.
