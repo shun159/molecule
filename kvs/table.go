@@ -527,7 +527,7 @@ func (t *Table[K, V]) compact() error {
 		return cut.err
 	}
 	name := snapName(cut.seq)
-	size, err := t.writeSnapshot(name)
+	size, err := t.writeSnapshot(name, cut.seq)
 	if err != nil {
 		return err
 	}
@@ -557,7 +557,12 @@ func (t *Table[K, V]) compact() error {
 // writeSnapshot writes the entries to the snapshot name, and returns its
 // size. Each record has the seq of the write that set its entry, so that
 // revisions outlive compactions.
-func (t *Table[K, V]) writeSnapshot(name string) (int64, error) {
+// writeSnapshot writes the entries to the snapshot name, of the log up to
+// seq: and of writes after, to the shards walked after them, which the
+// snapshot holds too. It is put in place once those are durable in the
+// log: else a crash losing them from the log would find them in it, never
+// durable, and maybe without others before them, in shards walked before.
+func (t *Table[K, V]) writeSnapshot(name string, seq uint64) (int64, error) {
 	path := filepath.Join(t.dir, name)
 	f, err := os.Create(path + ".tmp")
 	if err != nil {
@@ -568,6 +573,7 @@ func (t *Table[K, V]) writeSnapshot(name string) (int64, error) {
 	var size int64
 	var buf, out []byte
 	var werr error
+	last := seq // the latest write in the snapshot
 	t.idx.eachShard(true, func(each func(func(*leaf[K, V]) bool)) bool {
 		each(func(l *leaf[K, V]) bool {
 			var body []byte
@@ -578,6 +584,7 @@ func (t *Table[K, V]) writeSnapshot(name string) (int64, error) {
 			if _, werr = w.Write(out); werr != nil {
 				return false
 			}
+			last = max(last, l.rev)
 			size += int64(len(out))
 			return true
 		})
@@ -591,6 +598,9 @@ func (t *Table[K, V]) writeSnapshot(name string) (int64, error) {
 	}
 	if err := f.Close(); werr == nil {
 		werr = err
+	}
+	if werr == nil && last > seq {
+		werr = t.log.syncWritten()
 	}
 	if werr == nil {
 		werr = os.Rename(path+".tmp", path)
