@@ -105,6 +105,7 @@ n, effs := Counter{}.HandleCast(2, Add{3}) // 5, no effects
     net/genudp                 UDP sockets owned by processes, like gen_udp
     net/socket                 any socket(2) owned by a process: AF_PACKET, raw ICMPv6, ...
     kvs                        a table of keys and values in memory, kept in a log on disk
+    pmap                       a map never changed, for pure states, as Erlang's maps
     dist                       distribution: processes of several nodes, by PID
     dist/pg                    process groups, shared by the nodes
     gensim                     deterministic simulation of behaviours
