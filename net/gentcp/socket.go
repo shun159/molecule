@@ -65,7 +65,8 @@ const (
 type (
 	sendReq struct {
 		data   []byte
-		then   bool // set active after
+		more   [][]byte // packets after data, of SendAll
+		then   bool     // set active after
 		active Active
 	}
 	recvReq struct {
@@ -87,6 +88,22 @@ func (s Socket) Send(ctx context.Context, caller actor.Caller, data []byte) erro
 		return s.call(ctx, caller, sendReq{data: data})
 	}
 	failed, err := s.w.write(data)
+	if failed {
+		caller.Node().Send(s.PID, sendFailed{err})
+	}
+	return err
+}
+
+// SendAll sends packets, as Send sends each, in one write if the
+// connection takes several buffers at once: a syscall for many.
+func (s Socket) SendAll(ctx context.Context, caller actor.Caller, packets ...[]byte) error {
+	if len(packets) == 0 {
+		return nil
+	}
+	if s.w == nil {
+		return s.call(ctx, caller, sendReq{data: packets[0], more: packets[1:]})
+	}
+	failed, err := s.w.write(packets...)
 	if failed {
 		caller.Node().Send(s.PID, sendFailed{err})
 	}

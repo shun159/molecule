@@ -87,19 +87,23 @@ func (d *Dist) runPeer(self *proc.Self, p *peer) error {
 	for _, ref := range waiters {
 		d.n.SendAlias(ref, nil)
 	}
-	for _, f := range queue {
-		if !c.send(f) {
-			return c.close()
-		}
+	if !c.send(queue...) {
+		return c.close()
 	}
+	var next any // a message taken while gathering frames
 	for {
-		msg, err := self.Receive(context.Background())
-		if err != nil {
-			return d.lost(p, err)
+		msg := next
+		if next = nil; msg == nil {
+			var err error
+			if msg, err = self.Receive(context.Background()); err != nil {
+				return d.lost(p, err)
+			}
 		}
 		switch m := msg.(type) {
 		case frame:
-			if !c.send(m) {
+			var frames []frame
+			frames, next = c.gather(m)
+			if !c.send(frames...) {
 				return c.close()
 			}
 		case gentcp.DataMsg:
@@ -167,6 +171,10 @@ type connection struct {
 	dec  Decoder
 	buf  []byte
 
+	frames  []frame  // gathered, to send at once
+	ends    []int    // where each frame ends in buf
+	packets [][]byte // of the frames, in buf
+
 	reads  *atomic.Uint64 // the reads of the socket that got bytes
 	read   uint64         // as of the last tick
 	heard  time.Time      // when the node was heard from last
@@ -231,21 +239,68 @@ func (c *connection) hear() {
 	}
 }
 
-// send sends f, and reports whether the connection is still up. A message
-// that fails to encode is dropped.
-func (c *connection) send(f frame) bool {
-	switch f.op {
-	case opSend, opSendName, opSendAlias:
-		b, err := c.enc.Encode(f.msg)
+// maxGathered is the most frames sent at once.
+const maxGathered = 256
+
+// gathered is a context done already: Receive with it takes a message
+// only if one is waiting.
+var gathered = func() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return ctx
+}()
+
+// gather returns f and the frames waiting after it, to send at once, and
+// the first other message it took, if any.
+func (c *connection) gather(f frame) ([]frame, any) {
+	c.frames = append(c.frames[:0], f)
+	for len(c.frames) < maxGathered {
+		msg, err := c.self.Receive(gathered)
 		if err != nil {
-			c.d.n.Logger().Warn("dist: message not sent", "node", c.p.node, "type", typeName(f.msg), "error", err)
-			return true
+			break
 		}
-		f.payload = b
+		f, ok := msg.(frame)
+		if !ok {
+			return c.frames, msg
+		}
+		c.frames = append(c.frames, f)
 	}
-	c.buf = appendFrame(c.buf[:0], f)
+	return c.frames, nil
+}
+
+// send sends frames, in one write, and reports whether the connection is
+// still up. A message that fails to encode is dropped.
+func (c *connection) send(frames ...frame) bool {
+	c.buf, c.ends, c.packets = c.buf[:0], c.ends[:0], c.packets[:0]
+	for _, f := range frames {
+		switch f.op {
+		case opSend, opSendName, opSendAlias:
+			b, err := c.enc.Encode(f.msg)
+			if err != nil {
+				c.d.n.Logger().Warn("dist: message not sent", "node", c.p.node, "type", typeName(f.msg), "error", err)
+				continue
+			}
+			f.payload = b
+		}
+		c.buf = appendFrame(c.buf, f)
+		c.ends = append(c.ends, len(c.buf))
+	}
+	start := 0
+	for _, end := range c.ends {
+		c.packets = append(c.packets, c.buf[start:end])
+		start = end
+	}
+	clear(c.frames) // keep no message
+	if len(c.packets) == 0 {
+		return true
+	}
 	c.said = true
-	return c.sock.Send(context.Background(), c.self, c.buf) == nil
+	err := c.sock.SendAll(context.Background(), c.self, c.packets...)
+	clear(c.packets)
+	if cap(c.buf) > 1<<20 {
+		c.buf = nil // keep no large buffer
+	}
+	return err == nil
 }
 
 // receive hands the frame b to the node. The other node speaks only for
