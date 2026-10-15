@@ -75,7 +75,27 @@ func (d *decoder) feed(b []byte) {
 		d.buf = b
 		return
 	}
+	if n := len(d.buf) + len(b); n > cap(d.buf) {
+		d.buf = append(make([]byte, 0, d.grown(n)), d.buf...)
+	}
 	d.buf = append(d.buf, b...)
+}
+
+// grown returns the capacity for n bytes: double what was, up to the
+// length of the packet if its prefix tells it. append would grow a large
+// buffer by a quarter at a time, copying a packet of megabytes read 64 KB
+// at a time some five times over; doubling, never more than what came
+// tells, copies it twice at most.
+func (d *decoder) grown(n int) int {
+	c := max(n, 2*cap(d.buf))
+	if h := d.packet.prefix(); h > 0 && len(d.buf) >= h {
+		var size int
+		for _, b := range d.buf[:h] {
+			size = size<<8 | int(b)
+		}
+		c = min(c, max(n, h+size))
+	}
+	return c
 }
 
 // next cuts the next packet, if a whole one is there. For Raw, length 0

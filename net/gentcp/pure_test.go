@@ -103,6 +103,30 @@ func TestDecoderPeek(t *testing.T) {
 	}
 }
 
+// TestDecoderGrows checks that a large packet read a piece at a time is
+// copied about twice, not once per quarter it grows by, and that its
+// buffer grows no larger than it.
+func TestDecoderGrows(t *testing.T) {
+	const size, piece = 1 << 20, 64 << 10
+	d := decoder{packet: Packet4}
+	d.feed([]byte{0, 0x10, 0, 0})
+	copied, grows := 0, 0
+	for range size / piece {
+		before := cap(d.buf)
+		d.feed(make([]byte, piece))
+		if cap(d.buf) != before {
+			copied += len(d.buf) - piece
+			grows++
+		}
+	}
+	if copied > 2*size || cap(d.buf) != 4+size {
+		t.Errorf("%d grows copied %d bytes, capacity %d; want at most %d bytes, capacity %d", grows, copied, cap(d.buf), 2*size, 4+size)
+	}
+	if pkt, ok, _ := d.next(0); !ok || len(pkt) != size {
+		t.Errorf("packet of %d bytes, %v; want %d", len(pkt), ok, size)
+	}
+}
+
 func TestHeader(t *testing.T) {
 	for _, tt := range []struct {
 		p    Packet
