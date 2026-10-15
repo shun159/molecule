@@ -105,12 +105,15 @@ func (e procEnv) SendAfter(d time.Duration, msg any) func() {
 	return func() { t.Stop() }
 }
 
-// Async runs run in a goroutine, its ctx done with the process too.
+// Async runs run in a goroutine, its ctx done with the process too, and
+// once run returns: a context of the process's not cancelled stays with it
+// until the process ends.
 func (e procEnv) Async(run func(context.Context) (any, error), done func(any, error) any) func() {
 	n, self := e.self.Node(), e.self.PID()
 	ctx, cancel := context.WithCancel(e.self.Context())
 	go func() {
 		v, err := RunAsync(ctx, run)
+		cancel()
 		n.Send(self, done(v, err))
 	}()
 	return cancel
