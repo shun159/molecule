@@ -64,6 +64,71 @@ func (e writeEffect[K, V]) Perform(env gen.Env) {
 	e.t.deliver(env, e.tag, b, err)
 }
 
+// Write is a put of Val under Key, or the delete of Key, for WritesEffect.
+type Write[K comparable, V any] struct {
+	Key    K
+	Val    V
+	Delete bool
+}
+
+// WritesEffect is the effect making writes in order, as PutEffect and
+// DeleteEffect make one, all or none if one fails to encode: then none is
+// made. One Durable with tag arrives, once the last is durable, those
+// before it with it, or with the error of the write that failed.
+//
+//	actor.Do(t.WritesEffect(from, kvs.Write[K, V]{Key: k, Val: v}, kvs.Write[K, V]{Key: old, Delete: true}))
+func (t *Table[K, V]) WritesEffect(tag any, writes ...Write[K, V]) actor.Effect {
+	return writesEffect[K, V]{t: t, writes: writes, tag: tag}
+}
+
+type writesEffect[K comparable, V any] struct {
+	actor.Extension
+	t      *Table[K, V]
+	writes []Write[K, V]
+	tag    any
+}
+
+func (e writesEffect[K, V]) Perform(env gen.Env) {
+	t := e.t
+	if len(e.writes) == 0 {
+		if e.tag != nil {
+			env.Send(env.Self(), Durable{Tag: e.tag})
+		}
+		return
+	}
+	recs := make([]rec, len(e.writes))
+	for i, w := range e.writes {
+		op := opPut
+		if w.Delete {
+			op = opDel
+		}
+		var buf []byte
+		body, err := t.encode(&buf, op, w.Key, w.Val)
+		if err != nil {
+			t.deliver(env, e.tag, nil, err)
+			return
+		}
+		recs[i] = newRec(body)
+	}
+	var b *batch
+	var err error
+	for i, w := range e.writes {
+		if w.Delete {
+			b, err = t.idx.del(t.log, w.Key, recs[i], nil)
+		} else if b, err = t.idx.put(t.log, w.Key, w.Val, recs[i], nil); err == nil {
+			t.noteExpiry(w.Key, w.Val)
+		}
+		if err != nil {
+			break
+		}
+	}
+	if err == nil {
+		t.maybeCompact()
+		t.log.kickRun()
+	}
+	t.deliver(env, e.tag, b, err)
+}
+
 // deliver sends the behaviour of env a Durable with tag once b is
 // durable, or with err at once, if any; with a nil tag, it logs err.
 func (t *Table[K, V]) deliver(env gen.Env, tag any, b *batch, err error) {
