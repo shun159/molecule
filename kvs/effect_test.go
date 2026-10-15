@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
@@ -158,5 +159,22 @@ func TestWrites(t *testing.T) {
 	}
 	if err := tab.Writes(); err != nil {
 		t.Errorf("no writes: %v", err)
+	}
+}
+
+// Writes waits for its writes to be durable as Put does: with SyncEvery,
+// at the sync of the period, not one of its own.
+func TestWritesWaitSync(t *testing.T) {
+	tab := open(t, t.TempDir(), kvs.Options[string, any]{Sync: kvs.SyncEvery(time.Hour)})
+	done := make(chan error, 1)
+	go func() { done <- tab.Writes(kvs.Write[string, any]{Key: "a", Val: 1}) }()
+	select {
+	case err := <-done:
+		t.Fatalf("durable before the sync of the period: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	tab.Close() // syncs what is left
+	if err := <-done; err != nil {
+		t.Errorf("Writes: %v", err)
 	}
 }
