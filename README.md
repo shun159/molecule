@@ -117,7 +117,8 @@ The package documentation is available through `go doc`. The `examples`
 directory holds small programs: an echo server, a chat server, a server
 crashing and being restarted, a mailbox under load, the code lock and
 push button of the gen_statem documentation, two nodes pinging each
-other, a standby node taking over when its primary goes away, and a
-table of keys and values partitioned over nodes by consistent hashing.
+other, a standby node taking over when its primary goes away, a table
+of keys and values partitioned over nodes by consistent hashing, and
+topics published on to their subscribers over nodes, by process groups.
 
 molecule requires Go 1.27.
