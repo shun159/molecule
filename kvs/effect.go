@@ -89,15 +89,34 @@ type writesEffect[K comparable, V any] struct {
 }
 
 func (e writesEffect[K, V]) Perform(env gen.Env) {
-	t := e.t
 	if len(e.writes) == 0 {
 		if e.tag != nil {
 			env.Send(env.Self(), Durable{Tag: e.tag})
 		}
 		return
 	}
-	recs := make([]rec, len(e.writes))
-	for i, w := range e.writes {
+	b, err := e.t.writes(e.writes)
+	e.t.deliver(env, e.tag, b, err)
+}
+
+// Writes makes writes as WritesEffect does, and returns once they are
+// durable: for a goroutine of its own, not a behaviour.
+func (t *Table[K, V]) Writes(writes ...Write[K, V]) error {
+	if len(writes) == 0 {
+		return nil
+	}
+	b, err := t.writes(writes)
+	if err != nil {
+		return err
+	}
+	return t.log.wait(b)
+}
+
+// writes makes writes, all or none if one fails to encode, and returns the
+// batch of the last.
+func (t *Table[K, V]) writes(writes []Write[K, V]) (*batch, error) {
+	recs := make([]rec, len(writes))
+	for i, w := range writes {
 		op := opPut
 		if w.Delete {
 			op = opDel
@@ -105,28 +124,25 @@ func (e writesEffect[K, V]) Perform(env gen.Env) {
 		var buf []byte
 		body, err := t.encode(&buf, op, w.Key, w.Val)
 		if err != nil {
-			t.deliver(env, e.tag, nil, err)
-			return
+			return nil, err
 		}
 		recs[i] = newRec(body)
 	}
 	var b *batch
 	var err error
-	for i, w := range e.writes {
+	for i, w := range writes {
 		if w.Delete {
 			b, err = t.idx.del(t.log, w.Key, recs[i], nil)
 		} else if b, err = t.idx.put(t.log, w.Key, w.Val, recs[i], nil); err == nil {
 			t.noteExpiry(w.Key, w.Val)
 		}
 		if err != nil {
-			break
+			return nil, err
 		}
 	}
-	if err == nil {
-		t.maybeCompact()
-		t.log.kickRun()
-	}
-	t.deliver(env, e.tag, b, err)
+	t.maybeCompact()
+	t.log.kickRun()
+	return b, nil
 }
 
 // deliver sends the behaviour of env a Durable with tag once b is
