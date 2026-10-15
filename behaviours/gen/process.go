@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"runtime/debug"
-	"sync"
 	"time"
 
 	"github.com/shun159/molecule/actor"
@@ -130,27 +129,22 @@ func RunAsync(ctx context.Context, run func(context.Context) (any, error)) (v an
 }
 
 func (e procEnv) Request(pid proc.PID, reply func(proc.Ref, proc.AliasMsg) any) (proc.Ref, func()) {
-	return e.request(e.self.Node().MonitorAlias(pid), reply)
+	a := e.self.Node().MonitorAliasFunc(pid, e.deliver(reply))
+	return a.Ref, a.Release
 }
 
 func (e procEnv) RequestName(node, name string, reply func(proc.Ref, proc.AliasMsg) any) (proc.Ref, func()) {
-	return e.request(e.self.Node().MonitorAliasName(node, name), reply)
+	a := e.self.Node().MonitorAliasNameFunc(node, name, e.deliver(reply))
+	return a.Ref, a.Release
 }
 
-// request hands what arrives on a to the process, as reply makes it.
-func (e procEnv) request(a proc.Alias, reply func(proc.Ref, proc.AliasMsg) any) (proc.Ref, func()) {
-	n, self, dead := e.self.Node(), e.self.PID(), e.self.Done()
-	released := make(chan struct{})
-	go func() {
-		defer a.Release()
-		select {
-		case m := <-a.C:
-			n.Send(self, reply(a.Ref, m))
-		case <-released:
-		case <-dead:
-		}
-	}()
-	return a.Ref, sync.OnceFunc(func() { close(released) })
+// deliver puts what arrives for a request in the mailbox of the process,
+// as reply makes it, in the goroutine of whoever sends it: none waits for
+// it. The runtime releases the alias, answered or abandoned, and those
+// left as the process ends.
+func (e procEnv) deliver(reply func(proc.Ref, proc.AliasMsg) any) func(proc.Ref, proc.AliasMsg) {
+	n, self := e.self.Node(), e.self.PID()
+	return func(ref proc.Ref, m proc.AliasMsg) { n.Send(self, reply(ref, m)) }
 }
 
 func (e procEnv) Logger() *slog.Logger { return e.self.Node().Logger() }

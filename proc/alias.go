@@ -21,7 +21,8 @@ type AliasMsg struct {
 // arrives on C instead if it comes first. Exactly one AliasMsg ever
 // arrives.
 //
-// Release must be called once the alias is no longer needed.
+// Release must be called once the alias is no longer needed. An alias of
+// MonitorAliasFunc has no C: its message goes to a func.
 type Alias struct {
 	Ref Ref
 	C   <-chan AliasMsg
@@ -33,10 +34,34 @@ type Alias struct {
 
 // Alias creates an alias.
 func (n *Node) Alias() Alias {
-	ref := n.MakeRef()
+	a, s := n.newAlias(n.MakeRef(), nil)
+	n.aliases.put(a.Ref.id, s)
+	return a
+}
+
+// sink is where the one AliasMsg of an alias goes: on its channel, or to
+// a func.
+type sink struct {
+	ch chan AliasMsg
+	f  func(AliasMsg)
+}
+
+func (s sink) deliver(m AliasMsg) {
+	if s.f != nil {
+		s.f(m)
+		return
+	}
+	s.ch <- m // never blocks: only the first gets here
+}
+
+// newAlias returns the alias of ref and where its message goes: f, given
+// the ref, if not nil, else a channel of its own, its C.
+func (n *Node) newAlias(ref Ref, f func(Ref, AliasMsg)) (Alias, sink) {
+	if f != nil {
+		return Alias{Ref: ref, n: n}, sink{f: func(m AliasMsg) { f(ref, m) }}
+	}
 	ch := make(chan AliasMsg, 1)
-	n.aliases.put(ref.id, ch)
-	return Alias{Ref: ref, C: ch, n: n}
+	return Alias{Ref: ref, C: ch, n: n}, sink{ch: ch}
 }
 
 // MonitorAlias creates an alias that also monitors pid, like
@@ -47,14 +72,24 @@ func (n *Node) Alias() Alias {
 //
 // It is what a request waiting for a reply needs, and lighter than Watch
 // plus Alias.
-func (n *Node) MonitorAlias(pid PID) Alias {
+func (n *Node) MonitorAlias(pid PID) Alias { return n.monitorAlias(pid, nil) }
+
+// MonitorAliasFunc is MonitorAlias, its AliasMsg handed to deliver rather
+// than put on C, which it has none of: in the goroutine of whoever sends
+// it, or of pid dying, or at once if pid is dead. deliver must not block,
+// as sending to a process does not: it is for a process to have the reply
+// in its mailbox, without a goroutine waiting on C for it.
+func (n *Node) MonitorAliasFunc(pid PID, deliver func(Ref, AliasMsg)) Alias {
+	return n.monitorAlias(pid, deliver)
+}
+
+func (n *Node) monitorAlias(pid PID, f func(Ref, AliasMsg)) Alias {
 	ref := n.MakeRef()
-	ch := make(chan AliasMsg, 1)
-	a := Alias{Ref: ref, C: ch, n: n}
+	a, s := n.newAlias(ref, f)
 
 	t := n.lookup(pid)
 	if t == nil && n.remote(pid) != nil {
-		n.aliases.put(ref.id, ch)
+		n.aliases.put(ref.id, s)
 		n.monitorRemote(ref, pid, watcher{alias: true})
 		a.remote = pid
 		return a
@@ -64,11 +99,11 @@ func (n *Node) MonitorAlias(pid PID) Alias {
 		if !n.isLocal(pid) {
 			reason = NoConnection
 		}
-		ch <- AliasMsg{Down: true, Reason: reason}
+		s.deliver(AliasMsg{Down: true, Reason: reason})
 		return a
 	}
 
-	n.aliases.put(ref.id, ch)
+	n.aliases.put(ref.id, s)
 	t.mu.Lock()
 	if t.dead.Load() {
 		t.mu.Unlock()
@@ -107,15 +142,15 @@ func (n *Node) SendAlias(ref Ref, msg any) {
 	if ref.creation != n.creation {
 		return
 	}
-	if ch, ok := n.aliases.take(ref.id); ok {
-		ch <- AliasMsg{Msg: msg} // never blocks: only the first gets here
+	if s, ok := n.aliases.take(ref.id); ok {
+		s.deliver(AliasMsg{Msg: msg})
 	}
 }
 
 // aliasDown delivers the death of the process watched by alias ref.
 func (n *Node) aliasDown(ref Ref, reason error) {
-	if ch, ok := n.aliases.take(ref.id); ok {
-		ch <- AliasMsg{Down: true, Reason: reason}
+	if s, ok := n.aliases.take(ref.id); ok {
+		s.deliver(AliasMsg{Down: true, Reason: reason})
 	}
 }
 
@@ -127,31 +162,31 @@ type aliasTable struct {
 
 type aliasShard struct {
 	mu sync.Mutex
-	m  map[uint64]chan AliasMsg
+	m  map[uint64]sink
 	_  [48]byte // keep shards on separate cache lines
 }
 
 func (t *aliasTable) shard(id uint64) *aliasShard { return &t.shards[id%uint64(len(t.shards))] }
 
-func (t *aliasTable) put(id uint64, ch chan AliasMsg) {
+func (t *aliasTable) put(id uint64, to sink) {
 	s := t.shard(id)
 	s.mu.Lock()
 	if s.m == nil {
-		s.m = make(map[uint64]chan AliasMsg)
+		s.m = make(map[uint64]sink)
 	}
-	s.m[id] = ch
+	s.m[id] = to
 	s.mu.Unlock()
 }
 
-// take removes the alias and returns its channel, so that only one
-// message is ever delivered to it.
-func (t *aliasTable) take(id uint64) (chan AliasMsg, bool) {
+// take removes the alias and returns where its message goes, so that
+// only one message is ever delivered to it.
+func (t *aliasTable) take(id uint64) (sink, bool) {
 	s := t.shard(id)
 	s.mu.Lock()
-	ch, ok := s.m[id]
+	to, ok := s.m[id]
 	delete(s.m, id)
 	s.mu.Unlock()
-	return ch, ok
+	return to, ok
 }
 
 func (t *aliasTable) del(id uint64) {
