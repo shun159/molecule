@@ -28,6 +28,8 @@ type writer struct {
 	// buf, rather than one per buffer.
 	vectored bool
 	buf      []byte
+	hdrs     []byte      // the prefixes of the packets of a write
+	bufs     net.Buffers // the buffers of a vectored write
 }
 
 func newWriter(conn net.Conn, opts Options) *writer {
@@ -38,13 +40,14 @@ func newWriter(conn net.Conn, opts Options) *writer {
 // sendFailed tells the socket process that a write failed.
 type sendFailed struct{ err error }
 
-// write writes a packet of data. A failure of the connection is to be
-// told to the socket process, which then fails it: the stream is cut at
-// an unknown place, and of no use anymore.
-func (w *writer) write(data []byte) (failed bool, err error) {
-	hdr, err := w.packet.header(len(data))
-	if err != nil {
-		return false, err
+// write writes packets, in one write if it can. A failure of the
+// connection is to be told to the socket process, which then fails it:
+// the stream is cut at an unknown place, and of no use anymore.
+func (w *writer) write(packets ...[]byte) (failed bool, err error) {
+	for _, data := range packets {
+		if _, err := w.packet.header(len(data)); err != nil {
+			return false, err
+		}
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -56,14 +59,28 @@ func (w *writer) write(data []byte) (failed bool, err error) {
 	if w.timeout > 0 {
 		w.conn.SetWriteDeadline(time.Now().Add(w.timeout))
 	}
+	w.hdrs = w.hdrs[:0]
+	for _, data := range packets {
+		hdr, _ := w.packet.header(len(data))
+		w.hdrs = append(w.hdrs, hdr...)
+	}
+	h := w.packet.prefix()
 	switch {
-	case len(hdr) == 0:
-		_, err = w.conn.Write(data)
+	case h == 0 && len(packets) == 1:
+		_, err = w.conn.Write(packets[0])
 	case w.vectored:
-		bufs := net.Buffers{hdr, data}
+		w.bufs = w.bufs[:0]
+		for i, data := range packets {
+			w.bufs = append(w.bufs, w.hdrs[i*h:(i+1)*h], data)
+		}
+		bufs := w.bufs // WriteTo consumes what it is given
 		_, err = bufs.WriteTo(w.conn)
+		clear(w.bufs) // keep no data
 	default:
-		w.buf = append(append(w.buf[:0], hdr...), data...)
+		w.buf = w.buf[:0]
+		for i, data := range packets {
+			w.buf = append(append(w.buf, w.hdrs[i*h:(i+1)*h]...), data...)
+		}
 		_, err = w.conn.Write(w.buf)
 		if cap(w.buf) > 64<<10 {
 			w.buf = nil // keep no large buffer

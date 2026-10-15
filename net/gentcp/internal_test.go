@@ -177,7 +177,8 @@ func (c *countConn) Write(b []byte) (int, error) {
 }
 
 // TestOneWritePerPacket sends a framed packet on a connection other than
-// TCP, such as TLS: header and data go in one write.
+// TCP, such as TLS: header and data go in one write; and several packets
+// at once, all in one write.
 func TestOneWritePerPacket(t *testing.T) {
 	n := proc.NewNode("")
 	server, peer := net.Pipe()
@@ -192,10 +193,13 @@ func TestOneWritePerPacket(t *testing.T) {
 	if err := sock.Send(context.Background(), n, []byte("hello")); err != nil {
 		t.Fatal(err)
 	}
+	if err := sock.SendAll(context.Background(), n, []byte("a"), []byte("b"), []byte("c")); err != nil {
+		t.Fatal(err)
+	}
 	conn.mu.Lock()
 	defer conn.mu.Unlock()
-	if conn.writes != 1 {
-		t.Errorf("%d writes", conn.writes)
+	if conn.writes != 2 {
+		t.Errorf("%d writes, want 2", conn.writes)
 	}
 }
 

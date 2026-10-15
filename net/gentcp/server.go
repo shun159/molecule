@@ -157,7 +157,7 @@ func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Opt
 func (s *server) handle(from actor.From, req any) (reply any, deferred, stop bool) {
 	switch r := req.(type) {
 	case sendReq:
-		err := s.send(r.data)
+		err := s.send(append([][]byte{r.data}, r.more...)...)
 		if r.then {
 			s.setActive(r.active)
 		}
@@ -223,8 +223,8 @@ func (s *server) revoke() {
 }
 
 // send writes for a Socket made by hand, which has no writer.
-func (s *server) send(data []byte) error {
-	failed, err := s.sock.w.write(data)
+func (s *server) send(packets ...[]byte) error {
+	failed, err := s.sock.w.write(packets...)
 	if failed {
 		s.fail(err)
 	}

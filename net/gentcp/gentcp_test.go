@@ -261,6 +261,13 @@ func TestPacket4(t *testing.T) {
 		if got := readAll(t, peer, 6); got != string(frame4("hi"))+"hi" {
 			t.Errorf("peer got %q", got)
 		}
+
+		// Sending several adds a header to each.
+		sock.SendAll(context.Background(), s, []byte("ab"), []byte(""), []byte("cde"))
+		want := string(frame4("ab")) + "ab" + string(frame4("")) + string(frame4("cde")) + "cde"
+		if got := readAll(t, peer, len(want)); got != want {
+			t.Errorf("peer got %q, want %q", got, want)
+		}
 	})
 }
 
