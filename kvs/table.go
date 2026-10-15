@@ -219,7 +219,7 @@ func (t *Table[K, V]) recover() (seq uint64, disk int64, nsegs int, err error) {
 			return 0, 0, 0, err
 		}
 		seq = max(seq, last)
-		if n == 0 {
+		if last == 0 { // empty, or all in the snapshot: the last segment too
 			os.Remove(path)
 			continue
 		}
