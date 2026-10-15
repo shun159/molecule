@@ -9,8 +9,12 @@ import (
 )
 
 type (
-	codecEmpty  struct{}
-	codecHidden struct{ n int }
+	codecEmpty struct{}
+	// codecHidden has a field, but none gob sees.
+	codecHidden struct {
+		//lint:ignore U1000 never read: the type is to have no exported field
+		n int
+	}
 )
 
 func init() { Register(codecEmpty{}, codecHidden{}) }
