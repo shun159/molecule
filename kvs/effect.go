@@ -96,6 +96,9 @@ func (e writesEffect[K, V]) Perform(env gen.Env) {
 		return
 	}
 	b, err := e.t.writes(e.writes)
+	if err == nil {
+		e.t.log.kickRun()
+	}
 	e.t.deliver(env, e.tag, b, err)
 }
 
@@ -113,7 +116,8 @@ func (t *Table[K, V]) Writes(writes ...Write[K, V]) error {
 }
 
 // writes makes writes, all or none if one fails to encode, and returns the
-// batch of the last.
+// batch of the last: for the caller to wait for it, leading its sync, as
+// Put does, or kick the log to sync it, as an effect does.
 func (t *Table[K, V]) writes(writes []Write[K, V]) (*batch, error) {
 	recs := make([]rec, len(writes))
 	for i, w := range writes {
@@ -141,7 +145,6 @@ func (t *Table[K, V]) writes(writes []Write[K, V]) (*batch, error) {
 		}
 	}
 	t.maybeCompact()
-	t.log.kickRun()
 	return b, nil
 }
 
