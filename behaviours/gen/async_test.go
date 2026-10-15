@@ -322,3 +322,21 @@ func TestMaxAsyncSimulated(t *testing.T) {
 		}
 	}
 }
+
+// The context of an async is done once its Run returns: one of the
+// process's left undone would stay with it until it ends, for each async.
+func TestAsyncContextDone(t *testing.T) {
+	n := proc.NewNode("")
+	asyncTest(t, n, func(s *proc.Self) {
+		ref := startAsyncer(t, n, s.PID())
+		ctxs := make(chan context.Context, 1)
+		ref.Cast(s, startAsync{Key: "k", Run: func(ctx context.Context) (any, error) {
+			ctxs <- ctx
+			return 1, nil
+		}})
+		result(t, s)
+		if ctx := <-ctxs; ctx.Err() == nil {
+			t.Error("the context of an async returned is not done")
+		}
+	})
+}
