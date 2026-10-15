@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,7 +53,8 @@ type Tree struct {
 }
 
 // TreeOf returns the tree under top, asking each supervisor its children.
-// A child not running has a zero PID.
+// A child not running has a zero PID. A supervisor gone as it is asked,
+// restarted say, is shown as it was listed, without children.
 func TreeOf(ctx context.Context, n *proc.Node, top proc.PID) (Tree, error) {
 	t := Tree{PID: top}
 	if info, ok := n.Info(top); ok {
@@ -63,23 +65,36 @@ func TreeOf(ctx context.Context, n *proc.Node, top proc.PID) (Tree, error) {
 		return t, err
 	}
 	for _, c := range children {
-		sub := Tree{ID: c.ID, PID: c.PID, Restarts: c.Restarts}
-		switch {
-		case c.PID.IsZero():
-		case c.Type == supervisor.Supervisor:
-			var err error
-			if sub, err = TreeOf(ctx, n, c.PID); err != nil {
-				return t, err
-			}
-			sub.ID, sub.Restarts = c.ID, c.Restarts
-		default:
-			if info, ok := n.Info(c.PID); ok {
-				sub.Label = info.Label
-			}
+		sub, err := child(ctx, n, c)
+		if err != nil {
+			return t, err
 		}
 		t.Children = append(t.Children, sub)
 	}
 	return t, nil
+}
+
+// child returns the tree of the child c of a supervisor.
+func child(ctx context.Context, n *proc.Node, c supervisor.ChildInfo) (Tree, error) {
+	sub := Tree{ID: c.ID, PID: c.PID, Restarts: c.Restarts}
+	switch {
+	case c.PID.IsZero():
+	case c.Type == supervisor.Supervisor:
+		t, err := TreeOf(ctx, n, c.PID)
+		switch {
+		case errors.Is(err, proc.NoProc):
+			return sub, nil // gone since listed
+		case err != nil:
+			return sub, err
+		}
+		t.ID, t.Restarts = c.ID, c.Restarts
+		return t, nil
+	default:
+		if info, ok := n.Info(c.PID); ok {
+			sub.Label = info.Label
+		}
+	}
+	return sub, nil
 }
 
 // WriteTree draws t. A run of three or more children alike, the
