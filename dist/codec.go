@@ -2,7 +2,6 @@ package dist
 
 import (
 	"bytes"
-	"encoding"
 	"encoding/binary"
 	"encoding/gob"
 	"errors"
@@ -48,6 +47,17 @@ type Decoder interface {
 // A type is described once per connection, the first time it is sent, or
 // is sent as its own bytes, if binary: see AppendAny.
 func Register(msgs ...any) {
+	var ids []typeID
+	for _, m := range msgs {
+		gob.Register(m)
+		t := reflect.TypeOf(m)
+		ids = append(ids, typeID{t: t, id: hashName(t), empty: noFields(t), bin: methodsOf(t)})
+	}
+	register(ids...)
+}
+
+// register adds the types to those registered.
+func register(ids ...typeID) {
 	registering.Lock()
 	defer registering.Unlock()
 	r := registry{byType: map[reflect.Type]typeID{}, byID: map[uint64]typeID{}}
@@ -56,14 +66,11 @@ func Register(msgs ...any) {
 			r.byType[t], r.byID[id.id] = id, id
 		}
 	}
-	for _, m := range msgs {
-		gob.Register(m)
-		t := reflect.TypeOf(m)
-		id := typeID{t: t, id: hashName(t), empty: noFields(t), binary: isBinary(t)}
-		if other, ok := r.byID[id.id]; ok && other.t != t {
-			panic(fmt.Sprintf("dist: %v and %v register under one ID", t, other.t))
+	for _, id := range ids {
+		if other, ok := r.byID[id.id]; ok && other.t != id.t {
+			panic(fmt.Sprintf("dist: %v and %v register under one ID", id.t, other.t))
 		}
-		r.byType[t], r.byID[id.id] = id, id
+		r.byType[id.t], r.byID[id.id] = id, id
 	}
 	registered.Store(&r)
 }
@@ -76,10 +83,10 @@ type (
 		byID   map[uint64]typeID
 	}
 	typeID struct {
-		t      reflect.Type
-		id     uint64 // a hash of its name, the same on every node
-		empty  bool   // without exported fields: gob encodes none of it
-		binary bool   // sent as the bytes it appends, see AppendAny
+		t     reflect.Type
+		id    uint64       // a hash of its name, the same on every node
+		empty bool         // without exported fields: gob encodes none of it
+		bin   *binaryCodec // if binary, how, see AppendAny
 	}
 )
 
@@ -169,7 +176,7 @@ type gobEncoder struct {
 
 func (e *gobEncoder) Encode(msg any) ([]byte, error) {
 	t, ok := typeOf(msg)
-	if ok && t.binary {
+	if ok && t.bin != nil {
 		b, err := e.encodeBinary(t, msg)
 		if !errors.Is(err, ErrNotBinary) {
 			return b, err
@@ -204,7 +211,7 @@ func (e *gobEncoder) Encode(msg any) ([]byte, error) {
 // encodeBinary encodes msg, of the binary type t, as its own bytes.
 func (e *gobEncoder) encodeBinary(t typeID, msg any) ([]byte, error) {
 	b := binary.BigEndian.AppendUint64(append(e.bin[:0], binaryMsg), t.id)
-	b, err := msg.(encoding.BinaryAppender).AppendBinary(b)
+	b, err := t.bin.append(b, msg)
 	if cap(b) <= maxKept {
 		e.bin = b
 	}
@@ -284,8 +291,8 @@ func decodeBinary(b []byte) (any, error) {
 		return nil, errStream
 	}
 	t, ok := typeByID(binary.BigEndian.Uint64(b))
-	if !ok || !t.binary {
+	if !ok || t.bin == nil {
 		return nil, fmt.Errorf("dist: a binary message of a type not registered, %#x", binary.BigEndian.Uint64(b))
 	}
-	return t.unmarshal(b[8:])
+	return t.bin.decode(b[8:])
 }

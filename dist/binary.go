@@ -99,22 +99,22 @@ func AppendAny(b []byte, v any) ([]byte, error) {
 	case []byte:
 		return append(binary.AppendUvarint(append(b, anyBytes), uint64(len(x))), x...), nil
 	case proc.PID:
-		return appendSized(append(b, anyPID), x)
+		return appendSized(append(b, anyPID), x.AppendBinary)
 	case proc.Ref:
-		return appendSized(append(b, anyRef), x)
+		return appendSized(append(b, anyRef), x.AppendBinary)
 	}
 	t, ok := typeOf(v)
-	if !ok || !t.binary {
+	if !ok || t.bin == nil {
 		return b, fmt.Errorf("%w: %T", ErrNotBinary, v)
 	}
 	b = binary.BigEndian.AppendUint64(append(b, anyTyped), t.id)
-	return appendSized(b, v.(encoding.BinaryAppender))
+	return appendSized(b, func(b []byte) ([]byte, error) { return t.bin.append(b, v) })
 }
 
-// appendSized appends what v appends, after its length in 4 bytes.
-func appendSized(b []byte, v encoding.BinaryAppender) ([]byte, error) {
+// appendSized appends what appendTo appends, after its length in 4 bytes.
+func appendSized(b []byte, appendTo func([]byte) ([]byte, error)) ([]byte, error) {
 	at := len(b)
-	b, err := v.AppendBinary(append(b, 0, 0, 0, 0))
+	b, err := appendTo(append(b, 0, 0, 0, 0))
 	if err != nil {
 		return b, err
 	}
@@ -211,7 +211,7 @@ func readSized(kind byte, b []byte) (any, []byte, error) {
 			return nil, b, errShort
 		}
 		var ok bool
-		if t, ok = typeByID(binary.BigEndian.Uint64(b)); !ok || !t.binary {
+		if t, ok = typeByID(binary.BigEndian.Uint64(b)); !ok || t.bin == nil {
 			return nil, b, fmt.Errorf("dist: a binary value of a type not registered, %#x", binary.BigEndian.Uint64(b))
 		}
 		b = b[8:]
@@ -231,22 +231,33 @@ func readSized(kind byte, b []byte) (any, []byte, error) {
 		err := r.UnmarshalBinary(v)
 		return r, rest, err
 	}
-	x, err := t.unmarshal(v)
+	x, err := t.bin.decode(v)
 	return x, rest, err
 }
 
-// isBinary reports whether the values of t have a binary encoding.
-func isBinary(t reflect.Type) bool {
-	_, app := reflect.Zero(t).Interface().(encoding.BinaryAppender)
-	_, un := reflect.New(t).Interface().(BinaryDecoder)
-	return app && un
+// binaryCodec encodes the values of a binary type.
+type binaryCodec struct {
+	append func(b []byte, v any) ([]byte, error)
+	decode func(b []byte) (any, error)
 }
 
-// unmarshal decodes a value of the binary type t from b.
-func (t typeID) unmarshal(b []byte) (any, error) {
-	v := reflect.New(t.t)
-	if err := v.Interface().(BinaryDecoder).DecodeBinary(b); err != nil {
-		return nil, err
+// methodsOf returns the codec of the methods of t, nil if it has none.
+func methodsOf(t reflect.Type) *binaryCodec {
+	_, app := reflect.Zero(t).Interface().(encoding.BinaryAppender)
+	_, dec := reflect.New(t).Interface().(BinaryDecoder)
+	if !app || !dec {
+		return nil
 	}
-	return v.Elem().Interface(), nil
+	return &binaryCodec{
+		append: func(b []byte, v any) ([]byte, error) {
+			return v.(encoding.BinaryAppender).AppendBinary(b)
+		},
+		decode: func(b []byte) (any, error) {
+			v := reflect.New(t)
+			if err := v.Interface().(BinaryDecoder).DecodeBinary(b); err != nil {
+				return nil, err
+			}
+			return v.Elem().Interface(), nil
+		},
+	}
 }

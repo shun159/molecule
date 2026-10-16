@@ -157,8 +157,9 @@ func TestReadAnyCutShort(t *testing.T) {
 }
 
 // A message of a binary type goes as its own bytes, out of the gob
-// stream; one whose AppendBinary is not binary for a command goes by gob.
-// Both come back as they went, between messages of gob.
+// stream, the calls and casts of gen too; one whose AppendBinary is not
+// binary for a command or request goes by gob. All come back as they
+// went, between messages of gob.
 func TestCodecBinary(t *testing.T) {
 	n := proc.NewNode("a@localhost")
 	msgs := []struct {
@@ -169,7 +170,12 @@ func TestCodecBinary(t *testing.T) {
 		{"text", false},
 		{binAppend{Term: 3, Leader: n.NewPID(), Entries: []binEntry{{Term: 3, Index: 1, Cmd: 1}, {Term: 3, Index: 2, Cmd: "x"}}}, true},
 		{binAppend{Term: 3, Leader: n.NewPID(), Entries: []binEntry{{Term: 3, Index: 3, Cmd: binCmd{N: 1}}}}, false},
-		{actor.CallMsg{Req: "call"}, false},
+		{actor.CallMsg{Req: "call"}, true},
+		{actor.CallMsg{From: actor.From{PID: n.NewPID(), Tag: n.MakeRef()}, Req: binReply{Term: 1}}, true},
+		{actor.CallMsg{From: actor.From{PID: n.NewPID(), Tag: n.MakeRef()}, Req: binCmd{N: 2}}, false},
+		{actor.CastMsg{Req: nil}, true},
+		{actor.CastMsg{Req: binCmd{N: 3}}, false},
+		{actor.CallAbandoned{From: actor.From{PID: n.NewPID(), Tag: n.MakeRef()}}, true},
 		{binReply{Term: 4, From: n.NewPID()}, true},
 	}
 	enc, dec := gobCodec{}.NewEncoder(), gobCodec{}.NewDecoder()
