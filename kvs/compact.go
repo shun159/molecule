@@ -1,0 +1,140 @@
+package kvs
+
+import (
+	"bufio"
+	"io"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+// Compact rewrites the log as a snapshot of the entries, and the writes
+// made while it is written: the segments before go. Writes go on during
+// it.
+func (t *Table[K, V]) Compact() error {
+	t.compactMu.Lock()
+	defer t.compactMu.Unlock()
+	if t.closed.Load() {
+		return ErrClosed
+	}
+	return t.compact()
+}
+
+// maybeCompact starts a compaction if the log has grown large enough.
+func (t *Table[K, V]) maybeCompact() {
+	if t.opts.CompactRatio < 0 {
+		return
+	}
+	disk := t.log.disk.Load()
+	if disk < t.opts.CompactMin || float64(disk) < t.opts.CompactRatio*float64(t.live.Load()) {
+		return
+	}
+	if !t.compacting.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer t.compacting.Store(false)
+		t.compactMu.Lock()
+		defer t.compactMu.Unlock()
+		if t.closed.Load() {
+			return
+		}
+		if err := t.compact(); err != nil {
+			t.compactErr.Store(&err)
+		}
+	}()
+}
+
+func (t *Table[K, V]) compact() error {
+	cut := t.log.cut()
+	if cut.err != nil {
+		return cut.err
+	}
+	name := snapName(cut.seq)
+	size, err := t.writeSnapshot(name, cut.seq)
+	if err != nil {
+		return err
+	}
+	t.log.disk.Add(size)
+	remove := func(name string) {
+		path := filepath.Join(t.dir, name)
+		if fi, err := os.Stat(path); err == nil && os.Remove(path) == nil {
+			t.log.disk.Add(-fi.Size())
+		}
+	}
+	for _, s := range cut.old {
+		remove(s)
+		t.log.segments.Add(-1)
+	}
+	if _, snaps, err := listLog(t.dir); err == nil {
+		for _, s := range snaps {
+			if s.name != name {
+				remove(s.name)
+			}
+		}
+	}
+	t.compactions.Add(1)
+	t.lastCompact.Store(time.Now().UnixNano())
+	return nil
+}
+
+// writeSnapshot writes the entries to the snapshot name, and returns its
+// size. Each record has the seq of the write that set its entry, so that
+// revisions outlive compactions.
+// writeSnapshot writes the entries to the snapshot name, of the log up to
+// seq: and of writes after, to the shards walked after them, which the
+// snapshot holds too. It is put in place once those are durable in the
+// log: else a crash losing them from the log would find them in it, never
+// durable, and maybe without others before them, in shards walked before.
+func (t *Table[K, V]) writeSnapshot(name string, seq uint64) (int64, error) {
+	path := filepath.Join(t.dir, name)
+	f, err := os.Create(path + ".tmp")
+	if err != nil {
+		return 0, err
+	}
+	defer os.Remove(path + ".tmp") // if left
+	w := bufio.NewWriterSize(f, 1<<20)
+	size, last, werr := t.writeEntries(w, seq)
+	if werr == nil {
+		werr = w.Flush()
+	}
+	if werr == nil {
+		werr = f.Sync()
+	}
+	if err := f.Close(); werr == nil {
+		werr = err
+	}
+	if werr == nil && last > seq {
+		werr = t.log.syncWritten()
+	}
+	if werr == nil {
+		werr = os.Rename(path+".tmp", path)
+	}
+	if werr == nil {
+		werr = syncDir(t.dir)
+	}
+	return size, werr
+}
+
+// writeEntries writes a record of each entry to w, as the shards hold them
+// once locked, and returns their size and the latest write among them, or
+// since, if later.
+func (t *Table[K, V]) writeEntries(w io.Writer, since uint64) (size int64, last uint64, err error) {
+	last = since
+	var buf, out []byte
+	for shard := range t.idx.byShard(true) {
+		for l := range shard {
+			body, err := t.encode(&buf, opPut, l.key, l.val)
+			if err != nil {
+				return size, last, err
+			}
+			out = appendRecord(out[:0], newRec(body), l.rev)
+			if _, err := w.Write(out); err != nil {
+				return size, last, err
+			}
+			last = max(last, l.rev)
+			size += int64(len(out))
+		}
+	}
+	return size, last, nil
+}
