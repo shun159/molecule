@@ -46,7 +46,8 @@ func (s *Sim) Heal() {
 	s.record(Event{Kind: Fault, Msg: "heal"})
 	for _, x := range s.nodeNames() {
 		for _, y := range s.nodeNames() {
-			if x < y && cut[[2]string{x, y}] && s.connected(x, y) {
+			healed := cut[[2]string{x, y}] && s.connected(x, y)
+			if x < y && healed { // each pair once
 				s.nodeEvent(x, y, true)
 			}
 		}
@@ -157,73 +158,105 @@ func (s *Sim) nodeEvent(x, y string, up bool) {
 	}
 }
 
-// disconnect makes the nodes x and y lose each other.
+// disconnect makes the nodes x and y lose each other. What fails is
+// gathered first, then told, so that a process dying of it does not
+// signal across the cut as if connected.
 func (s *Sim) disconnect(x, y string) {
-	between := func(a, b proc.PID) bool {
-		an, bn := a.Node(), b.Node()
-		return an == x && bn == y || an == y && bn == x
-	}
+	c := cut{x: x, y: y}
 	for _, l := range s.links {
-		if between(l.from, l.to) {
+		if c.across(l.from, l.to) {
 			s.dropQueue(l)
 		}
 	}
-	// What fails is gathered first, then told, so that a process dying of
-	// it does not signal across the cut as if connected.
-	type pair struct{ a, b proc.PID }
-	var links []pair
-	var downs []struct {
-		watcher proc.PID
-		down    proc.DownMsg
-	}
 	for _, p := range s.procs {
-		if !p.alive || (p.node.name != x && p.node.name != y) {
+		if p.alive && c.ends(p.node.name) {
+			s.cutLinks(&c, p)
+			s.cutMonitors(&c, p)
+		}
+	}
+	c.aliases = s.aliasesAcross(c)
+	s.tell(c)
+}
+
+// cut is what fails between the nodes x and y, cut off from each other.
+type cut struct {
+	x, y    string
+	links   [][2]proc.PID // the processes linked across
+	downs   []cutDown     // the monitors across
+	aliases []proc.Ref    // the aliases of a monitor across
+}
+
+// cutDown is the DownMsg a watcher gets of a monitor across a cut.
+type cutDown struct {
+	watcher proc.PID
+	down    proc.DownMsg
+}
+
+// ends reports whether node is x or y.
+func (c cut) ends(node string) bool { return node == c.x || node == c.y }
+
+// across reports whether a and b are on either side of the cut.
+func (c cut) across(a, b proc.PID) bool {
+	an, bn := a.Node(), b.Node()
+	return an == c.x && bn == c.y || an == c.y && bn == c.x
+}
+
+// cutLinks unlinks p from the processes it is linked to across c.
+func (s *Sim) cutLinks(c *cut, p *process) {
+	for _, q := range sortedPIDs(p.linked) {
+		if !c.across(p.pid, q) {
 			continue
 		}
-		for _, q := range sortedPIDs(p.linked) {
-			if !between(p.pid, q) {
-				continue
-			}
-			delete(p.linked, q)
-			if qp := s.byPID[q]; qp != nil {
-				delete(qp.linked, p.pid)
-			}
-			links = append(links, pair{p.pid, q})
+		delete(p.linked, q)
+		if qp := s.byPID[q]; qp != nil {
+			delete(qp.linked, p.pid)
 		}
-		for _, ref := range sortedRefs(p.watchers) {
-			w := p.watchers[ref]
-			if w.alias || !between(w.pid, p.pid) {
-				continue
-			}
-			delete(p.watchers, ref)
-			if wp := s.byPID[w.pid]; wp != nil {
-				delete(wp.watching, ref)
-			}
-			downs = append(downs, struct {
-				watcher proc.PID
-				down    proc.DownMsg
-			}{w.pid, proc.DownMsg{Ref: ref, PID: p.pid, Reason: proc.NoConnection}})
-		}
+		c.links = append(c.links, [2]proc.PID{p.pid, q})
 	}
-	var aliases []proc.Ref
+}
+
+// cutMonitors ends the monitors of p by processes across c.
+func (s *Sim) cutMonitors(c *cut, p *process) {
+	for _, ref := range sortedRefs(p.watchers) {
+		w := p.watchers[ref]
+		if w.alias || !c.across(w.pid, p.pid) {
+			continue
+		}
+		delete(p.watchers, ref)
+		if wp := s.byPID[w.pid]; wp != nil {
+			delete(wp.watching, ref)
+		}
+		c.downs = append(c.downs, cutDown{w.pid, proc.DownMsg{Ref: ref, PID: p.pid, Reason: proc.NoConnection}})
+	}
+}
+
+// aliasesAcross returns the aliases of a monitor across c.
+func (s *Sim) aliasesAcross(c cut) []proc.Ref {
+	var refs []proc.Ref
 	for _, ref := range s.aliasRefs() {
-		if a := s.aliases[ref]; !a.owner.IsZero() && between(a.owner, a.target) {
-			aliases = append(aliases, ref)
+		if a := s.aliases[ref]; !a.owner.IsZero() && c.across(a.owner, a.target) {
+			refs = append(refs, ref)
 		}
 	}
-	for _, l := range links {
-		for _, end := range [][2]proc.PID{{l.a, l.b}, {l.b, l.a}} {
-			if p := s.byPID[end[0]]; p != nil && p.alive {
+	return refs
+}
+
+// tell tells the processes alive what c failed: each end of a link its
+// exit signal, each watcher its Down, and each alias its down.
+func (s *Sim) tell(c cut) {
+	for _, l := range c.links {
+		for _, end := range [][2]proc.PID{{l[0], l[1]}, {l[1], l[0]}} {
+			if p := s.alive(end[0]); p != nil {
 				s.signalLocal(p, end[1], proc.NoConnection)
 			}
 		}
 	}
-	for _, d := range downs {
-		if p := s.byPID[d.watcher]; p != nil && p.alive {
+	for _, d := range c.downs {
+		if p := s.alive(d.watcher); p != nil {
 			s.deliverLocal(p, d.down)
 		}
 	}
-	for _, ref := range aliases {
+	for _, ref := range c.aliases {
 		if a := s.aliases[ref]; a != nil {
 			s.answer(ref, a.owner, proc.AliasMsg{Down: true, Reason: proc.NoConnection})
 		}

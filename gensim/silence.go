@@ -22,8 +22,10 @@ const DefaultSilent = time.Second
 // held, their timers firing into their mailboxes; the other nodes are
 // told it silent, after Silent. Resume starts it again.
 func (s *Sim) Pause(name string) {
-	n := s.nodes[name]
-	if n == nil || !n.up || s.paused[name] {
+	if n := s.nodes[name]; n == nil || !n.up {
+		return // gone, or down
+	}
+	if s.paused[name] {
 		return
 	}
 	s.record(Event{Kind: Fault, Msg: "pause " + name})
