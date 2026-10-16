@@ -153,18 +153,7 @@ func (b sup) Label() string {
 func (b sup) info(s *state, msg any) []actor.Effect {
 	switch m := msg.(type) {
 	case proc.ExitMsg:
-		if i := slices.Index(s.stopping, m.From); i >= 0 {
-			s.stopping = slices.Delete(s.stopping, i, i+1)
-			return actor.Do(actor.CancelTimer{Key: killKey{m.From}})
-		}
-		if s.byPID(m.From) < 0 {
-			return nil // a child already stopped or replaced
-		}
-		if s.busy() {
-			s.exits = append(s.exits, m)
-			return nil
-		}
-		return b.exited(s, m)
+		return b.exit(s, m)
 	case kill:
 		if slices.Contains(s.stopping, m.pid) {
 			return actor.Do(actor.Exit{To: m.pid, Reason: proc.Kill})
@@ -172,11 +161,34 @@ func (b sup) info(s *state, msg any) []actor.Effect {
 	case expired:
 		s.restarts--
 	case retry:
-		if i := s.byKey(m.key); i >= 0 && s.children[i].pid.IsZero() && !s.final {
+		if i := s.byKey(m.key); s.restartable(i) {
 			return b.restart(s, i)
 		}
 	}
 	return nil
+}
+
+// exit handles the exit of a process linked: a child stopped, waited for;
+// a child running, handled now, or once the operations under way are done.
+func (b sup) exit(s *state, m proc.ExitMsg) []actor.Effect {
+	if i := slices.Index(s.stopping, m.From); i >= 0 {
+		s.stopping = slices.Delete(s.stopping, i, i+1)
+		return actor.Do(actor.CancelTimer{Key: killKey{m.From}})
+	}
+	if s.byPID(m.From) < 0 {
+		return nil // a child already stopped or replaced
+	}
+	if s.busy() {
+		s.exits = append(s.exits, m)
+		return nil
+	}
+	return b.exited(s, m)
+}
+
+// restartable reports whether the child at i, if any, is still down, for
+// a retry to restart it: none is once the supervisor stops for good.
+func (s state) restartable(i int) bool {
+	return i >= 0 && s.children[i].pid.IsZero() && !s.final
 }
 
 func (s state) busy() bool { return s.waitStart || len(s.stopping) > 0 || len(s.ops) > 0 }
@@ -199,13 +211,20 @@ func (b sup) exited(s *state, m proc.ExitMsg) []actor.Effect {
 	}
 	final := s.final
 	effs = append(effs, b.restart(s, i)...)
+	return append(effs, s.restartEvent(final, id, m)...)
+}
+
+// restartEvent is the event of the restart of the child id, after its exit
+// m: it restarted, or the supervisor gave up on it, now final, unless it
+// was before.
+func (s state) restartEvent(wasFinal bool, id string, m proc.ExitMsg) []actor.Effect {
 	switch {
-	case s.final && !final:
-		effs = append(effs, gen.Emit{Event: GaveUp{Supervisor: s.self, Child: id, PID: m.From, Reason: m.Reason}})
 	case !s.final:
-		effs = append(effs, gen.Emit{Event: Restarted{Supervisor: s.self, Child: id, PID: m.From, Reason: m.Reason}})
+		return actor.Do(gen.Emit{Event: Restarted{Supervisor: s.self, Child: id, PID: m.From, Reason: m.Reason}})
+	case !wasFinal:
+		return actor.Do(gen.Emit{Event: GaveUp{Supervisor: s.self, Child: id, PID: m.From, Reason: m.Reason}})
 	}
-	return effs
+	return nil
 }
 
 // restart restarts the child at i, not running, and those the strategy
@@ -269,44 +288,73 @@ func (b sup) started(s *state, st gen.Started) []actor.Effect {
 	o := s.ops[0]
 	s.ops = s.ops[1:]
 	i := s.byKey(o.keys[0])
-	c := &s.children[i]
-	var effs []actor.Effect
 	switch {
 	case errors.Is(st.Err, actor.ErrIgnore):
-		if b.dynamic {
-			s.children = slices.Delete(s.children, i, i+1)
-		}
-		if o.call {
-			effs = append(effs, actor.Reply{To: o.from, Value: startResult{err: st.Err}})
-		}
+		return b.ignored(s, i, o, st.Err)
 	case st.Err != nil:
-		id := b.childID(*c)
-		effs = append(effs, reportStartFailed(s.self, id, st.Err)...)
-		switch {
-		case o.initial:
-			err := &StartError{ID: id, Reason: st.Err}
-			s.final = true
-			s.ops = append(b.stopAll(s), op{kind: opAck, err: err}, op{kind: opFinish, err: err})
-		case o.call:
-			s.children = slices.Delete(s.children, i, i+1)
-			effs = append(effs, actor.Reply{To: o.from, Value: startResult{err: st.Err}})
-		default:
-			// The children after it in the restart stay down until the
-			// retry restarts them.
-			for len(s.ops) > 0 && s.ops[0].kind == opStart && s.ops[0].restart {
-				s.ops = s.ops[1:]
-			}
-			effs = append(effs, actor.Send{To: s.self, Msg: retry{c.key}})
-		}
+		return b.startFailed(s, i, o, st.Err)
 	default:
-		c.pid = st.PID
-		if o.restart {
-			c.restarts++
-		}
-		effs = append(effs, reportStarted(s.self, b.childID(*c), st.PID)...)
-		if o.call {
-			effs = append(effs, actor.Reply{To: o.from, Value: startResult{pid: st.PID}})
-		}
+		return b.running(s, i, o, st.PID)
+	}
+}
+
+// ignored handles the child at i ignoring its start, with err: a dynamic
+// supervisor forgets it, and the call starting it gets err.
+func (b sup) ignored(s *state, i int, o op, err error) []actor.Effect {
+	if b.dynamic {
+		s.children = slices.Delete(s.children, i, i+1)
+	}
+	if o.call {
+		return actor.Do(actor.Reply{To: o.from, Value: startResult{err: err}})
+	}
+	return nil
+}
+
+// startFailed handles the child at i failing to start, by o: the start of
+// the supervisor fails with it, a call starting it gets the error, and a
+// restart is tried again.
+func (b sup) startFailed(s *state, i int, o op, err error) []actor.Effect {
+	c := s.children[i]
+	id := b.childID(c)
+	effs := reportStartFailed(s.self, id, err)
+	switch {
+	case o.initial:
+		failed := &StartError{ID: id, Reason: err}
+		s.final = true
+		s.ops = append(b.stopAll(s), op{kind: opAck, err: failed}, op{kind: opFinish, err: failed})
+		return effs
+	case o.call:
+		s.children = slices.Delete(s.children, i, i+1)
+		return append(effs, actor.Reply{To: o.from, Value: startResult{err: err}})
+	default:
+		return append(effs, s.retryLater(c.key))
+	}
+}
+
+// retryLater has the restart of the child key tried again: the children
+// after it in the restart stay down until the retry restarts them.
+func (s *state) retryLater(key uint64) actor.Effect {
+	for s.nextRestartStart() {
+		s.ops = s.ops[1:]
+	}
+	return actor.Send{To: s.self, Msg: retry{key}}
+}
+
+// nextRestartStart reports whether the next op starts a child of a restart.
+func (s state) nextRestartStart() bool {
+	return len(s.ops) > 0 && s.ops[0].kind == opStart && s.ops[0].restart
+}
+
+// running notes the child at i started by o, running as pid.
+func (b sup) running(s *state, i int, o op, pid proc.PID) []actor.Effect {
+	c := &s.children[i]
+	c.pid = pid
+	if o.restart {
+		c.restarts++
+	}
+	effs := reportStarted(s.self, b.childID(*c), pid)
+	if o.call {
+		effs = append(effs, actor.Reply{To: o.from, Value: startResult{pid: pid}})
 	}
 	return effs
 }
@@ -315,9 +363,9 @@ func (b sup) started(s *state, st gen.Started) []actor.Effect {
 // came meanwhile.
 func (b sup) advance(s state) (state, []actor.Effect) {
 	var effs []actor.Effect
-	for !s.waitStart && len(s.stopping) == 0 {
+	for !s.waiting() {
 		if len(s.ops) == 0 {
-			if len(s.exits) == 0 || s.final {
+			if len(s.exits) == 0 || s.final { // none, or none to handle once stopping
 				return s, effs
 			}
 			e := s.exits[0]
@@ -325,64 +373,111 @@ func (b sup) advance(s state) (state, []actor.Effect) {
 			effs = append(effs, b.exited(&s, e)...)
 			continue
 		}
-		o := s.ops[0]
-		switch o.kind {
-		case opStart:
-			i := s.byKey(o.keys[0])
-			switch {
-			case i < 0 || !s.children[i].pid.IsZero():
-				s.ops = s.ops[1:]
-			case o.restart && s.children[i].spec.Restart == Temporary && !b.dynamic:
-				// A temporary child stopped along with a sibling is not
-				// restarted but forgotten, as in OTP.
-				s.children = slices.Delete(s.children, i, i+1)
-				s.ops = s.ops[1:]
-			default:
-				s.waitStart = true
-				effs = append(effs, gen.StartChild{Child: s.children[i].spec.Start, Tag: startTag{o.keys[0]}})
-			}
-		case opStop:
-			s.ops = s.ops[1:]
-			for _, k := range o.keys {
-				i := s.byKey(k)
-				if i < 0 || s.children[i].pid.IsZero() {
-					continue
-				}
-				c := &s.children[i]
-				pid := c.pid
-				c.pid = proc.PID{}
-				s.stopping = append(s.stopping, pid)
-				switch d := c.spec.shutdown(); d {
-				case Brutal:
-					effs = append(effs, actor.Exit{To: pid, Reason: proc.Kill})
-				case Infinity:
-					effs = append(effs, actor.Exit{To: pid, Reason: proc.Shutdown})
-				default:
-					effs = append(effs,
-						actor.Exit{To: pid, Reason: proc.Shutdown},
-						actor.StartTimer{Key: killKey{pid}, After: d, Msg: kill{pid}})
-				}
-			}
-		case opRemove:
-			if i := s.byKey(o.keys[0]); i >= 0 {
-				s.children = slices.Delete(s.children, i, i+1)
-			}
-			s.ops = s.ops[1:]
-		case opReply:
-			effs = append(effs, actor.Reply{To: o.from, Value: o.value})
-			s.ops = s.ops[1:]
-		case opAck:
-			effs = append(effs, gen.Ack{Err: o.err})
-			s.ops = s.ops[1:]
-		case opFinish:
-			for _, from := range s.stopCalls {
-				effs = append(effs, actor.Reply{To: from})
-			}
-			s.ops = nil
-			return s, append(effs, actor.Stop{Reason: o.err})
+		more, stopped := b.runOp(&s)
+		effs = append(effs, more...)
+		if stopped {
+			return s, effs
 		}
 	}
 	return s, effs
+}
+
+// waiting reports whether an op waits: for a child to start, or for those
+// stopped to exit.
+func (s state) waiting() bool { return s.waitStart || len(s.stopping) > 0 }
+
+// runOp runs the first op, and reports whether the supervisor stops.
+func (b sup) runOp(s *state) ([]actor.Effect, bool) {
+	o := s.ops[0]
+	switch o.kind {
+	case opStart:
+		return b.startOp(s, o), false
+	case opStop:
+		s.ops = s.ops[1:]
+		return s.stop(o.keys), false
+	case opRemove:
+		if i := s.byKey(o.keys[0]); i >= 0 {
+			s.children = slices.Delete(s.children, i, i+1)
+		}
+		s.ops = s.ops[1:]
+	case opReply:
+		s.ops = s.ops[1:]
+		return actor.Do(actor.Reply{To: o.from, Value: o.value}), false
+	case opAck:
+		s.ops = s.ops[1:]
+		return actor.Do(gen.Ack{Err: o.err}), false
+	case opFinish:
+		return s.finished(o.err), true
+	}
+	return nil, false
+}
+
+// startOp starts the child of o, to wait for its Started, unless it is gone
+// or running already, or is forgotten.
+func (b sup) startOp(s *state, o op) []actor.Effect {
+	i := s.byKey(o.keys[0])
+	switch {
+	case i < 0 || !s.children[i].pid.IsZero():
+		s.ops = s.ops[1:]
+	case b.forgotten(s.children[i], o):
+		s.children = slices.Delete(s.children, i, i+1)
+		s.ops = s.ops[1:]
+	default:
+		s.waitStart = true
+		return actor.Do(gen.StartChild{Child: s.children[i].spec.Start, Tag: startTag{o.keys[0]}})
+	}
+	return nil
+}
+
+// forgotten reports whether c is not restarted by o but forgotten: a
+// temporary child of a static supervisor stopped along with a sibling, as
+// in OTP.
+func (b sup) forgotten(c child, o op) bool {
+	return o.restart && c.spec.Restart == Temporary && !b.dynamic
+}
+
+// stop stops the children of keys running, at once, for advance to wait
+// for their exits.
+func (s *state) stop(keys []uint64) []actor.Effect {
+	var effs []actor.Effect
+	for _, k := range keys {
+		i := s.byKey(k)
+		if i < 0 || s.children[i].pid.IsZero() {
+			continue // gone, or not running
+		}
+		effs = append(effs, s.stopChild(i)...)
+	}
+	return effs
+}
+
+// stopChild stops the child at i, as its shutdown says: killed at once,
+// asked to shut down, or asked and killed after a while.
+func (s *state) stopChild(i int) []actor.Effect {
+	c := &s.children[i]
+	pid := c.pid
+	c.pid = proc.PID{}
+	s.stopping = append(s.stopping, pid)
+	switch d := c.spec.shutdown(); d {
+	case Brutal:
+		return actor.Do(actor.Exit{To: pid, Reason: proc.Kill})
+	case Infinity:
+		return actor.Do(actor.Exit{To: pid, Reason: proc.Shutdown})
+	default:
+		return actor.Do(
+			actor.Exit{To: pid, Reason: proc.Shutdown},
+			actor.StartTimer{Key: killKey{pid}, After: d, Msg: kill{pid}})
+	}
+}
+
+// finished stops the supervisor with err, answering the calls that asked it
+// to stop.
+func (s *state) finished(err error) []actor.Effect {
+	var effs []actor.Effect
+	for _, from := range s.stopCalls {
+		effs = append(effs, actor.Reply{To: from})
+	}
+	s.ops = nil
+	return append(effs, actor.Stop{Reason: err})
 }
 
 func (b sup) childID(c child) string {
@@ -426,27 +521,42 @@ func (b sup) call(s *state, from actor.From, req any) []actor.Effect {
 	case countChildren:
 		return reply(len(s.children))
 	case startChild:
-		switch {
-		case !b.dynamic:
-			return reply(startResult{err: errors.New("supervisor: StartChild of a static supervisor")})
-		case s.final:
-			return reply(startResult{err: proc.Shutdown})
-		case b.maxChildren > 0 && len(s.children) >= b.maxChildren:
-			return reply(startResult{err: ErrMaxChildren})
+		if err := b.mayStart(*s); err != nil {
+			return reply(startResult{err: err})
 		}
 		s.nextKey++
 		s.children = append(s.children, child{key: s.nextKey, spec: r.spec})
 		s.ops = append(s.ops, op{kind: opStart, keys: []uint64{s.nextKey}, call: true, from: from})
 	case terminateChild:
-		i := s.byPID(r.pid)
-		if i < 0 || !b.dynamic {
-			return reply(ErrNotFound)
-		}
-		k := s.children[i].key
-		s.ops = append(s.ops,
-			op{kind: opStop, keys: []uint64{k}},
-			op{kind: opRemove, keys: []uint64{k}},
-			op{kind: opReply, from: from})
+		return b.terminateChild(s, from, r.pid)
 	}
+	return nil
+}
+
+// mayStart tells why a child may not start by StartChild, if it may not.
+func (b sup) mayStart(s state) error {
+	switch {
+	case !b.dynamic:
+		return errors.New("supervisor: StartChild of a static supervisor")
+	case s.final:
+		return proc.Shutdown
+	case b.maxChildren > 0 && len(s.children) >= b.maxChildren:
+		return ErrMaxChildren
+	}
+	return nil
+}
+
+// terminateChild queues the stop of the child pid, a child of a dynamic
+// supervisor, then its removal, then the reply to from.
+func (b sup) terminateChild(s *state, from actor.From, pid proc.PID) []actor.Effect {
+	i := s.byPID(pid)
+	if i < 0 || !b.dynamic {
+		return actor.Do(actor.Reply{To: from, Value: ErrNotFound})
+	}
+	k := s.children[i].key
+	s.ops = append(s.ops,
+		op{kind: opStop, keys: []uint64{k}},
+		op{kind: opRemove, keys: []uint64{k}},
+		op{kind: opReply, from: from})
 	return nil
 }
