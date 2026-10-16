@@ -16,35 +16,9 @@ import (
 // A write cut short at the end of the log, by a crash, is dropped; damage
 // elsewhere fails Open with ErrCorrupt.
 func Open[K comparable, V any](dir string, opts Options[K, V]) (*Table[K, V], error) {
-	if opts.Shards <= 0 {
-		opts.Shards = 64
-	}
-	if opts.SegmentSize <= 0 {
-		opts.SegmentSize = 64 << 20
-	}
-	if opts.CompactRatio == 0 {
-		opts.CompactRatio = 2
-	}
-	if opts.CompactMin <= 0 {
-		opts.CompactMin = 16 << 20
-	}
-	switch {
-	case opts.Type == Set && opts.Compare != nil:
-		return nil, errors.New("kvs: Compare of a Set")
-	case opts.Type == OrderedSet && opts.Compare == nil:
-		var ok bool
-		if opts.Compare, ok = compareOf[K](); !ok {
-			return nil, fmt.Errorf("kvs: no order of %v for an OrderedSet: give Compare", reflect.TypeFor[K]())
-		}
-	case opts.Type != Set && opts.Type != OrderedSet:
-		return nil, fmt.Errorf("kvs: %v", opts.Type)
-	}
-	t := &Table[K, V]{dir: dir, opts: opts, kc: opts.KeyCodec, vc: opts.ValueCodec}
-	if t.kc == nil {
-		t.kc = DefaultCodec[K]()
-	}
-	if t.vc == nil {
-		t.vc = DefaultCodec[V]()
+	opts, err := opts.resolved()
+	if err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
@@ -53,124 +27,236 @@ func Open[K comparable, V any](dir string, opts Options[K, V]) (*Table[K, V], er
 	if err != nil {
 		return nil, err
 	}
-	t.lock = lock
-	t.idx = newIndex[K, V](opts.ReadConcurrency, opts.WriteConcurrency, opts.Shards, opts.Compare, &t.live)
-	seq, disk, segs, err := t.recover()
-	if err == nil {
-		t.log, err = startWAL(dir, seq, disk, segs, opts.Sync, opts.SegmentSize)
-	}
-	if err != nil {
+	t := newTable(dir, opts, lock)
+	if err := t.load(); err != nil {
 		unlockDir(lock)
 		return nil, err
-	}
-	if opts.Expires != nil {
-		t.exp = newExpiries(t)
 	}
 	return t, nil
 }
 
-// recover reads the snapshot and the segments of the log into the index,
-// and returns the last seq, the bytes on disk and the number of segments.
-func (t *Table[K, V]) recover() (seq uint64, disk int64, nsegs int, err error) {
-	if ents, err := os.ReadDir(t.dir); err == nil {
-		for _, e := range ents {
-			if strings.HasSuffix(e.Name(), ".tmp") {
-				os.Remove(filepath.Join(t.dir, e.Name()))
-			}
-		}
-	}
-	segs, snaps, err := listLog(t.dir)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	var base uint64
-	if len(snaps) > 0 {
-		s := snaps[len(snaps)-1]
-		base = s.seq
-		n, err := t.readFile(s.name, 0)
-		if err == errTorn {
-			return 0, 0, 0, fmt.Errorf("%w: snapshot %s at %d", ErrCorrupt, s.name, n)
-		}
-		if err != nil {
-			return 0, 0, 0, err
-		}
-		disk += n
-		for _, old := range snaps[:len(snaps)-1] {
-			os.Remove(filepath.Join(t.dir, old.name))
-		}
-	}
-	seq = base
-	for i, s := range segs {
-		path := filepath.Join(t.dir, s.name)
-		if i+1 < len(segs) && segs[i+1].seq <= base+1 {
-			os.Remove(path) // all in the snapshot
-			continue
-		}
-		var last uint64
-		n, err := t.readFile(s.name, base, &last)
-		switch {
-		case err == nil || err == errTorn && i == len(segs)-1:
-			// Cut what follows the records: zeros, or a write cut short.
-			if err := truncate(path, n); err != nil {
-				return 0, 0, 0, err
-			}
-		case err == errTorn:
-			return 0, 0, 0, fmt.Errorf("%w: segment %s at %d", ErrCorrupt, s.name, n)
-		case err != nil:
-			return 0, 0, 0, err
-		}
-		seq = max(seq, last)
-		if last == 0 { // empty, or all in the snapshot: the last segment too
-			os.Remove(path)
-			continue
-		}
-		disk += n
-		nsegs++
-	}
-	return seq, disk, nsegs, nil
+// resolved returns the options with the defaults for what is unset, and
+// the order of K for an OrderedSet without Compare.
+func (o Options[K, V]) resolved() (Options[K, V], error) {
+	return o.withDefaults().withOrder()
 }
 
-// readFile loads the records of the log file name after the seq base,
-// and returns the offset after the last whole one, the last seq read in
-// *last, if given.
-func (t *Table[K, V]) readFile(name string, base uint64, last ...*uint64) (int64, error) {
+func (o Options[K, V]) withDefaults() Options[K, V] {
+	if o.Shards <= 0 {
+		o.Shards = 64
+	}
+	if o.SegmentSize <= 0 {
+		o.SegmentSize = 64 << 20
+	}
+	if o.CompactRatio == 0 {
+		o.CompactRatio = 2
+	}
+	if o.CompactMin <= 0 {
+		o.CompactMin = 16 << 20
+	}
+	return o
+}
+
+// withOrder checks Compare against Type, and finds the order of K for an
+// OrderedSet without one.
+func (o Options[K, V]) withOrder() (Options[K, V], error) {
+	switch o.Type {
+	case Set:
+		if o.Compare != nil {
+			return o, errors.New("kvs: Compare of a Set")
+		}
+	case OrderedSet:
+		if o.Compare != nil {
+			break
+		}
+		var ok bool
+		if o.Compare, ok = compareOf[K](); !ok {
+			return o, fmt.Errorf("kvs: no order of %v for an OrderedSet: give Compare", reflect.TypeFor[K]())
+		}
+	default:
+		return o, fmt.Errorf("kvs: %v", o.Type)
+	}
+	return o, nil
+}
+
+// newTable makes the table of dir, empty, holding lock.
+func newTable[K comparable, V any](dir string, opts Options[K, V], lock *os.File) *Table[K, V] {
+	t := &Table[K, V]{dir: dir, opts: opts, lock: lock, kc: opts.KeyCodec, vc: opts.ValueCodec}
+	if t.kc == nil {
+		t.kc = DefaultCodec[K]()
+	}
+	if t.vc == nil {
+		t.vc = DefaultCodec[V]()
+	}
+	t.idx = newIndex[K, V](opts.ReadConcurrency, opts.WriteConcurrency, opts.Shards, opts.Compare, &t.live)
+	return t
+}
+
+// load reads the log into the table, and starts the log, for the writes to
+// go on in it.
+func (t *Table[K, V]) load() error {
+	r, err := t.recover()
+	if err != nil {
+		return err
+	}
+	if t.log, err = startWAL(t.dir, r.seq, r.disk, r.segs, t.opts.Sync, t.opts.SegmentSize); err != nil {
+		return err
+	}
+	if t.opts.Expires != nil {
+		t.exp = newExpiries(t)
+	}
+	return nil
+}
+
+// recovered is what recover found in the log.
+type recovered struct {
+	seq  uint64 // of the last write
+	disk int64  // the bytes of the files kept
+	segs int    // the segments kept
+}
+
+// recover reads the latest snapshot and the segments of the log after it
+// into the index. It removes the files of the log it does not need: those
+// left by a compaction cut short, the snapshots before the latest, and
+// the segments it holds.
+func (t *Table[K, V]) recover() (recovered, error) {
+	t.removeTemp()
+	segs, snaps, err := listLog(t.dir)
+	if err != nil {
+		return recovered{}, err
+	}
+	var r recovered
+	if len(snaps) > 0 {
+		if err := t.loadSnapshot(snaps, &r); err != nil {
+			return r, err
+		}
+	}
+	base := r.seq // the last write in the snapshot, 0 without
+	for i, s := range segs {
+		isLast := i == len(segs)-1
+		// The next segment beginning by the first write after the snapshot,
+		// this one has none.
+		inSnapshot := !isLast && segs[i+1].seq <= base+1
+		if inSnapshot {
+			os.Remove(filepath.Join(t.dir, s.name))
+			continue
+		}
+		if err := t.loadSegment(s, base, isLast, &r); err != nil {
+			return r, err
+		}
+	}
+	return r, nil
+}
+
+// removeTemp removes the files a compaction cut short left, if any.
+func (t *Table[K, V]) removeTemp() {
+	ents, err := os.ReadDir(t.dir)
+	if err != nil {
+		return
+	}
+	for _, e := range ents {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			os.Remove(filepath.Join(t.dir, e.Name()))
+		}
+	}
+}
+
+// loadSnapshot loads the latest of snaps, and removes the others. A
+// snapshot is written whole before it is in place: one cut short is
+// damage.
+func (t *Table[K, V]) loadSnapshot(snaps []logFile, r *recovered) error {
+	latest := snaps[len(snaps)-1]
+	n, _, err := t.readFile(latest.name, 0)
+	if err == errTorn {
+		return fmt.Errorf("%w: snapshot %s at %d", ErrCorrupt, latest.name, n)
+	}
+	if err != nil {
+		return err
+	}
+	r.seq, r.disk = latest.seq, n
+	for _, old := range snaps[:len(snaps)-1] {
+		os.Remove(filepath.Join(t.dir, old.name))
+	}
+	return nil
+}
+
+// loadSegment loads the writes of s after base. A write cut short, by a
+// crash, ends the last segment, and is cut off it; in another, it is
+// damage. A segment left without a write after base is removed.
+func (t *Table[K, V]) loadSegment(s logFile, base uint64, isLast bool, r *recovered) error {
+	path := filepath.Join(t.dir, s.name)
+	n, last, err := t.readFile(s.name, base)
+	torn := err == errTorn
+	if torn && !isLast {
+		return fmt.Errorf("%w: segment %s at %d", ErrCorrupt, s.name, n)
+	}
+	if err != nil && !torn {
+		return err
+	}
+	// Cut what follows the records: zeros, or a write cut short.
+	if err := truncate(path, n); err != nil {
+		return err
+	}
+	r.seq = max(r.seq, last)
+	if last == 0 { // empty, or all in the snapshot: the last segment too
+		os.Remove(path)
+		return nil
+	}
+	r.disk += n
+	r.segs++
+	return nil
+}
+
+// readFile loads the records of the log file name after the seq base. It
+// returns the offset after the last whole one, and the last seq it read,
+// 0 if none.
+func (t *Table[K, V]) readFile(name string, base uint64) (n int64, last uint64, err error) {
 	f, err := os.Open(filepath.Join(t.dir, name))
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	defer f.Close()
-	return readRecords(f, func(seq uint64, op byte, kb, vb []byte, size int64) error {
+	n, err = readRecords(f, func(seq uint64, op byte, kb, vb []byte, size int64) error {
 		if seq <= base {
 			return nil
 		}
-		if len(last) > 0 {
-			*last[0] = seq
-		}
-		k, err := t.kc.Decode(kb)
-		if err != nil {
-			return fmt.Errorf("kvs: decoding a key of %s: %w", name, err)
-		}
-		if op == opDel {
-			t.idx.unload(k)
-			return nil
-		}
-		v, err := t.vc.Decode(vb)
-		if err != nil {
-			return fmt.Errorf("kvs: decoding a value of %s: %w", name, err)
-		}
-		t.idx.load(k, v, size, seq)
-		return nil
+		last = seq
+		return t.loadRecord(name, seq, op, kb, vb, size)
 	})
+	return n, last, err
 }
 
+// loadRecord sets or deletes the entry of a record of the file name.
+func (t *Table[K, V]) loadRecord(name string, seq uint64, op byte, kb, vb []byte, size int64) error {
+	k, err := t.kc.Decode(kb)
+	if err != nil {
+		return fmt.Errorf("kvs: decoding a key of %s: %w", name, err)
+	}
+	if op == opDel {
+		t.idx.unload(k)
+		return nil
+	}
+	v, err := t.vc.Decode(vb)
+	if err != nil {
+		return fmt.Errorf("kvs: decoding a value of %s: %w", name, err)
+	}
+	t.idx.load(k, v, size, seq)
+	return nil
+}
+
+// truncate cuts the file at path to n bytes, if longer, and syncs it.
 func truncate(path string, n int64) error {
 	f, err := os.OpenFile(path, os.O_WRONLY, 0)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	if fi, err := f.Stat(); err != nil || fi.Size() == n {
+	fi, err := f.Stat()
+	if err != nil {
 		return err
+	}
+	if fi.Size() == n {
+		return nil // nothing to cut
 	}
 	if err := f.Truncate(n); err != nil {
 		return err
