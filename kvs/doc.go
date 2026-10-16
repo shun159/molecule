@@ -99,6 +99,34 @@
 //	case tick:
 //		return s, actor.Do(s.leases.ExpireEffect(s.now(), nil))
 //
+// # Costs
+//
+// For a table of N entries, in S shards with WriteConcurrency, 1 without,
+// a range of K entries, and E entries that expire:
+//
+//	                  Get, Put, Delete  Len   All, Select  Range
+//	Set               O(1)              O(S)  O(N)         -
+//	  ReadConcurrency O(log32(N/S))     O(S)  O(N)         -
+//	OrderedSet        O(log(N/S))       O(S)  O(N log S)   O(S log(N/S) + K log S)
+//
+// With one shard, an OrderedSet goes over All in O(N), and a Range in
+// O(log N + K). A get takes the read lock of its shard, or no lock with
+// ReadConcurrency. A write appends its record to the log too, which costs
+// more than any of these, and with SyncEach waits for a sync.
+//
+// All and Select copy each shard of a Set without ReadConcurrency, O(N/S)
+// at a time. Elsewhere they copy nothing; but in an OrderedSet without
+// ReadConcurrency, the writes after copy the nodes they change, each node
+// once, as every write with ReadConcurrency does.
+//
+// A write of an entry that expires adds O(log E) to note when, amortized:
+// the times out of date are dropped by looking at those E entries alone,
+// under one lock for the table, once they double. Expire costs O(log E)
+// for each entry it finds expired, with the delete, or written again since.
+//
+// Opening reads the snapshot and the segments after it, in time of their
+// records.
+//
 // # The log
 //
 // The log is the files of a directory, which the table holds alone while
