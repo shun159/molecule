@@ -158,9 +158,20 @@ func listLog(dir string) (segs, snaps []logFile, err error) {
 // errTorn is a record cut short or damaged.
 var errTorn = errors.New("kvs: torn record")
 
-// readRecords reads the records of r, handing each to f with its size, and returns the
-// offset after the last whole one. It stops at the first that is not
-// whole, with errTorn.
+// A record on disk is a header, the length and the CRC of the rest, then
+// the body, then the seq of the write; the body is the op, the length of
+// the key, the key, and the value:
+//
+//	len uint32 | crc uint32 | op byte | klen uvarint | key | val | seq uint64
+
+// readRecords reads the records of r, handing each to f with its size, and
+// returns the offset after the last whole one. It stops at the zeros after
+// the records, or at the first that is not whole, with errTorn.
+//
+// It is one function, though long: opening a table reads every record
+// through it, and split in steps it measured some 3-6% slower.
+//
+//abc:disable abc,lines the loop over every record of the log, on opening
 func readRecords(r io.Reader, f func(seq uint64, op byte, key, val []byte, size int64) error) (int64, error) {
 	br := bufio.NewReaderSize(r, 1<<20)
 	var off int64
