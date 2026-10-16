@@ -17,6 +17,8 @@ func (r *runner[S]) apply(effs []actor.Effect) {
 
 // perform performs e: on other processes, on what the runner keeps track
 // of, on the process itself, on the loop of the runner, or outside.
+//
+//abc:dispatch one case an effect, each a line or two
 func (r *runner[S]) perform(e actor.Effect) {
 	switch e := e.(type) {
 	// On other processes.
