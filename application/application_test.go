@@ -242,6 +242,21 @@ func TestRun(t *testing.T) {
 	}
 }
 
+// Run with ctx done before the applications have started starts them all
+// the same, and stops them once started, Terminate and all.
+func TestRunDoneWhileStarting(t *testing.T) {
+	n := proc.NewNode("")
+	var log events
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := application.Run(ctx, n, app("one", &log, "a"), app("two", &log, "b")); err != nil {
+		t.Errorf("Run: %v", err)
+	}
+	if got := log.get(); !slices.Equal(got, []string{"start a", "start b", "stop b", "stop a"}) {
+		t.Errorf("events %v", got)
+	}
+}
+
 // Applications started later stop before those started earlier.
 func TestStartLater(t *testing.T) {
 	n := proc.NewNode("")
