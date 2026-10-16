@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -251,13 +252,22 @@ var gathered = func() context.Context {
 }()
 
 // gather returns f and the frames waiting after it, to send at once, and
-// the first other message it took, if any.
+// the first other message it took, if any. Finding none waiting, it lets
+// the other goroutines run once first: the processes sending to the node,
+// as members of many groups, often have frames on their way, which the
+// one write takes too.
 func (c *connection) gather(f frame) ([]frame, any) {
 	c.frames = append(c.frames[:0], f)
+	yielded := false
 	for len(c.frames) < maxGathered {
 		msg, err := c.self.Receive(gathered)
 		if err != nil {
-			break
+			if yielded {
+				break
+			}
+			runtime.Gosched()
+			yielded = true
+			continue
 		}
 		f, ok := msg.(frame)
 		if !ok {
