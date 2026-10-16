@@ -125,7 +125,7 @@ func (x *expiries[K, V]) push(at int64, k K) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	if len(x.h) >= x.limit {
-		x.rebuild() // mostly out of date
+		x.compact() // mostly out of date
 	}
 	x.h = append(x.h, expiry[K]{at, k})
 	x.up(len(x.h) - 1)
@@ -157,9 +157,8 @@ func (x *expiries[K, V]) next() (time.Time, bool) {
 	return time.Unix(0, x.h[0].at), true
 }
 
-// rebuild makes the heap, under its lock, of the times the entries
-// expire at. A write of an entry after its shard is read pushes its time
-// after, once the heap is unlocked.
+// rebuild makes the heap of the times the entries expire at, as the table
+// opens.
 func (x *expiries[K, V]) rebuild() {
 	t := x.t
 	clear(x.h)
@@ -173,6 +172,42 @@ func (x *expiries[K, V]) rebuild() {
 		})
 		return true
 	})
+	x.heapify()
+}
+
+// compact drops the times out of date from the heap, under its lock: of
+// entries written again since, or deleted, and a key's but one. It looks
+// at the entries of the heap alone, not the table: its cost is of those
+// that expire, however many do not.
+func (x *expiries[K, V]) compact() {
+	seen := make(map[K]struct{}, len(x.h))
+	kept := x.h[:0]
+	for _, e := range x.h {
+		if _, twice := seen[e.key]; twice || !x.current(e) {
+			continue
+		}
+		seen[e.key] = struct{}{}
+		kept = append(kept, e)
+	}
+	clear(x.h[len(kept):])
+	x.h = kept
+	x.heapify()
+}
+
+// current reports whether e is when its entry expires, as written last.
+// A write after pushes its time after, once the heap is unlocked.
+func (x *expiries[K, V]) current(e expiry[K]) bool {
+	v, _, ok := x.t.idx.get(e.key)
+	if !ok {
+		return false
+	}
+	at := x.t.opts.Expires(v)
+	return !at.IsZero() && at.UnixNano() == e.at
+}
+
+// heapify makes a heap of x.h, and sets the limit past which it is
+// compacted.
+func (x *expiries[K, V]) heapify() {
 	for i := len(x.h)/2 - 1; i >= 0; i-- {
 		x.down(i)
 	}

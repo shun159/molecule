@@ -109,8 +109,7 @@ func TestExpire(t *testing.T) {
 }
 
 // Entries written again and again leave out-of-date times in the heap,
-// which is made again of the entries once large; the writes and expiries
-// may go at once.
+// which drops them once large; the writes and expiries may go at once.
 func TestExpireWhileWriting(t *testing.T) {
 	tab := open(t, t.TempDir(), expiringOptions(true, true))
 	defer tab.Close()
@@ -140,6 +139,47 @@ func TestExpireWhileWriting(t *testing.T) {
 	}
 	if n, _ := tab.Expire(at(4999)); n != 40 {
 		t.Fatalf("Expire(4999) = %d", n)
+	}
+}
+
+// The heap, compacted of its times out of date, keeps the times of the
+// entries as written last, of those deleted or set to never expire none,
+// among many entries that never do.
+func TestExpireCompacted(t *testing.T) {
+	for _, m := range modes {
+		for _, ordered := range []bool{false, true} {
+			t.Run(fmt.Sprint(m.name, "/ordered=", ordered), func(t *testing.T) {
+				o := expiringOptions(m.read, m.write)
+				if ordered {
+					o.Type = kvs.OrderedSet
+				}
+				tab := open(t, t.TempDir(), o)
+				defer tab.Close()
+				for i := range 1000 {
+					tab.Put(fmt.Sprint("never", i), expiring{})
+				}
+				for i := range 3000 { // past the limit of the heap, twice
+					for _, k := range []string{"a", "b", "deleted", "unset"} {
+						tab.Put(k, expiring{k, at(i)})
+					}
+				}
+				tab.Put("b", expiring{"b", at(5)}) // earlier at last
+				tab.Delete("deleted")
+				tab.Put("unset", expiring{"unset", time.Time{}})
+				if next, ok := tab.NextExpiry(); !ok || next.After(at(5)) {
+					t.Fatalf("NextExpiry = %v %v", next, ok)
+				}
+				if n, err := tab.Expire(at(5)); n != 1 || err != nil {
+					t.Fatalf("Expire(5) = %d %v, want b", n, err)
+				}
+				if n, err := tab.Expire(at(2999)); n != 1 || err != nil {
+					t.Fatalf("Expire(2999) = %d %v, want a", n, err)
+				}
+				if _, ok := tab.NextExpiry(); ok || tab.Len() != 1001 {
+					t.Fatalf("left %d entries, NextExpiry %v", tab.Len(), ok)
+				}
+			})
+		}
 	}
 }
 
