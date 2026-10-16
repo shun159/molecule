@@ -2,6 +2,7 @@ package kvs
 
 import (
 	"hash/maphash"
+	"iter"
 	"sync"
 	"sync/atomic"
 )
@@ -108,20 +109,26 @@ func (x *hamtIndex[K, V]) len() int {
 	return n
 }
 
-func (x *hamtIndex[K, V]) eachShard(cut bool, yield func(func(func(*leaf[K, V]) bool)) bool) {
-	for i := range x.shards {
-		s := &x.shards[i]
-		if cut {
-			s.mu.Lock() // for the writes the log holds to be in the root
-		}
-		root := s.root.Load()
-		if cut {
-			s.mu.Unlock()
-		}
-		if !yield(func(f func(*leaf[K, V]) bool) { root.n.each(f) }) {
-			return
+func (x *hamtIndex[K, V]) byShard(cut bool) iter.Seq[entries[K, V]] {
+	return func(yield func(entries[K, V]) bool) {
+		for i := range x.shards {
+			root := x.root(i, cut)
+			if !yield(func(f func(*leaf[K, V]) bool) { root.n.each(f) }) {
+				return
+			}
 		}
 	}
+}
+
+// root returns the root of shard i, to read without lock. With cut, it
+// waits for the write under way, for the writes the log holds to be in it.
+func (x *hamtIndex[K, V]) root(i int, cut bool) *hroot[K, V] {
+	s := &x.shards[i]
+	if cut {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+	}
+	return s.root.Load()
 }
 
 func (x *hamtIndex[K, V]) load(k K, v V, size int64, rev uint64) {

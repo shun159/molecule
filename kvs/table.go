@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"os"
 	"path/filepath"
@@ -389,19 +390,24 @@ func (t *Table[K, V]) All() iter.Seq2[K, V] {
 // as All does.
 func (t *Table[K, V]) Select(keep func(K, V) bool) iter.Seq2[K, V] {
 	return func(yield func(K, V) bool) {
-		f := func(l *leaf[K, V]) bool { return keep != nil && !keep(l.key, l.val) || yield(l.key, l.val) }
+		// kept yields l, unless left out, and reports whether to go on.
+		kept := func(l *leaf[K, V]) bool {
+			if keep != nil && !keep(l.key, l.val) {
+				return true
+			}
+			return yield(l.key, l.val)
+		}
 		if x, ok := t.idx.(*treeIndex[K, V]); ok {
-			x.ascend(nil, nil, f)
+			x.ascend(nil, nil, kept) // in order, merging the shards
 			return
 		}
-		t.idx.eachShard(false, func(each func(func(*leaf[K, V]) bool)) bool {
-			ok := true
-			each(func(l *leaf[K, V]) bool {
-				ok = f(l)
-				return ok
-			})
-			return ok
-		})
+		for shard := range t.idx.byShard(false) {
+			for l := range shard {
+				if !kept(l) {
+					return
+				}
+			}
+		}
 	}
 }
 
@@ -570,26 +576,7 @@ func (t *Table[K, V]) writeSnapshot(name string, seq uint64) (int64, error) {
 	}
 	defer os.Remove(path + ".tmp") // if left
 	w := bufio.NewWriterSize(f, 1<<20)
-	var size int64
-	var buf, out []byte
-	var werr error
-	last := seq // the latest write in the snapshot
-	t.idx.eachShard(true, func(each func(func(*leaf[K, V]) bool)) bool {
-		each(func(l *leaf[K, V]) bool {
-			var body []byte
-			if body, werr = t.encode(&buf, opPut, l.key, l.val); werr != nil {
-				return false
-			}
-			out = appendRecord(out[:0], newRec(body), l.rev)
-			if _, werr = w.Write(out); werr != nil {
-				return false
-			}
-			last = max(last, l.rev)
-			size += int64(len(out))
-			return true
-		})
-		return werr == nil
-	})
+	size, last, werr := t.writeEntries(w, seq)
 	if werr == nil {
 		werr = w.Flush()
 	}
@@ -609,6 +596,29 @@ func (t *Table[K, V]) writeSnapshot(name string, seq uint64) (int64, error) {
 		werr = syncDir(t.dir)
 	}
 	return size, werr
+}
+
+// writeEntries writes a record of each entry to w, as the shards hold them
+// once locked, and returns their size and the latest write among them, or
+// since, if later.
+func (t *Table[K, V]) writeEntries(w io.Writer, since uint64) (size int64, last uint64, err error) {
+	last = since
+	var buf, out []byte
+	for shard := range t.idx.byShard(true) {
+		for l := range shard {
+			body, err := t.encode(&buf, opPut, l.key, l.val)
+			if err != nil {
+				return size, last, err
+			}
+			out = appendRecord(out[:0], newRec(body), l.rev)
+			if _, err := w.Write(out); err != nil {
+				return size, last, err
+			}
+			last = max(last, l.rev)
+			size += int64(len(out))
+		}
+	}
+	return size, last, nil
 }
 
 // Close makes the writes durable, closes the log, and lets go of the

@@ -2,6 +2,7 @@ package kvs
 
 import (
 	"hash/maphash"
+	"iter"
 	"sync"
 	"sync/atomic"
 )
@@ -101,26 +102,27 @@ func (x *mapIndex[K, V]) len() int {
 	return n
 }
 
-func (x *mapIndex[K, V]) eachShard(_ bool, yield func(func(func(*leaf[K, V]) bool)) bool) {
-	for i := range x.shards {
-		s := &x.shards[i]
-		s.mu.RLock()
-		ls := make([]leaf[K, V], 0, len(s.m))
-		for k, e := range s.m {
-			ls = append(ls, leaf[K, V]{key: k, val: e.val, size: e.size, rev: e.rev})
-		}
-		s.mu.RUnlock()
-		each := func(f func(*leaf[K, V]) bool) {
-			for i := range ls {
-				if !f(&ls[i]) {
-					return
-				}
+func (x *mapIndex[K, V]) byShard(_ bool) iter.Seq[entries[K, V]] {
+	return func(yield func(entries[K, V]) bool) {
+		for i := range x.shards {
+			if !yield(pointers(x.copied(i))) {
+				return
 			}
 		}
-		if !yield(each) {
-			return
-		}
 	}
+}
+
+// copied returns a copy of the entries of shard i, made under its read
+// lock, to range over without.
+func (x *mapIndex[K, V]) copied(i int) []leaf[K, V] {
+	s := &x.shards[i]
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ls := make([]leaf[K, V], 0, len(s.m))
+	for k, e := range s.m {
+		ls = append(ls, leaf[K, V]{key: k, val: e.val, size: e.size, rev: e.rev})
+	}
+	return ls
 }
 
 func (x *mapIndex[K, V]) load(k K, v V, size int64, rev uint64) {
