@@ -345,8 +345,10 @@ func (w *wal) rotate(n int64) (uint64, error) {
 	if w.err != nil {
 		return 0, w.err
 	}
-	if n >= 0 && w.seg.off+n <= w.seg.size || n < 0 && w.seg.off == 0 {
-		return w.seq, nil // rotated by another, or nothing to cut
+	fits := n >= 0 && w.seg.off+n <= w.seg.size // rotated by another meanwhile
+	empty := n < 0 && w.seg.off == 0            // nothing to cut
+	if fits || empty {
+		return w.seq, nil
 	}
 	had := w.seg.off > 0
 	err := w.writePending()

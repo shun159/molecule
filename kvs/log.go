@@ -193,7 +193,9 @@ func readRecords(r io.Reader, f func(seq uint64, op byte, key, val []byte, size 
 		body, seq := buf[:n-seqLen], binary.LittleEndian.Uint64(buf[n-seqLen:])
 		op := body[0]
 		klen, m := binary.Uvarint(body[1:])
-		if m <= 0 || (op != opPut && op != opDel) || klen > uint64(len(body)-1-m) {
+		knownOp := op == opPut || op == opDel
+		keyFits := m > 0 && klen <= uint64(len(body)-1-m)
+		if !knownOp || !keyFits {
 			return off, errTorn
 		}
 		key := body[1+m : 1+m+int(klen)]
