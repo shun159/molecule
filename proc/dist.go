@@ -3,6 +3,7 @@ package proc
 import (
 	"encoding/binary"
 	"errors"
+	"slices"
 	"sync"
 )
 
@@ -370,7 +371,12 @@ func (n *Node) demonitorRemote(ref Ref, target PID) {
 // serial number.
 
 // MarshalBinary encodes p, for distribution.
-func (p PID) MarshalBinary() ([]byte, error) { return marshalID(p.node, p.creation, p.id), nil }
+func (p PID) MarshalBinary() ([]byte, error) { return p.AppendBinary(nil) }
+
+// AppendBinary appends p to b as MarshalBinary encodes it.
+func (p PID) AppendBinary(b []byte) ([]byte, error) {
+	return appendID(b, p.node, p.creation, p.id), nil
+}
 
 // UnmarshalBinary decodes a PID encoded by MarshalBinary.
 func (p *PID) UnmarshalBinary(b []byte) error {
@@ -386,7 +392,12 @@ func (p PID) MarshalText() ([]byte, error) { return []byte(p.String()), nil }
 func (r Ref) MarshalText() ([]byte, error) { return []byte(r.String()), nil }
 
 // MarshalBinary encodes r, for distribution.
-func (r Ref) MarshalBinary() ([]byte, error) { return marshalID(r.node, r.creation, r.id), nil }
+func (r Ref) MarshalBinary() ([]byte, error) { return r.AppendBinary(nil) }
+
+// AppendBinary appends r to b as MarshalBinary encodes it.
+func (r Ref) AppendBinary(b []byte) ([]byte, error) {
+	return appendID(b, r.node, r.creation, r.id), nil
+}
 
 // UnmarshalBinary decodes a Ref encoded by MarshalBinary.
 func (r *Ref) UnmarshalBinary(b []byte) error {
@@ -395,8 +406,8 @@ func (r *Ref) UnmarshalBinary(b []byte) error {
 	return err
 }
 
-func marshalID(node string, creation uint32, id uint64) []byte {
-	b := make([]byte, 0, 2+len(node)+4+8)
+func appendID(b []byte, node string, creation uint32, id uint64) []byte {
+	b = slices.Grow(b, 2+len(node)+4+8)
 	b = binary.BigEndian.AppendUint16(b, uint16(len(node)))
 	b = append(b, node...)
 	b = binary.BigEndian.AppendUint32(b, creation)
