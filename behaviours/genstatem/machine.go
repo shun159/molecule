@@ -80,7 +80,7 @@ func (a adapter[St, D]) Init(self proc.PID, _ any) (Machine[St, D], []actor.Effe
 		return m, append(out, actor.Stop{Reason: ErrInitPostpone}), nil
 	}
 	if a.enter {
-		if m, out = a.enterState(m, state, out); stops(out) {
+		if out = a.enterState(&m, state, out); stops(out) {
 			return m, out, nil
 		}
 	}
@@ -99,7 +99,8 @@ func (a adapter[St, D]) Handle(m Machine[St, D], msg gen.Msg) (Machine[St, D], [
 		ev = Cast{Msg: x.Req}
 	case gen.ContinueMsg:
 		if ie, ok := x.Msg.(initEvents); ok {
-			return a.run(m, ie.events)
+			out := a.run(&m, ie.events)
+			return m, out
 		}
 		ev = Internal{Msg: x.Msg}
 	case gen.InfoMsg:
@@ -127,7 +128,8 @@ func (a adapter[St, D]) Handle(m Machine[St, D], msg gen.Msg) (Machine[St, D], [
 			m.generic = without(m.generic, k.name)
 		}
 	}
-	return a.run(m, []Event{ev})
+	out := a.run(&m, []Event{ev})
+	return m, out
 }
 
 // abandoned matches the Call from from.
@@ -160,8 +162,9 @@ func (a adapter[St, D]) Terminate(m Machine[St, D], reason error) []actor.Effect
 }
 
 // run handles the events in order, with those they insert or retry, until
-// none is left or the machine stops.
-func (a adapter[St, D]) run(m Machine[St, D], queue []Event) (Machine[St, D], []actor.Effect) {
+// none is left or the machine stops. It changes m, the Handle's own copy:
+// passing it on by value would copy the data at every call.
+func (a adapter[St, D]) run(m *Machine[St, D], queue []Event) []actor.Effect {
 	var out []actor.Effect
 	for len(queue) > 0 {
 		ev := queue[0]
@@ -179,47 +182,47 @@ func (a adapter[St, D]) run(m Machine[St, D], queue []Event) (Machine[St, D], []
 			out = append(out, actor.CancelTimer{Key: stateTimerKey{}})
 			m.stateTimer, m.stateMsg = false, nil
 		}
-		next, postpone, repeat := a.actions(&m, effs, &out)
+		next, postpone, repeat := a.actions(m, effs, &out)
 		if postpone {
 			m.postponed = append(slices.Clip(m.postponed), ev)
 		}
 		if stops(out) {
-			return m, out
+			return out
 		}
 		if !changed {
 			// Repeating the state runs its enter call again; the postponed
 			// events wait for a change still.
 			if repeat && a.enter {
-				if m, out = a.enterState(m, m.state, out); stops(out) {
-					return m, out
+				if out = a.enterState(m, m.state, out); stops(out) {
+					return out
 				}
 			}
 			queue = slices.Concat(next, queue)
 			continue
 		}
 		if a.enter {
-			if m, out = a.enterState(m, old, out); stops(out) {
-				return m, out
+			if out = a.enterState(m, old, out); stops(out) {
+				return out
 			}
 		}
 		// Inserted events first, then the postponed ones, then the rest.
 		queue = slices.Concat(next, m.postponed, queue)
 		m.postponed = nil
 	}
-	return m, out
+	return out
 }
 
 // enterState handles the state enter call after a change from old.
-func (a adapter[St, D]) enterState(m Machine[St, D], old St, out []actor.Effect) (Machine[St, D], []actor.Effect) {
+func (a adapter[St, D]) enterState(m *Machine[St, D], old St, out []actor.Effect) []actor.Effect {
 	state, data, effs := a.b.HandleEvent(m.state, m.data, Enter[St]{Old: old})
 	if state != m.state {
-		return m, append(out, actor.Stop{Reason: ErrEnterChangedState})
+		return append(out, actor.Stop{Reason: ErrEnterChangedState})
 	}
 	m.data = data
-	if next, postpone, repeat := a.actions(&m, effs, &out); postpone || repeat || len(next) > 0 {
-		return m, append(out, actor.Stop{Reason: ErrEnterAction})
+	if next, postpone, repeat := a.actions(m, effs, &out); postpone || repeat || len(next) > 0 {
+		return append(out, actor.Stop{Reason: ErrEnterAction})
 	}
-	return m, out
+	return out
 }
 
 // actions performs the actions among effs on m, turning timeouts into gen
