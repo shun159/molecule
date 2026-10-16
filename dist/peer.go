@@ -36,44 +36,92 @@ func (d *Dist) runPeer(self *proc.Self, p *peer) error {
 	if p.dialing {
 		go d.dial(p)
 	}
-	var (
-		queue   []frame
-		waiters []proc.Ref
-		conn    net.Conn
-	)
-	for conn == nil {
+	conn, w, err := d.await(self, p)
+	if conn == nil {
+		return err
+	}
+	c := d.connected(self, p, conn, w.waiters)
+	if !c.send(w.queue...) {
+		return c.close()
+	}
+	return c.run()
+}
+
+// connecting is what the process of a connection keeps until connected:
+// the frames to send, and the refs of those waiting for it.
+type connecting struct {
+	queue   []frame
+	waiters []proc.Ref
+}
+
+// keep keeps f to send once connected, and reports whether the frames kept
+// are still within max, if max > 0.
+func (w *connecting) keep(f frame, max int) bool {
+	w.queue = append(w.queue, f)
+	return max <= 0 || len(w.queue) <= max
+}
+
+// await waits for the connection to p, keeping what comes meanwhile. It
+// returns the connection, or, with none, the end of the process.
+func (d *Dist) await(self *proc.Self, p *peer) (net.Conn, connecting, error) {
+	var w connecting
+	for {
 		msg, err := self.Receive(context.Background())
 		if err != nil {
-			return d.lost(p, err)
+			return nil, w, d.lost(p, err)
 		}
 		switch m := msg.(type) {
 		case frame:
-			queue = append(queue, m)
-			if d.cfg.MaxQueue > 0 && len(queue) > d.cfg.MaxQueue {
-				return d.lost(p, proc.MailboxFull)
+			if !w.keep(m, d.cfg.MaxQueue) {
+				return nil, w, d.lost(p, proc.MailboxFull)
 			}
 		case waitUp:
-			waiters = append(waiters, m.ref)
+			w.waiters = append(w.waiters, m.ref)
 		case wake:
-			d.mu.Lock()
-			switch {
-			case p.ready != nil:
-				conn, p.ready, p.up = p.ready, nil, true
-			case !p.dialing && !p.incoming && !p.awaiting:
-				// Neither way connected.
-				d.forget(p)
-				d.mu.Unlock()
-				return d.down(p)
+			conn, gone := d.woken(p)
+			if gone {
+				return nil, w, d.down(p)
 			}
-			d.mu.Unlock()
+			if conn != nil {
+				return conn, w, nil
+			}
 		case stop:
-			d.mu.Lock()
-			d.forget(p)
-			d.mu.Unlock()
-			return d.down(p)
+			return nil, w, d.drop(p)
 		}
 	}
+}
 
+// woken takes the connection made to p, if any, once a dial or an accept
+// has ended. With none, and none to come, p is gone: forgotten.
+func (d *Dist) woken(p *peer) (conn net.Conn, gone bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if p.ready != nil {
+		conn, p.ready, p.up = p.ready, nil, true
+		return conn, false
+	}
+	if p.coming() {
+		return nil, false
+	}
+	d.forget(p)
+	return nil, true
+}
+
+// coming reports whether a connection to p may still come: by its dial,
+// one accepted, or one the node is to dial.
+func (p *peer) coming() bool { return p.dialing || p.incoming || p.awaiting }
+
+// drop forgets p, and has its node down.
+func (d *Dist) drop(p *peer) error {
+	d.mu.Lock()
+	d.forget(p)
+	d.mu.Unlock()
+	return d.down(p)
+}
+
+// connected starts the connection to p on conn: its socket, its ticks, the
+// node up, and those waiting for it told.
+func (d *Dist) connected(self *proc.Self, p *peer, conn net.Conn, waiters []proc.Ref) *connection {
 	conn, reads := counted(conn)
 	sock := gentcp.Start(d.n, conn, self.PID(), gentcp.Options{
 		Packet:      gentcp.Packet4,
@@ -88,9 +136,15 @@ func (d *Dist) runPeer(self *proc.Self, p *peer) error {
 	for _, ref := range waiters {
 		d.n.SendAlias(ref, nil)
 	}
-	if !c.send(queue...) {
-		return c.close()
-	}
+	return c
+}
+
+// run sends the frames given to the process, gathered, and hands those
+// received to the node, until the connection ends.
+//
+//abc:disable abc,cyclo the loop over every message of a connection
+func (c *connection) run() error {
+	d, p, self := c.d, c.p, c.self
 	var next any // a message taken while gathering frames
 	for {
 		msg := next
@@ -322,14 +376,39 @@ func (c *connection) receive(b []byte) {
 		return
 	}
 	var msg any
-	switch f.op {
-	case opSend, opSendName, opSendAlias:
+	if f.op.carriesMsg() {
 		if msg, err = c.dec.Decode(f.payload); err != nil {
 			c.d.n.Logger().Warn("dist: message not received", "node", c.p.node, "error", err)
 			return
 		}
 	}
-	r, node := c.d.remote, c.p.node
+	if c.own(f) {
+		c.deliver(f, msg)
+	}
+}
+
+// carriesMsg reports whether a frame of o carries a message.
+func (o op) carriesMsg() bool { return o == opSend || o == opSendName || o == opSendAlias }
+
+// own reports whether f speaks for the other node alone: of a process or
+// a reference of its own, where it names one.
+func (c *connection) own(f frame) bool {
+	switch f.op {
+	case opExit, opExitLink, opLink, opUnlink:
+		return f.from.Node() == c.p.node
+	case opMonitor, opDemonitor, opMonitorName, opDemonitorName:
+		return f.ref.Node() == c.p.node
+	case opDown:
+		return f.to.Node() == c.p.node
+	}
+	return true
+}
+
+// deliver hands f, with its message, to the node.
+//
+//abc:dispatch one case an op
+func (c *connection) deliver(f frame, msg any) {
+	r := c.d.remote
 	switch f.op {
 	case opSend:
 		r.Send(f.to, msg)
@@ -338,37 +417,21 @@ func (c *connection) receive(b []byte) {
 	case opSendAlias:
 		r.SendAlias(f.ref, msg)
 	case opExit, opExitLink:
-		if f.from.Node() == node {
-			r.Exit(f.from, f.to, f.reason, f.op == opExitLink)
-		}
+		r.Exit(f.from, f.to, f.reason, f.op == opExitLink)
 	case opLink:
-		if f.from.Node() == node {
-			r.Link(f.from, f.to)
-		}
+		r.Link(f.from, f.to)
 	case opUnlink:
-		if f.from.Node() == node {
-			r.Unlink(f.from, f.to)
-		}
+		r.Unlink(f.from, f.to)
 	case opMonitor:
-		if f.ref.Node() == node {
-			r.Monitor(f.ref, f.to)
-		}
+		r.Monitor(f.ref, f.to)
 	case opDemonitor:
-		if f.ref.Node() == node {
-			r.Demonitor(f.ref, f.to)
-		}
+		r.Demonitor(f.ref, f.to)
 	case opMonitorName:
-		if f.ref.Node() == node {
-			r.MonitorName(f.ref, f.name)
-		}
+		r.MonitorName(f.ref, f.name)
 	case opDemonitorName:
-		if f.ref.Node() == node {
-			r.DemonitorName(f.ref, f.name)
-		}
+		r.DemonitorName(f.ref, f.name)
 	case opDown:
-		if f.to.Node() == node {
-			r.Down(f.ref, f.to, f.reason)
-		}
+		r.Down(f.ref, f.to, f.reason)
 	}
 }
 
