@@ -83,6 +83,10 @@ func (n *Node) MonitorAliasFunc(pid PID, deliver func(Ref, AliasMsg)) Alias {
 	return n.monitorAlias(pid, deliver)
 }
 
+// monitorAlias makes the alias of a monitor of pid, delivering to f: of a
+// remote, missing or local process, each under the locks its order needs.
+//
+//abc:disable abc the alias of every request, a call or a SendRequest
 func (n *Node) monitorAlias(pid PID, f func(Ref, AliasMsg)) Alias {
 	ref := n.MakeRef()
 	a, s := n.newAlias(ref, f)
@@ -95,11 +99,7 @@ func (n *Node) monitorAlias(pid PID, f func(Ref, AliasMsg)) Alias {
 		return a
 	}
 	if t == nil {
-		reason := NoProc
-		if !n.isLocal(pid) {
-			reason = NoConnection
-		}
-		s.deliver(AliasMsg{Down: true, Reason: reason})
+		s.deliver(AliasMsg{Down: true, Reason: n.missing(pid)})
 		return a
 	}
 

@@ -56,6 +56,8 @@ func (p *process) down(ref Ref, target PID, reason error) {
 // returned Ref is queued to the caller; unlike a link, the caller itself is
 // never affected. Monitoring a process that does not exist queues a DownMsg
 // with reason NoProc at once. Each call creates an independent monitor.
+//
+//abc:disable abc a remote, missing or local process, each under the locks its order needs
 func (s *Self) Monitor(target PID) Ref {
 	p := s.p
 	ref := p.node.MakeRef()
@@ -76,11 +78,7 @@ func (s *Self) Monitor(target PID) Ref {
 		return ref
 	}
 	if t == nil {
-		reason := NoProc
-		if !p.node.isLocal(target) {
-			reason = NoConnection
-		}
-		p.push(DownMsg{Ref: ref, PID: target, Reason: reason})
+		p.push(DownMsg{Ref: ref, PID: target, Reason: p.node.missing(target)})
 		return ref
 	}
 
@@ -173,6 +171,8 @@ func (s *Self) Demonitor(ref Ref) bool {
 // context is already cancelled with NoProc. As with context.WithCancel,
 // stop must be called to release the watch once it is no longer needed;
 // after stop, the cause is context.Canceled unless pid had died first.
+//
+//abc:disable abc a remote, missing or local process, each under the locks its order needs
 func (n *Node) Watch(parent context.Context, pid PID) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancelCause(parent)
 	stop := func() { cancel(context.Canceled) }
@@ -186,11 +186,7 @@ func (n *Node) Watch(parent context.Context, pid PID) (context.Context, context.
 				stop()
 			}
 		}
-		reason := NoProc
-		if !n.isLocal(pid) {
-			reason = NoConnection
-		}
-		cancel(reason)
+		cancel(n.missing(pid))
 		return ctx, stop
 	}
 

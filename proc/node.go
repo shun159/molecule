@@ -93,6 +93,15 @@ func (n *Node) isLocal(pid PID) bool {
 	return pid.node == n.name && pid.creation == n.creation
 }
 
+// missing is the reason a process not found is down: NoProc, of this node,
+// or NoConnection, of another, not connected.
+func (n *Node) missing(pid PID) error {
+	if n.isLocal(pid) {
+		return NoProc
+	}
+	return NoConnection
+}
+
 func (n *Node) lookup(pid PID) *process {
 	if !n.isLocal(pid) {
 		return nil

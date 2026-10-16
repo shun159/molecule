@@ -44,11 +44,14 @@ func IsAbnormal(reason error) bool {
 // crashReport logs that fn, the function of p, ended with an abnormal
 // reason, like the crash reports of proc_lib.
 func (p *process) crashReport(fn func(*Self) error, reason error) {
-	n := p.node
-	n.regMu.Lock()
-	name := p.name
-	n.regMu.Unlock()
+	name := p.registeredName()
+	p.node.Logger().Error("crash report", p.crashAttrs(fn, reason, name)...)
+	p.node.Emit(Crashed{PID: p.pid, Name: name, Label: p.labelString(), Reason: reason})
+}
 
+// crashAttrs are the attributes of the crash report of p, registered as
+// name, if any: with the stack of a panic.
+func (p *process) crashAttrs(fn func(*Self) error, reason error, name string) []any {
 	attrs := []any{
 		slog.String("pid", p.pid.String()),
 		slog.String("initial_call", funcName(fn)),
@@ -65,8 +68,7 @@ func (p *process) crashReport(fn func(*Self) error, reason error) {
 	if errors.As(reason, &pe) {
 		attrs = append(attrs, slog.String("stack", string(pe.Stack)))
 	}
-	n.Logger().Error("crash report", attrs...)
-	n.Emit(Crashed{PID: p.pid, Name: name, Label: p.labelString(), Reason: reason})
+	return attrs
 }
 
 func funcName(fn any) string {
