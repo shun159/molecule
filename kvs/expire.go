@@ -163,15 +163,13 @@ func (x *expiries[K, V]) rebuild() {
 	t := x.t
 	clear(x.h)
 	x.h = x.h[:0]
-	t.idx.eachShard(false, func(each func(func(*leaf[K, V]) bool)) bool {
-		each(func(l *leaf[K, V]) bool {
+	for shard := range t.idx.byShard(false) {
+		for l := range shard {
 			if at := t.opts.Expires(l.val); !at.IsZero() {
 				x.h = append(x.h, expiry[K]{at.UnixNano(), l.key})
 			}
-			return true
-		})
-		return true
-	})
+		}
+	}
 	x.heapify()
 }
 

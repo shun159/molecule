@@ -2,6 +2,7 @@ package kvs
 
 import (
 	"hash/maphash"
+	"iter"
 	"sync"
 	"sync/atomic"
 )
@@ -154,16 +155,21 @@ func (x *treeIndex[K, V]) frozen(i int, cut bool) *bnode[K, V] {
 	return n
 }
 
-func (x *treeIndex[K, V]) eachShard(cut bool, yield func(func(func(*leaf[K, V]) bool)) bool) {
-	for i := range x.shards {
-		root := x.frozen(i, cut)
-		each := func(f func(*leaf[K, V]) bool) {
-			c := cursor[K, V]{cmp: x.cmp}
-			for c.seek(root, nil); c.cur != nil && f(c.cur); c.next() {
+func (x *treeIndex[K, V]) byShard(cut bool) iter.Seq[entries[K, V]] {
+	return func(yield func(entries[K, V]) bool) {
+		for i := range x.shards {
+			if !yield(x.inOrder(x.frozen(i, cut))) {
+				return
 			}
 		}
-		if !yield(each) {
-			return
+	}
+}
+
+// inOrder ranges over the entries under root, in order.
+func (x *treeIndex[K, V]) inOrder(root *bnode[K, V]) entries[K, V] {
+	return func(yield func(*leaf[K, V]) bool) {
+		c := cursor[K, V]{cmp: x.cmp}
+		for c.seek(root, nil); c.cur != nil && yield(c.cur); c.next() {
 		}
 	}
 }

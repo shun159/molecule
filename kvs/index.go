@@ -2,6 +2,7 @@ package kvs
 
 import (
 	"hash/maphash"
+	"iter"
 	"sync/atomic"
 )
 
@@ -21,13 +22,27 @@ type index[K comparable, V any] interface {
 	// del deletes k, written to log by r. A key absent writes nothing.
 	del(log *wal, k K, r rec, match matcher[V]) (*batch, error)
 	len() int
-	// eachShard hands each shard in turn to yield, as the entries it holds,
-	// to range over without lock. With cut, they are those it holds
-	// once locked, for a compaction.
-	eachShard(cut bool, yield func(func(func(*leaf[K, V]) bool)) bool)
+	// byShard returns each shard in turn, as the entries it holds, to
+	// range over without lock. With cut, they are those it holds once
+	// locked, for a compaction.
+	byShard(cut bool) iter.Seq[entries[K, V]]
 	// load sets or deletes entries on opening, without the log.
 	load(k K, v V, size int64, rev uint64)
 	unload(k K)
+}
+
+// entries are the entries of a shard, to range over.
+type entries[K comparable, V any] = iter.Seq[*leaf[K, V]]
+
+// pointers ranges over ls, by pointer.
+func pointers[T any](ls []T) iter.Seq[*T] {
+	return func(yield func(*T) bool) {
+		for i := range ls {
+			if !yield(&ls[i]) {
+				return
+			}
+		}
+	}
 }
 
 // matcher tells whether a write is to be made, given the entry of its
