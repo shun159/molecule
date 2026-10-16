@@ -111,6 +111,11 @@ func invoke(fn func(*Self) error, self *Self) (reason error) {
 
 // die makes p dead with reason, propagates it to the linked processes and
 // notifies the monitoring ones. Only the first call has an effect.
+//
+// It is kept whole: the order of its steps, under the lock of p and after,
+// is what the processes linked and monitoring see.
+//
+//abc:disable abc the death of every process, in an order that matters
 func (p *process) die(reason error) {
 	p.mu.Lock()
 	if p.dead.Load() {
@@ -168,27 +173,38 @@ func (p *process) push(msg any) {
 // messages dropped at once, rather than once its goroutine notices.
 func (p *process) overflow() {
 	n := p.mbox.len()
-	p.node.regMu.Lock()
-	name := p.name // before dying frees it
-	p.node.regMu.Unlock()
+	name := p.registeredName() // before dying frees it
 	p.die(MailboxFull)
 	if p.exitReason() != MailboxFull {
 		return // dead already
 	}
 	p.mbox.drop()
+	label := p.labelString()
+	p.node.Logger().Error("mailbox full", overflowAttrs(p.pid, n, name, label)...)
+	p.node.Emit(Overflowed{PID: p.pid, Name: name, Label: label, Len: n})
+}
+
+// overflowAttrs are the attributes of the report of a mailbox full: of
+// pid, with n messages, its name and label, if any.
+func overflowAttrs(pid PID, n int, name, label string) []any {
 	attrs := []any{
-		slog.String("pid", p.pid.String()),
+		slog.String("pid", pid.String()),
 		slog.Int("message_queue_len", n),
 	}
 	if name != "" {
 		attrs = append(attrs, slog.String("registered_name", name))
 	}
-	label := p.labelString()
 	if label != "" {
 		attrs = append(attrs, slog.String("label", label))
 	}
-	p.node.Logger().Error("mailbox full", attrs...)
-	p.node.Emit(Overflowed{PID: p.pid, Name: name, Label: label, Len: n})
+	return attrs
+}
+
+// registeredName returns the name p is registered under, if any.
+func (p *process) registeredName() string {
+	p.node.regMu.Lock()
+	defer p.node.regMu.Unlock()
+	return p.name
 }
 
 // signalExit handles an exit signal sent to p by from. Signals that kill p
@@ -350,6 +366,8 @@ func (s *Self) Send(to PID, msg any) {
 // Link creates a bidirectional link with to: when either process dies, the
 // other gets an exit signal. Linking to a process that does not exist
 // delivers an exit signal with reason NoProc to the caller.
+//
+//abc:disable abc a remote, missing or local process, each under the locks its order needs
 func (s *Self) Link(to PID) {
 	p := s.p
 	if to == p.pid {
@@ -368,11 +386,7 @@ func (s *Self) Link(to PID) {
 		return
 	}
 	if t == nil {
-		reason := NoProc
-		if !p.node.isLocal(to) {
-			reason = NoConnection
-		}
-		p.signalExit(to, reason, false)
+		p.signalExit(to, p.node.missing(to), false)
 		return
 	}
 
