@@ -542,3 +542,28 @@ func BenchmarkPutExpiring(b *testing.B) {
 		b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N)/1000, "ns/entry")
 	})
 }
+
+// BenchmarkPutExpiringFew rewrites a few entries that expire, in a table
+// of benchKeys that do not: the times out of date it drops are of those
+// few.
+func BenchmarkPutExpiringFew(b *testing.B) {
+	for _, m := range modes {
+		b.Run(m.name, func(b *testing.B) {
+			tab := open(b, benchDir(b), expiringOptions(m.read, m.write))
+			defer tab.Close()
+			for k := range benchKeys {
+				if err := tab.Put(fmt.Sprint(k), expiring{}); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.ResetTimer()
+			i := 0
+			for b.Loop() {
+				i++
+				if err := tab.Put(fmt.Sprint("x", i%10), expiring{Expiry: at(i)}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
