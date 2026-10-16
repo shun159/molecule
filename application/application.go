@@ -294,10 +294,15 @@ func stopApps(ctx context.Context, n *proc.Node, apps []*running) error {
 // SIGINT or SIGTERM, or a permanent application ends; then it stops them,
 // in reverse order, and returns: nil, or the end of the permanent
 // application. It is what main does.
+//
+// Done while the applications start, ctx stops them once started, as
+// they stop at any other time: their start is not cut short. A second
+// signal ends the program at once, as it would without Run.
 func Run(ctx context.Context, n *proc.Node, apps ...App) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	r, err := Start(ctx, n, apps...)
+	context.AfterFunc(ctx, stop)
+	r, err := Start(context.Background(), n, apps...)
 	if err != nil {
 		return err
 	}
