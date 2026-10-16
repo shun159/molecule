@@ -2,7 +2,6 @@ package gen
 
 import (
 	"fmt"
-
 	"log/slog"
 
 	"github.com/shun159/molecule/actor"
@@ -16,6 +15,11 @@ func (r *runner[S]) report(state S, reason error) {
 	if f, ok := any(r.b).(actor.StatusFormatter); ok {
 		st = f.FormatStatus(st)
 	}
+	r.env.Logger().Error("behaviour terminating", r.statusAttrs(st)...)
+}
+
+// statusAttrs are the attributes of the report of st.
+func (r *runner[S]) statusAttrs(st actor.Status) []any {
 	attrs := []any{
 		slog.String("pid", r.env.Self().String()),
 		slog.String("behaviour", fmt.Sprintf("%T", r.b)),
@@ -25,7 +29,7 @@ func (r *runner[S]) report(state S, reason error) {
 	if st.Reason != nil {
 		attrs = append(attrs, slog.String("reason", st.Reason.Error()))
 	}
-	r.env.Logger().Error("behaviour terminating", attrs...)
+	return attrs
 }
 
 // briefLimit bounds the size of values in reports.

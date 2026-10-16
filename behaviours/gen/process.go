@@ -16,16 +16,10 @@ import (
 func run[S any](self *proc.Self, b Behaviour[S], args any, o actor.StartOptions) error {
 	self.SetLabel(labelOf(b))
 	self.SetMaxMessages(o.MaxMessages)
-	if o.Name != nil {
-		if err := o.Name.Register(self.Node(), self.PID()); err != nil {
-			if pid, ok := o.Name.WhereIs(self.Node()); ok && pid != self.PID() {
-				err = &actor.AlreadyStartedError{PID: pid}
-			}
-			self.InitAck(err)
-			return nil
-		}
+	if err := register(self, o.Name); err != nil {
+		self.InitAck(err)
+		return nil
 	}
-
 	r := newRunner(b, procEnv{self}, o)
 	if err := r.Init(args); err != nil {
 		self.InitAck(err)
@@ -37,11 +31,34 @@ func run[S any](self *proc.Self, b Behaviour[S], args any, o actor.StartOptions)
 	if done, reason := r.Flush(); done {
 		return reason
 	}
+	return loop(self, r)
+}
+
+// register registers the process under name, if any. A name another
+// process has fails the start with AlreadyStartedError.
+func register(self *proc.Self, name actor.Name) error {
+	if name == nil {
+		return nil
+	}
+	err := name.Register(self.Node(), self.PID())
+	if err == nil {
+		return nil
+	}
+	if pid, ok := name.WhereIs(self.Node()); ok && pid != self.PID() {
+		return &actor.AlreadyStartedError{PID: pid}
+	}
+	return err
+}
+
+// loop hands the runner the messages of the mailbox, until the behaviour
+// terminates, or the process is killed: then without Terminate, as in
+// Erlang.
+func loop[S any](self *proc.Self, r *runner[S]) error {
 	for {
 		msg, err := self.Receive(context.Background())
 		if err != nil {
 			r.Abort()
-			return err // killed: no Terminate, as in Erlang
+			return err
 		}
 		if done, reason := r.Deliver(msg); done {
 			return reason

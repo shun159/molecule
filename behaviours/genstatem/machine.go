@@ -90,6 +90,11 @@ func (a adapter[St, D]) Init(self proc.PID, _ any) (Machine[St, D], []actor.Effe
 	return m, out, nil
 }
 
+// Handle turns msg into the event of the machine, and runs it.
+//
+// It is kept whole: every event of every machine goes through it.
+//
+//abc:disable abc,cyclo the path of every event
 func (a adapter[St, D]) Handle(m Machine[St, D], msg gen.Msg) (Machine[St, D], []actor.Effect) {
 	var ev Event
 	switch x := msg.(type) {
@@ -164,6 +169,10 @@ func (a adapter[St, D]) Terminate(m Machine[St, D], reason error) []actor.Effect
 // run handles the events in order, with those they insert or retry, until
 // none is left or the machine stops. It changes m, the Handle's own copy:
 // passing it on by value would copy the data at every call.
+//
+// It is kept whole: every event of every machine goes through it.
+//
+//abc:disable abc,nesting,cyclo,lines the loop over the events of every message
 func (a adapter[St, D]) run(m *Machine[St, D], queue []Event) []actor.Effect {
 	var out []actor.Effect
 	for len(queue) > 0 {
@@ -219,7 +228,9 @@ func (a adapter[St, D]) enterState(m *Machine[St, D], old St, out []actor.Effect
 		return append(out, actor.Stop{Reason: ErrEnterChangedState})
 	}
 	m.data = data
-	if next, postpone, repeat := a.actions(m, effs, &out); postpone || repeat || len(next) > 0 {
+	next, postpone, repeat := a.actions(m, effs, &out)
+	onEvents := postpone || repeat || len(next) > 0 // what an enter call may not do
+	if onEvents {
 		return append(out, actor.Stop{Reason: ErrEnterAction})
 	}
 	return out
@@ -228,6 +239,8 @@ func (a adapter[St, D]) enterState(m *Machine[St, D], old St, out []actor.Effect
 // actions performs the actions among effs on m, turning timeouts into gen
 // timers, and appends the other effects to out. It returns the events to
 // insert, whether to postpone the event, and whether to repeat the state.
+//
+//abc:dispatch one case an action
 func (a adapter[St, D]) actions(m *Machine[St, D], effs []actor.Effect, out *[]actor.Effect) (next []Event, postpone, repeat bool) {
 	for _, e := range effs {
 		switch x := e.(type) {
