@@ -3,41 +3,20 @@ package gen
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"runtime/debug"
-	"time"
 
 	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/proc"
 )
 
-// Messages the runtime sends to its own process.
-type (
-	timeout struct {
-		key any
-		gen uint64
-	}
-	downMsg     struct{ actor.Down }
-	responseMsg struct{ actor.Response }
-	// answer is the reply to a SendRequest, or the exit of its server.
-	answer struct {
-		ref proc.Ref
-		m   proc.AliasMsg
-	}
-	// requestTimeout ends a SendRequest still waiting.
-	requestTimeout struct{ ref proc.Ref }
-	// asyncDone is the outcome of an Async.
-	asyncDone struct {
-		key   any
-		gen   uint64
-		value any
-		err   error
-	}
-)
-
-// runtime runs a Behaviour and performs its effects through an Env. It
+// runner runs a Behaviour and performs its effects through an Env. It
 // holds the meaning of the effects; the Env, what they act on.
-type runtime[S any] struct {
+//
+// This file has its loop: a message in, the behaviour called, the effects
+// performed. The effects are in effects.go, and what they keep track of
+// in a file each: timers.go, monitors.go, asyncs.go, requests.go. The
+// report of a behaviour terminating is in report.go.
+type runner[S any] struct {
 	env   Env
 	b     Behaviour[S]
 	state S
@@ -66,37 +45,8 @@ type runtime[S any] struct {
 	continues []any // Msgs of Continue effects, handled before the mailbox
 }
 
-type timer struct {
-	cancel func()
-	gen    uint64
-	msg    any
-}
-
-// async is an Async started: running, or, with no cancel, waiting.
-type async struct {
-	cancel func()
-	gen    uint64
-}
-
-// queued is an Async waiting to run; it runs only if still in asyncs
-// under its gen, not cancelled or replaced meanwhile.
-type queued struct {
-	e   actor.Async
-	gen uint64
-}
-
-// request is a SendRequest waiting for its answer.
-type request struct {
-	tag     any
-	to      actor.Dest
-	req     any
-	start   time.Time // for its CallDone
-	release func()
-	cancel  func() // of its timeout, if any
-}
-
-func newRuntime[S any](b Behaviour[S], env Env, o actor.StartOptions) *runtime[S] {
-	return &runtime[S]{
+func newRunner[S any](b Behaviour[S], env Env, o actor.StartOptions) *runner[S] {
+	return &runner[S]{
 		env:      env,
 		b:        b,
 		maxAsync: o.MaxAsync,
@@ -109,7 +59,7 @@ func newRuntime[S any](b Behaviour[S], env Env, o actor.StartOptions) *runtime[S
 	}
 }
 
-func (r *runtime[S]) Init(args any) error {
+func (r *runner[S]) Init(args any) error {
 	state, effs, err := r.init(args)
 	if err != nil {
 		return err
@@ -126,7 +76,7 @@ func (r *runtime[S]) Init(args any) error {
 	return nil
 }
 
-func (r *runtime[S]) init(args any) (state S, effs []actor.Effect, err error) {
+func (r *runner[S]) init(args any) (state S, effs []actor.Effect, err error) {
 	defer func() {
 		if v := recover(); v != nil {
 			err = &proc.PanicError{Value: v, Stack: debug.Stack()}
@@ -142,18 +92,18 @@ func (r *runtime[S]) init(args any) (state S, effs []actor.Effect, err error) {
 	return r.b.Init(r.env.Self(), args)
 }
 
-func (r *runtime[S]) State() any { return r.state }
+func (r *runner[S]) State() any { return r.state }
 
-func (r *runtime[S]) Label() string { return labelOf(r.b) }
+func (r *runner[S]) Label() string { return labelOf(r.b) }
 
-func (r *runtime[S]) Deliver(msg any) (bool, error) {
+func (r *runner[S]) Deliver(msg any) (bool, error) {
 	if done, reason := r.receive(msg); done {
 		return true, reason
 	}
 	return r.Flush()
 }
 
-func (r *runtime[S]) Flush() (bool, error) {
+func (r *runner[S]) Flush() (bool, error) {
 	for {
 		switch {
 		case len(r.continues) > 0:
@@ -179,7 +129,7 @@ func (r *runtime[S]) Flush() (bool, error) {
 }
 
 // receive handles a message from the mailbox.
-func (r *runtime[S]) receive(msg any) (bool, error) {
+func (r *runner[S]) receive(msg any) (bool, error) {
 	if m, ok := msg.(sysMsg); ok {
 		if m.Req == sysTerminate {
 			r.last = m
@@ -208,7 +158,7 @@ func (r *runtime[S]) receive(msg any) (bool, error) {
 
 // step handles one message and performs the effects. It reports whether
 // the behaviour has terminated, and its exit reason if so.
-func (r *runtime[S]) step(in Msg) (bool, error) {
+func (r *runner[S]) step(in Msg) (bool, error) {
 	r.last = in
 	state, effs, err := r.handle(in)
 	if err != nil {
@@ -223,7 +173,7 @@ func (r *runtime[S]) step(in Msg) (bool, error) {
 }
 
 // parentExit has the behaviour handle the exit of its parent.
-func (r *runtime[S]) parentExit(pe ParentExiter[S], reason error) (bool, error) {
+func (r *runner[S]) parentExit(pe ParentExiter[S], reason error) (bool, error) {
 	state, effs, err := func() (state S, effs []actor.Effect, err error) {
 		defer func() {
 			if v := recover(); v != nil {
@@ -244,7 +194,7 @@ func (r *runtime[S]) parentExit(pe ParentExiter[S], reason error) (bool, error) 
 	return false, nil
 }
 
-func (r *runtime[S]) handle(in Msg) (state S, effs []actor.Effect, err error) {
+func (r *runner[S]) handle(in Msg) (state S, effs []actor.Effect, err error) {
 	defer func() {
 		if v := recover(); v != nil {
 			err = &proc.PanicError{Value: v, Stack: debug.Stack()}
@@ -257,7 +207,7 @@ func (r *runtime[S]) handle(in Msg) (state S, effs []actor.Effect, err error) {
 // translate turns a received message into what the behaviour sees. It
 // reports false for messages that are not for the behaviour, such as a
 // timer that has since been cancelled.
-func (r *runtime[S]) translate(msg any) (Msg, bool) {
+func (r *runner[S]) translate(msg any) (Msg, bool) {
 	switch m := msg.(type) {
 	case actor.CallMsg, actor.CastMsg:
 		// Already boxed in msg: returning it, not m, spares boxing it
@@ -324,7 +274,7 @@ func (r *runtime[S]) translate(msg any) (Msg, bool) {
 }
 
 // terminate runs Terminate and returns the reason to exit with.
-func (r *runtime[S]) terminate(state S, reason error) (exit error) {
+func (r *runner[S]) terminate(state S, reason error) (exit error) {
 	defer r.Abort()
 	defer func() {
 		if v := recover(); v != nil {
@@ -340,7 +290,7 @@ func (r *runtime[S]) terminate(state S, reason error) (exit error) {
 	return reason
 }
 
-func (r *runtime[S]) Abort() {
+func (r *runner[S]) Abort() {
 	for key := range r.timers {
 		r.cancelTimer(key)
 	}
@@ -353,39 +303,7 @@ func (r *runtime[S]) Abort() {
 	}
 }
 
-// report logs that the behaviour terminates abnormally, with the message
-// it was handling and its state, like the report of a terminating
-// gen_server. The crash report of the process follows.
-func (r *runtime[S]) report(state S, reason error) {
-	st := actor.Status{State: state, Message: r.last, Reason: reason}
-	if f, ok := any(r.b).(actor.StatusFormatter); ok {
-		st = f.FormatStatus(st)
-	}
-	attrs := []any{
-		slog.String("pid", r.env.Self().String()),
-		slog.String("behaviour", fmt.Sprintf("%T", r.b)),
-		slog.String("last_message", brief(st.Message)),
-		slog.String("state", brief(st.State)),
-	}
-	if st.Reason != nil {
-		attrs = append(attrs, slog.String("reason", st.Reason.Error()))
-	}
-	r.env.Logger().Error("behaviour terminating", attrs...)
-}
-
-// briefLimit bounds the size of values in reports.
-const briefLimit = 1024
-
-// brief formats v for a report, cut short if long.
-func brief(v any) string {
-	s := fmt.Sprintf("%+v", v)
-	if len(s) > briefLimit {
-		return s[:briefLimit] + "..."
-	}
-	return s
-}
-
-func (r *runtime[S]) system(m sysMsg) {
+func (r *runner[S]) system(m sysMsg) {
 	var reply any
 	switch m.Req {
 	case sysGetState:
@@ -396,231 +314,4 @@ func (r *runtime[S]) system(m sysMsg) {
 		r.suspended = false
 	}
 	r.env.SendAlias(m.From.Tag, reply)
-}
-
-func (r *runtime[S]) apply(effs []actor.Effect) {
-	for _, e := range effs {
-		switch e := e.(type) {
-		case actor.Continue:
-			r.continues = append(r.continues, e.Msg)
-		case actor.Reply:
-			r.env.SendAlias(e.To.Tag, e.Value)
-		case actor.Send:
-			if to, ok := e.To.(actor.Remote); ok {
-				r.env.SendName(to.Node, to.Name, e.Msg)
-			} else if pid, ok := r.env.Resolve(e.To); ok {
-				r.env.Send(pid, e.Msg)
-			}
-		case actor.Cast:
-			if to, ok := e.To.(actor.Remote); ok {
-				r.env.SendName(to.Node, to.Name, actor.CastMsg{Req: e.Req})
-			} else if pid, ok := r.env.Resolve(e.To); ok {
-				r.env.Send(pid, actor.CastMsg{Req: e.Req})
-			}
-		case actor.Stop:
-			if !r.stopping {
-				r.stopping = true
-				r.stopReason = e.Reason
-				if r.stopReason == nil {
-					r.stopReason = proc.Normal
-				}
-			}
-		case actor.Monitor:
-			r.monitor(e)
-		case actor.Demonitor:
-			r.demonitor(e.Tag)
-		case actor.StartTimer:
-			r.startTimer(e)
-		case actor.CancelTimer:
-			r.cancelTimer(e.Key)
-		case actor.SendRequest:
-			r.sendRequest(e)
-		case actor.Async:
-			r.startAsync(e)
-		case actor.CancelAsync:
-			r.cancelAsync(e.Key)
-			r.runWaiting()
-		case actor.Link:
-			r.env.Link(e.PID)
-		case actor.Unlink:
-			r.env.Unlink(e.PID)
-		case actor.TrapExit:
-			r.env.TrapExit(e.On)
-		case actor.MonitorNodes:
-			r.env.MonitorNodes(e.On)
-		case actor.Exit:
-			if pid, ok := r.env.Resolve(e.To); ok {
-				r.env.Exit(pid, e.Reason)
-			}
-		case StartChild:
-			pid, err := r.env.StartLink(e.Child)
-			r.continues = append(r.continues, Started{Tag: e.Tag, PID: pid, Err: err})
-		case Log:
-			r.env.Logger().Log(context.Background(), e.Level, e.Msg, e.Attrs...)
-		case Emit:
-			r.env.Emit(e.Event)
-		case AckLater:
-			r.ackLater = true
-		case Ack:
-			r.env.Ack(e.Err)
-		case Performer:
-			e.Perform(r.env)
-		default:
-			panic(fmt.Sprintf("gen: unknown effect %T", e))
-		}
-	}
-}
-
-func (r *runtime[S]) monitor(e actor.Monitor) {
-	r.demonitor(e.Tag)
-	if to, ok := e.Target.(actor.Remote); ok && to.Node != r.env.Self().Node() {
-		ref := r.env.MonitorName(to.Node, to.Name)
-		r.monitors[e.Tag] = ref
-		r.tags[ref] = e.Tag
-		return
-	}
-	pid, ok := r.env.Resolve(e.Target)
-	if !ok {
-		r.env.Send(r.env.Self(), downMsg{actor.Down{Tag: e.Tag, Reason: proc.NoProc}})
-		return
-	}
-	ref := r.env.Monitor(pid)
-	r.monitors[e.Tag] = ref
-	r.tags[ref] = e.Tag
-}
-
-func (r *runtime[S]) demonitor(tag any) {
-	if ref, ok := r.monitors[tag]; ok {
-		r.env.Demonitor(ref)
-		delete(r.monitors, tag)
-		delete(r.tags, ref)
-	}
-}
-
-func (r *runtime[S]) startTimer(e actor.StartTimer) {
-	r.cancelTimer(e.Key)
-	r.timerGen++
-	after := e.After
-	if !e.At.IsZero() {
-		after = max(0, e.At.Sub(r.env.Now()))
-	}
-	cancel := r.env.SendAfter(after, timeout{key: e.Key, gen: r.timerGen})
-	r.timers[e.Key] = timer{cancel: cancel, gen: r.timerGen, msg: e.Msg}
-}
-
-func (r *runtime[S]) cancelTimer(key any) {
-	if t, ok := r.timers[key]; ok {
-		t.cancel()
-		delete(r.timers, key)
-	}
-}
-
-// startAsync runs e, or, with maxAsync running, has it wait its turn
-// after those waiting already.
-func (r *runtime[S]) startAsync(e actor.Async) {
-	r.cancelAsync(e.Key)
-	r.runWaiting()
-	r.asyncGen++
-	if r.maxAsync > 0 && r.running >= r.maxAsync {
-		r.asyncs[e.Key] = async{gen: r.asyncGen}
-		r.waiting = append(r.waiting, queued{e, r.asyncGen})
-		return
-	}
-	r.runAsync(e, r.asyncGen)
-}
-
-func (r *runtime[S]) runAsync(e actor.Async, gen uint64) {
-	key := e.Key
-	cancel := r.env.Async(e.Run, func(v any, err error) any {
-		return asyncDone{key: key, gen: gen, value: v, err: err}
-	})
-	r.asyncs[key] = async{cancel: cancel, gen: gen}
-	r.running++
-}
-
-// runWaiting runs the asyncs waiting, in order, while under maxAsync.
-func (r *runtime[S]) runWaiting() {
-	for len(r.waiting) > 0 && (r.maxAsync <= 0 || r.running < r.maxAsync) {
-		q := r.waiting[0]
-		r.waiting[0] = queued{}
-		r.waiting = r.waiting[1:]
-		if len(r.waiting) == 0 {
-			r.waiting = nil
-		}
-		if a, ok := r.asyncs[q.e.Key]; ok && a.gen == q.gen {
-			r.runAsync(q.e, q.gen)
-		}
-	}
-}
-
-// cancelAsync cancels the async under key, running or waiting. One
-// running keeps its place until its Run returns, which Go cannot make it
-// do: so no more than maxAsync goroutines run at once.
-func (r *runtime[S]) cancelAsync(key any) {
-	a, ok := r.asyncs[key]
-	if !ok {
-		return
-	}
-	if a.cancel != nil {
-		a.cancel()
-		r.draining[a.gen] = true
-	}
-	delete(r.asyncs, key)
-}
-
-func (r *runtime[S]) sendRequest(e actor.SendRequest) {
-	if to, ok := e.To.(actor.Remote); ok && to.Node != r.env.Self().Node() {
-		// The name is resolved there, and monitored there first.
-		ref, release := r.env.RequestName(to.Node, to.Name, func(ref proc.Ref, m proc.AliasMsg) any {
-			return answer{ref: ref, m: m}
-		})
-		r.request(e, ref, release)
-		r.env.SendName(to.Node, to.Name, actor.CallMsg{From: actor.From{PID: r.env.Self(), Tag: ref}, Req: e.Req})
-		return
-	}
-	pid, ok := r.env.Resolve(e.To)
-	if !ok {
-		err := &actor.ExitError{To: e.To, Reason: proc.NoProc}
-		r.env.Emit(actor.CallDone{To: e.To, Req: e.Req, Err: err})
-		r.env.Send(r.env.Self(), responseMsg{actor.Response{Tag: e.Tag, Err: err}})
-		return
-	}
-	ref, release := r.env.Request(pid, func(ref proc.Ref, m proc.AliasMsg) any {
-		return answer{ref: ref, m: m}
-	})
-	r.request(e, ref, release)
-	r.env.Send(pid, actor.CallMsg{From: actor.From{PID: r.env.Self(), Tag: ref}, Req: e.Req})
-}
-
-// request records the request e, made under ref.
-func (r *runtime[S]) request(e actor.SendRequest, ref proc.Ref, release func()) {
-	req := request{tag: e.Tag, to: e.To, req: e.Req, start: r.env.Now(), release: release}
-	if e.Timeout > 0 {
-		req.cancel = r.env.SendAfter(e.Timeout, requestTimeout{ref: ref})
-	}
-	r.requests[ref] = req
-}
-
-// abandon tells the server at to that the request made under ref is given
-// up on, as actor.Call does.
-func (r *runtime[S]) abandon(to actor.Dest, ref proc.Ref) {
-	msg := actor.CallAbandoned{From: actor.From{PID: r.env.Self(), Tag: ref}}
-	if rem, ok := to.(actor.Remote); ok && rem.Node != r.env.Self().Node() {
-		r.env.SendName(rem.Node, rem.Name, msg)
-	} else if pid, ok := r.env.Resolve(to); ok {
-		r.env.Send(pid, msg)
-	}
-}
-
-// callDone emits the CallDone of req, ended with err.
-func (r *runtime[S]) callDone(req request, err error) {
-	r.env.Emit(actor.CallDone{To: req.to, Req: req.req, Took: r.env.Now().Sub(req.start), Err: err})
-}
-
-func (r *runtime[S]) endRequest(ref proc.Ref, req request) {
-	delete(r.requests, ref)
-	req.release()
-	if req.cancel != nil {
-		req.cancel()
-	}
 }

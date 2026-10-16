@@ -97,5 +97,5 @@ type Runner interface {
 // NewRunner returns a runner of b acting on env, as started with opts.
 // The options of the process, Name and MaxMessages, are the driver's.
 func NewRunner[S any](b Behaviour[S], env Env, opts ...actor.Option) Runner {
-	return newRuntime(b, env, newOptions(opts))
+	return newRunner(b, env, newOptions(opts))
 }
