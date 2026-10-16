@@ -87,7 +87,8 @@ func (intCodec[T]) Append(b []byte, v T) ([]byte, error) {
 
 func (intCodec[T]) Decode(b []byte) (T, error) {
 	v, n := binary.Varint(b)
-	if n <= 0 || n != len(b) || int64(T(v)) != v {
+	whole := n > 0 && n == len(b) // one varint, nothing after
+	if !whole || int64(T(v)) != v {
 		return 0, errTrailing
 	}
 	return T(v), nil
@@ -101,7 +102,8 @@ func (uintCodec[T]) Append(b []byte, v T) ([]byte, error) {
 
 func (uintCodec[T]) Decode(b []byte) (T, error) {
 	v, n := binary.Uvarint(b)
-	if n <= 0 || n != len(b) || uint64(T(v)) != v {
+	whole := n > 0 && n == len(b) // one varint, nothing after
+	if !whole || uint64(T(v)) != v {
 		return 0, errTrailing
 	}
 	return T(v), nil
