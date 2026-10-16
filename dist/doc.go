@@ -34,6 +34,10 @@
 // A message that cannot be encoded is dropped and logged, as one that
 // cannot be decoded. Config.Codec replaces the encoding.
 //
+// The default encoding is gob. A registered type may encode itself
+// instead, with AppendBinary and DecodeBinary, which costs a fraction of
+// gob for the messages sent most: see [AppendAny].
+//
 // The registered names of other nodes are reached with proc.Node.SendName
 // and actor.Remote, by which gen calls and casts a server of another node:
 //

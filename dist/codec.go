@@ -2,6 +2,7 @@ package dist
 
 import (
 	"bytes"
+	"encoding"
 	"encoding/binary"
 	"encoding/gob"
 	"errors"
@@ -44,7 +45,8 @@ type Decoder interface {
 //
 //	func init() { dist.Register(Ping{}, Pong{}) }
 //
-// A type is described once per connection, the first time it is sent.
+// A type is described once per connection, the first time it is sent, or
+// is sent as its own bytes, if binary: see AppendAny.
 func Register(msgs ...any) {
 	registering.Lock()
 	defer registering.Unlock()
@@ -57,7 +59,7 @@ func Register(msgs ...any) {
 	for _, m := range msgs {
 		gob.Register(m)
 		t := reflect.TypeOf(m)
-		id := typeID{t: t, id: hashName(t), empty: noFields(t)}
+		id := typeID{t: t, id: hashName(t), empty: noFields(t), binary: isBinary(t)}
 		if other, ok := r.byID[id.id]; ok && other.t != t {
 			panic(fmt.Sprintf("dist: %v and %v register under one ID", t, other.t))
 		}
@@ -74,9 +76,10 @@ type (
 		byID   map[uint64]typeID
 	}
 	typeID struct {
-		t     reflect.Type
-		id    uint64 // a hash of its name, the same on every node
-		empty bool   // without exported fields: gob encodes none of it
+		t      reflect.Type
+		id     uint64 // a hash of its name, the same on every node
+		empty  bool   // without exported fields: gob encodes none of it
+		binary bool   // sent as the bytes it appends, see AppendAny
 	}
 )
 
@@ -144,12 +147,15 @@ type envelope struct{ Msg any }
 // leave the stream in a state the other side cannot follow: the encoder
 // then starts a new stream, which the first byte of each message tells.
 // A message of a type registered follows the ID of its type, as typed
-// tells, and is its value alone; another, in an envelope.
+// tells, and is its value alone; another, in an envelope. A message of a
+// binary type is out of the stream: its first byte is binaryMsg, then the
+// ID of its type, then its bytes.
 const (
 	sameStream byte = iota
 	newStream
 
-	typed byte = 2
+	typed     byte = 2
+	binaryMsg byte = 4
 )
 
 func (gobCodec) NewEncoder() Encoder { return &gobEncoder{} }
@@ -158,9 +164,17 @@ func (gobCodec) NewDecoder() Decoder { return &gobDecoder{} }
 type gobEncoder struct {
 	buf bytes.Buffer
 	enc *gob.Encoder
+	bin []byte // to append a binary message to
 }
 
 func (e *gobEncoder) Encode(msg any) ([]byte, error) {
+	t, ok := typeOf(msg)
+	if ok && t.binary {
+		b, err := e.encodeBinary(t, msg)
+		if !errors.Is(err, ErrNotBinary) {
+			return b, err
+		}
+	}
 	e.buf.Reset()
 	flag := sameStream
 	if e.enc == nil {
@@ -168,7 +182,7 @@ func (e *gobEncoder) Encode(msg any) ([]byte, error) {
 		flag = newStream
 	}
 	var err error
-	if t, ok := typeOf(msg); ok {
+	if ok {
 		var id [8]byte
 		binary.BigEndian.PutUint64(id[:], t.id)
 		e.buf.WriteByte(flag | typed)
@@ -187,6 +201,23 @@ func (e *gobEncoder) Encode(msg any) ([]byte, error) {
 	return bytes.Clone(e.buf.Bytes()), nil
 }
 
+// encodeBinary encodes msg, of the binary type t, as its own bytes.
+func (e *gobEncoder) encodeBinary(t typeID, msg any) ([]byte, error) {
+	b := binary.BigEndian.AppendUint64(append(e.bin[:0], binaryMsg), t.id)
+	b, err := msg.(encoding.BinaryAppender).AppendBinary(b)
+	if cap(b) <= maxKept {
+		e.bin = b
+	}
+	if err != nil {
+		return nil, err
+	}
+	return bytes.Clone(b), nil
+}
+
+// maxKept is the most an encoder keeps to append binary messages to: a
+// message larger is let go once encoded.
+const maxKept = 64 << 10
+
 type gobDecoder struct {
 	buf bytes.Buffer
 	dec *gob.Decoder
@@ -199,6 +230,9 @@ func (d *gobDecoder) Decode(b []byte) (any, error) {
 		return nil, errStream
 	}
 	flag := b[0]
+	if flag == binaryMsg {
+		return decodeBinary(b[1:])
+	}
 	switch flag &^ typed {
 	case newStream:
 		d.buf.Reset()
@@ -242,4 +276,16 @@ func (d *gobDecoder) decodeTyped(b []byte) (any, error) {
 		return nil, err
 	}
 	return v.Elem().Interface(), nil
+}
+
+// decodeBinary decodes a message of a binary type, after its first byte.
+func decodeBinary(b []byte) (any, error) {
+	if len(b) < 8 {
+		return nil, errStream
+	}
+	t, ok := typeByID(binary.BigEndian.Uint64(b))
+	if !ok || !t.binary {
+		return nil, fmt.Errorf("dist: a binary message of a type not registered, %#x", binary.BigEndian.Uint64(b))
+	}
+	return t.unmarshal(b[8:])
 }
