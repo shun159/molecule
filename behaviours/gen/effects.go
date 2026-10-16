@@ -36,20 +36,20 @@ func (r *runner[S]) apply(effs []actor.Effect) {
 				}
 			}
 		case actor.Monitor:
-			r.monitor(e)
+			r.monitors.monitor(e)
 		case actor.Demonitor:
-			r.demonitor(e.Tag)
+			r.monitors.demonitor(e.Tag)
 		case actor.StartTimer:
-			r.startTimer(e)
+			r.timers.start(e)
 		case actor.CancelTimer:
-			r.cancelTimer(e.Key)
+			r.timers.cancel(e.Key)
 		case actor.SendRequest:
-			r.sendRequest(e)
+			r.requests.send(e)
 		case actor.Async:
-			r.startAsync(e)
+			r.asyncs.start(e)
 		case actor.CancelAsync:
-			r.cancelAsync(e.Key)
-			r.runWaiting()
+			r.asyncs.cancel(e.Key)
+			r.asyncs.runWaiting()
 		case actor.Link:
 			r.env.Link(e.PID)
 		case actor.Unlink:

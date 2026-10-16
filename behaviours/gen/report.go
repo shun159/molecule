@@ -3,8 +3,9 @@ package gen
 import (
 	"fmt"
 
-	"github.com/shun159/molecule/actor"
 	"log/slog"
+
+	"github.com/shun159/molecule/actor"
 )
 
 // report logs that the behaviour terminates abnormally, with the message
