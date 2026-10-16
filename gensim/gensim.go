@@ -271,7 +271,22 @@ func (s *Sim) start(node *node, parent *process, what string, newRunner func(gen
 	if !node.up {
 		return proc.PID{}, ErrNodeDown
 	}
-	p := &process{
+	p := newProcess(node)
+	runner, args, o := newRunner(&env{s, p})
+	p.maxMessages = o.MaxMessages
+	if err := node.register(p, o.Name); err != nil {
+		return proc.PID{}, err
+	}
+	s.add(p, parent, what)
+	if err := s.init(p, runner, args); err != nil {
+		return proc.PID{}, err
+	}
+	s.runUntilAcked(p)
+	return p.started()
+}
+
+func newProcess(node *node) *process {
+	return &process{
 		node:     node,
 		pid:      node.alloc.NewPID(),
 		alive:    true,
@@ -279,16 +294,25 @@ func (s *Sim) start(node *node, parent *process, what string, newRunner func(gen
 		watchers: make(map[proc.Ref]watcher),
 		watching: make(map[proc.Ref]proc.PID),
 	}
-	runner, args, o := newRunner(&env{s, p})
-	p.maxMessages = o.MaxMessages
-	if l, _ := o.Name.(actor.Local); l != "" {
-		name := string(l)
-		if pid, ok := node.names[name]; ok {
-			return proc.PID{}, &actor.AlreadyStartedError{PID: pid}
-		}
-		node.names[name] = p.pid
-		p.name = name
+}
+
+// register registers p under its local name, if any: one another process
+// has fails the start with AlreadyStartedError.
+func (node *node) register(p *process, name actor.Name) error {
+	l, _ := name.(actor.Local)
+	if l == "" {
+		return nil
 	}
+	if pid, ok := node.names[string(l)]; ok {
+		return &actor.AlreadyStartedError{PID: pid}
+	}
+	node.names[string(l)] = p.pid
+	p.name = string(l)
+	return nil
+}
+
+// add adds p to the simulation, linked to parent, if any.
+func (s *Sim) add(p, parent *process, what string) {
 	if parent != nil {
 		p.parent = parent.pid
 		p.linked[parent.pid] = true
@@ -297,31 +321,42 @@ func (s *Sim) start(node *node, parent *process, what string, newRunner func(gen
 	s.procs = append(s.procs, p)
 	s.byPID[p.pid] = p
 	s.record(Event{Kind: Spawned, To: p.pid, Msg: what})
+}
 
+// init runs Init on p, then what it has the runner handle at once. A
+// process ignoring its start ends normally, with the start failing.
+func (s *Sim) init(p *process, runner gen.Runner, args any) error {
 	p.runner = runner
 	p.busy = true
-	err := runner.Init(args)
-	if err != nil {
+	if err := runner.Init(args); err != nil {
 		p.busy = false
 		reason := err
 		if errors.Is(err, actor.ErrIgnore) {
 			reason = proc.Normal
 		}
 		s.end(p, reason)
-		return proc.PID{}, err
+		return err
 	}
 	done, reason := runner.Flush()
 	p.busy = false
 	if done {
 		s.end(p, reason)
 	}
-	// A start held back runs on, until it is told over, or the process
-	// dies.
+	return nil
+}
+
+// runUntilAcked runs the simulation on while the start of p is held back,
+// until it is told over, or p dies, or nothing is left to run.
+func (s *Sim) runUntilAcked(p *process) {
 	for p.alive && !p.acked {
 		if !s.Step() && !s.fireTimer(s.now.Add(s.CallTimeout)) {
-			break
+			return
 		}
 	}
+}
+
+// started returns the outcome of the start of p.
+func (p *process) started() (proc.PID, error) {
 	switch {
 	case p.ackErr != nil:
 		return proc.PID{}, p.ackErr
@@ -373,10 +408,26 @@ func (s *Sim) Call(to actor.Dest, req any) (any, error) {
 	return a.result.Msg, nil
 }
 
+// ready reports whether p may handle a message now: alive, with one in
+// its mailbox, on a node not paused. A process busy starting another
+// handles nothing meanwhile.
+func (s *Sim) ready(p *process) bool {
+	idle := p.alive && !p.busy
+	return idle && len(p.mailbox) > 0 && !s.paused[p.node.name]
+}
+
+// alive returns the process pid, if alive.
+func (s *Sim) alive(pid proc.PID) *process {
+	if p := s.byPID[pid]; p != nil && p.alive {
+		return p
+	}
+	return nil
+}
+
 // Exit sends an exit signal with reason to the process pid from outside
 // the simulation, as proc.Self.Exit does: proc.Kill kills it.
 func (s *Sim) Exit(pid proc.PID, reason error) {
-	if p := s.byPID[pid]; p != nil && p.alive {
+	if p := s.alive(pid); p != nil {
 		s.signal(p, proc.PID{}, reason, false)
 	}
 }
@@ -421,8 +472,7 @@ func (s *Sim) Step() bool {
 		}
 	}
 	for _, p := range s.procs {
-		// A process busy starting another handles nothing meanwhile.
-		if p.alive && !p.busy && len(p.mailbox) > 0 && !s.paused[p.node.name] {
+		if s.ready(p) {
 			choices = append(choices, func() { s.handle(p) })
 		}
 	}
@@ -536,7 +586,7 @@ func (s *Sim) send(from, to proc.PID, msg any) {
 		s.record(Event{Kind: Dropped, From: from, To: to, Msg: msg})
 		return
 	}
-	if s.Loss > 0 && !from.IsZero() && from.Node() != to.Node() && s.chance(s.Loss) {
+	if s.lost(from, to) {
 		s.record(Event{Kind: Dropped, From: from, To: to, Msg: msg})
 		return
 	}
@@ -563,7 +613,7 @@ func (s *Sim) deliver(l *link) {
 	if !s.noPurity && fingerprint(msg) != f.fp {
 		panic(&ImpureError{PID: l.from, Msg: msg, What: "changed a message after sending it to " + l.to.String()})
 	}
-	if p := s.byPID[l.to]; p != nil && p.alive {
+	if p := s.alive(l.to); p != nil {
 		s.enqueue(p, msg)
 	}
 }
@@ -636,7 +686,7 @@ func (s *Sim) exit(p *process, reason error) {
 	}
 	for _, pid := range sortedPIDs(p.linked) {
 		delete(p.linked, pid)
-		if q := s.byPID[pid]; q != nil && q.alive {
+		if q := s.alive(pid); q != nil {
 			delete(q.linked, p.pid)
 			s.signal(q, p.pid, reason, true)
 		}
@@ -653,7 +703,7 @@ func (s *Sim) exit(p *process, reason error) {
 			s.aliasDown(ref, p.pid, reason)
 			continue
 		}
-		if q := s.byPID[w.pid]; q != nil && q.alive {
+		if q := s.alive(w.pid); q != nil {
 			delete(q.watching, ref)
 			s.send(p.pid, w.pid, proc.DownMsg{Ref: ref, PID: p.pid, Reason: reason})
 		}
@@ -737,7 +787,7 @@ func (s *Sim) fireTimer(limit time.Time) bool {
 		t.fn()
 		return true
 	}
-	if p := s.byPID[t.pid]; p != nil && p.alive {
+	if p := s.alive(t.pid); p != nil {
 		s.record(Event{Kind: Fired, To: t.pid, Msg: t.msg})
 		s.enqueue(p, t.msg)
 	}
@@ -862,10 +912,21 @@ func (e *env) MonitorName(node, name string) proc.Ref {
 	return ref
 }
 
+// lost reports whether a message from from to to is lost, at the rate Loss:
+// between processes of two nodes only. The chance is drawn last, so that
+// a run takes the same draws, whatever it sends within a node.
+func (s *Sim) lost(from, to proc.PID) bool {
+	betweenNodes := !from.IsZero() && from.Node() != to.Node()
+	return s.Loss > 0 && betweenNodes && s.chance(s.Loss)
+}
+
 // unknownName is the reason a name of node is not found from the process
 // from: the node is unreachable, or nothing has the name.
 func (s *Sim) unknownName(from proc.PID, node string) error {
-	if n := s.nodes[node]; n == nil || !n.up || from.Node() != node && s.cuts[[2]string{from.Node(), node}] {
+	n := s.nodes[node]
+	down := n == nil || !n.up
+	cutOff := from.Node() != node && s.cuts[[2]string{from.Node(), node}]
+	if down || cutOff {
 		return proc.NoConnection
 	}
 	return proc.NoProc
@@ -917,7 +978,7 @@ func (e *env) Unlink(pid proc.PID) {
 func (e *env) TrapExit(on bool) { e.p.trap = on }
 
 func (e *env) Exit(to proc.PID, reason error) {
-	if t := e.s.byPID[to]; t != nil && t.alive && e.s.reachable(e.p.pid, to) {
+	if t := e.s.alive(to); t != nil && e.s.reachable(e.p.pid, to) {
 		e.s.signal(t, e.p.pid, reason, false)
 	}
 }
