@@ -1,7 +1,6 @@
 package gen
 
 import (
-	"context"
 	"fmt"
 	"runtime/debug"
 
@@ -21,17 +20,10 @@ type runner[S any] struct {
 	b     Behaviour[S]
 	state S
 
-	monitors map[any]proc.Ref // tag -> ref
-	tags     map[proc.Ref]any // ref -> tag
-	timers   map[any]timer    // key -> timer
-	timerGen uint64
-	asyncs   map[any]async // key -> async running, or waiting
-	asyncGen uint64
-	maxAsync int             // the most running at once, if > 0
-	running  int             // asyncs running, cancelled ones until they return
-	waiting  []queued        // asyncs waiting for one running to end, in order
-	draining map[uint64]bool // gens of asyncs cancelled, still running
-	requests map[proc.Ref]request
+	timers   timers
+	monitors monitors
+	asyncs   asyncs
+	requests requests
 
 	stopping   bool
 	stopReason error
@@ -49,13 +41,10 @@ func newRunner[S any](b Behaviour[S], env Env, o actor.StartOptions) *runner[S] 
 	return &runner[S]{
 		env:      env,
 		b:        b,
-		maxAsync: o.MaxAsync,
-		monitors: make(map[any]proc.Ref),
-		tags:     make(map[proc.Ref]any),
-		timers:   make(map[any]timer),
-		asyncs:   make(map[any]async),
-		draining: make(map[uint64]bool),
-		requests: make(map[proc.Ref]request),
+		timers:   newTimers(env),
+		monitors: newMonitors(env),
+		asyncs:   newAsyncs(env, o.MaxAsync),
+		requests: newRequests(env),
 	}
 }
 
@@ -138,7 +127,7 @@ func (r *runner[S]) receive(msg any) (bool, error) {
 		r.system(m)
 		return false, nil
 	}
-	if e, ok := msg.(proc.ExitMsg); ok && e.From == r.env.Parent() && !e.From.IsZero() {
+	if e, ok := msg.(proc.ExitMsg); ok && r.isParent(e.From) {
 		r.last = e
 		if pe, ok := any(r.b).(ParentExiter[S]); ok {
 			return r.parentExit(pe, e.Reason)
@@ -154,6 +143,12 @@ func (r *runner[S]) receive(msg any) (bool, error) {
 		return false, nil
 	}
 	return r.step(in)
+}
+
+// isParent reports whether pid is the parent of the process; one started
+// from outside a process has none.
+func (r *runner[S]) isParent(pid proc.PID) bool {
+	return !pid.IsZero() && pid == r.env.Parent()
 }
 
 // step handles one message and performs the effects. It reports whether
@@ -210,67 +205,24 @@ func (r *runner[S]) handle(in Msg) (state S, effs []actor.Effect, err error) {
 func (r *runner[S]) translate(msg any) (Msg, bool) {
 	switch m := msg.(type) {
 	case actor.CallMsg, actor.CastMsg:
-		// Already boxed in msg: returning it, not m, spares boxing it
-		// again.
-		return msg, true
+		return msg, true // boxed already: msg, not m, spares boxing it again
 	case timeout:
-		t, ok := r.timers[m.key]
-		if !ok || t.gen != m.gen {
-			return nil, false
-		}
-		delete(r.timers, m.key)
-		return InfoMsg{Msg: t.msg}, true
+		return r.timers.fired(m)
 	case asyncDone:
-		a, ok := r.asyncs[m.key]
-		if !ok || a.gen != m.gen {
-			// Cancelled, or replaced: its outcome is not for the
-			// behaviour, but its place is free now it has returned.
-			if r.draining[m.gen] {
-				delete(r.draining, m.gen)
-				r.running--
-				r.runWaiting()
-			}
-			return nil, false
-		}
-		delete(r.asyncs, m.key)
-		r.running--
-		r.runWaiting()
-		return InfoMsg{Msg: actor.AsyncResult{Key: m.key, Value: m.value, Err: m.err}}, true
+		return r.asyncs.done(m)
 	case answer:
-		req, ok := r.requests[m.ref]
-		if !ok {
-			return nil, false // timed out already
-		}
-		r.endRequest(m.ref, req)
-		resp := actor.Response{Tag: req.tag, Value: m.m.Msg}
-		if m.m.Down {
-			resp = actor.Response{Tag: req.tag, Err: &actor.ExitError{To: req.to, Reason: m.m.Reason}}
-		}
-		r.callDone(req, resp.Err)
-		return InfoMsg{Msg: resp}, true
+		return r.requests.answered(m)
 	case requestTimeout:
-		req, ok := r.requests[m.ref]
-		if !ok {
-			return nil, false // answered already
-		}
-		r.endRequest(m.ref, req)
-		r.abandon(req.to, m.ref)
-		r.callDone(req, context.DeadlineExceeded)
-		return InfoMsg{Msg: actor.Response{Tag: req.tag, Err: context.DeadlineExceeded}}, true
+		return r.requests.timedOut(m)
 	case responseMsg:
 		return InfoMsg{Msg: m.Response}, true
 	case downMsg:
 		return InfoMsg{Msg: m.Down}, true
 	case proc.DownMsg:
-		tag, ok := r.tags[m.Ref]
-		if !ok {
-			return InfoMsg{Msg: m}, true
-		}
-		delete(r.tags, m.Ref)
-		delete(r.monitors, tag)
-		return InfoMsg{Msg: actor.Down{Tag: tag, PID: m.PID, Reason: m.Reason}}, true
+		return r.monitors.down(m), true
+	default:
+		return InfoMsg{Msg: msg}, true
 	}
-	return InfoMsg{Msg: msg}, true
 }
 
 // terminate runs Terminate and returns the reason to exit with.
@@ -290,17 +242,12 @@ func (r *runner[S]) terminate(state S, reason error) (exit error) {
 	return reason
 }
 
+// Abort ends what the behaviour started that would outlive it: its
+// timers, asyncs and requests.
 func (r *runner[S]) Abort() {
-	for key := range r.timers {
-		r.cancelTimer(key)
-	}
-	for key := range r.asyncs {
-		r.cancelAsync(key)
-	}
-	r.waiting = nil
-	for ref, req := range r.requests {
-		r.endRequest(ref, req)
-	}
+	r.timers.abort()
+	r.asyncs.abort()
+	r.requests.abort()
 }
 
 func (r *runner[S]) system(m sysMsg) {
