@@ -58,7 +58,6 @@
 7.2 net/internal/dgram Serve cyclo
 14.7 net/internal/dgram server.deliver
 4 net/internal/dgram server.read nesting
-17.4 observer Handler
 20.1 pmap node.del
 10.1 pmap node.del cyclo
 4 pmap node.get nesting
