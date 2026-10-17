@@ -239,8 +239,6 @@ func (a adapter[St, D]) enterState(m *Machine[St, D], old St, out []actor.Effect
 // actions performs the actions among effs on m, turning timeouts into gen
 // timers, and appends the other effects to out. It returns the events to
 // insert, whether to postpone the event, and whether to repeat the state.
-//
-//abc:dispatch one case an action
 func (a adapter[St, D]) actions(m *Machine[St, D], effs []actor.Effect, out *[]actor.Effect) (next []Event, postpone, repeat bool) {
 	for _, e := range effs {
 		switch x := e.(type) {
