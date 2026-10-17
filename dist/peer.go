@@ -405,8 +405,6 @@ func (c *connection) own(f frame) bool {
 }
 
 // deliver hands f, with its message, to the node.
-//
-//abc:dispatch one case an op
 func (c *connection) deliver(f frame, msg any) {
 	r := c.d.remote
 	switch f.op {
