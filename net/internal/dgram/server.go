@@ -59,6 +59,8 @@ type pendingRecv struct {
 // Serve runs the process of the socket sock over conn, owned by owner,
 // active as active, dropping datagrams larger than max. It closes conn when
 // it ends.
+//
+//abc:disable abc,cyclo the loop over every message of a socket
 func Serve[A, S any](self *proc.Self, k *Kind[A, S], conn Conn[A], sock S, owner proc.PID, active Active, max int, label string) error {
 	self.SetLabel(k.Name + " " + label)
 	s := &server[A, S]{
@@ -87,26 +89,14 @@ func Serve[A, S any](self *proc.Self, k *Kind[A, S], conn Conn[A], sock S, owner
 		var stop bool
 		switch m := msg.(type) {
 		case actor.CallMsg:
-			var reply any
-			var deferred bool
-			reply, deferred, stop = s.handle(m.From, m.Req)
-			if !deferred {
-				actor.SendReply(self, m.From, reply)
-			}
+			stop = s.call(m)
 		case SendReq[A], SetActiveReq, CloseReq:
 			// From the effects of a behaviour, with no one to reply to.
 			_, _, stop = s.handle(actor.From{}, m)
 		case readFailed:
-			s.mu.Lock()
-			s.failed = m.err
-			s.mu.Unlock()
+			s.readFailed(m.err)
 		case recvTimeout:
-			s.mu.Lock()
-			if s.recv != nil && s.recv.seq == m.seq {
-				actor.SendReply(self, s.recv.from, k.ErrTimeout)
-				s.recv = nil
-			}
-			s.mu.Unlock()
+			s.recvTimedOut(m.seq)
 		case proc.DownMsg:
 			if m.Ref == s.watch {
 				return nil // the owner is gone, and with it the socket
@@ -115,6 +105,33 @@ func Serve[A, S any](self *proc.Self, k *Kind[A, S], conn Conn[A], sock S, owner
 		if stop || s.deliver() {
 			return nil
 		}
+	}
+}
+
+// call handles the call m, replying unless the reply comes later, and
+// reports whether the socket is to close.
+func (s *server[A, S]) call(m actor.CallMsg) (stop bool) {
+	reply, deferred, stop := s.handle(m.From, m.Req)
+	if !deferred {
+		actor.SendReply(s.self, m.From, reply)
+	}
+	return stop
+}
+
+// readFailed notes the failure of reading, told once what came before is.
+func (s *server[A, S]) readFailed(err error) {
+	s.mu.Lock()
+	s.failed = err
+	s.mu.Unlock()
+}
+
+// recvTimedOut ends the Recv of seq, if still waiting, with ErrTimeout.
+func (s *server[A, S]) recvTimedOut(seq uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.recv != nil && s.recv.seq == seq {
+		actor.SendReply(s.self, s.recv.from, s.k.ErrTimeout)
+		s.recv = nil
 	}
 }
 
@@ -130,40 +147,54 @@ func (s *server[A, S]) handle(from actor.From, req any) (reply any, deferred, st
 		}
 		return err, false, false
 	case RecvReq:
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		switch {
-		case from.PID != s.owner:
-			return s.k.ErrNotOwner, false, false
-		case s.active != Passive:
-			return s.k.ErrActive, false, false
-		case s.recv != nil:
-			return errors.New(s.k.Name + ": Recv already waiting"), false, false
-		}
-		s.recvSeq++
-		s.recv = &pendingRecv{from: from, seq: s.recvSeq, cancel: func() {}}
-		if r.Timeout > 0 {
-			seq, n, pid := s.recvSeq, s.self.Node(), s.self.PID()
-			t := time.AfterFunc(r.Timeout, func() { n.Send(pid, recvTimeout{seq}) })
-			s.recv.cancel = func() { t.Stop() }
+		if err := s.waitRecv(from, r); err != nil {
+			return err, false, false
 		}
 		return nil, true, false
 	case SetActiveReq:
 		s.setActive(r.Active)
 		return nil, false, false
 	case ControlReq:
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		if from.PID != s.owner {
-			return s.k.ErrNotOwner, false, false
-		}
-		s.self.Demonitor(s.watch)
-		s.owner, s.watch = r.Owner, s.self.Monitor(r.Owner)
-		return nil, false, false
+		return s.control(from, r.Owner), false, false
 	case CloseReq:
 		return nil, false, true
 	}
 	return errors.New(s.k.Name + ": unknown request"), false, false
+}
+
+// waitRecv has the Recv of r, by the owner from, wait for a datagram,
+// until its timeout, if any; one waits at a time, on a passive socket.
+func (s *server[A, S]) waitRecv(from actor.From, r RecvReq) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch {
+	case from.PID != s.owner:
+		return s.k.ErrNotOwner
+	case s.active != Passive:
+		return s.k.ErrActive
+	case s.recv != nil:
+		return errors.New(s.k.Name + ": Recv already waiting")
+	}
+	s.recvSeq++
+	s.recv = &pendingRecv{from: from, seq: s.recvSeq, cancel: func() {}}
+	if r.Timeout > 0 {
+		seq, n, pid := s.recvSeq, s.self.Node(), s.self.PID()
+		t := time.AfterFunc(r.Timeout, func() { n.Send(pid, recvTimeout{seq}) })
+		s.recv.cancel = func() { t.Stop() }
+	}
+	return nil
+}
+
+// control hands the socket to owner, asked by its owner from.
+func (s *server[A, S]) control(from actor.From, owner proc.PID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if from.PID != s.owner {
+		return s.k.ErrNotOwner
+	}
+	s.self.Demonitor(s.watch)
+	s.owner, s.watch = owner, s.self.Monitor(owner)
+	return nil
 }
 
 func (s *server[A, S]) setActive(a Active) {
@@ -178,6 +209,8 @@ func (s *server[A, S]) setActive(a Active) {
 // deliver hands the held datagram to whoever wants it, then the failure of
 // reading, once there is nothing before it; else it wakes the reader if
 // someone still wants a datagram. It reports when the socket is to close.
+//
+//abc:disable abc the path of every datagram to the owner
 func (s *server[A, S]) deliver() (done bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -239,6 +272,8 @@ func (s *server[A, S]) poke() {
 // read reads datagrams while the owner wants them, in a goroutine of its
 // own, and hands them over itself. It stops reading when no one wants one,
 // until poked, and for good when reading fails, telling the process.
+//
+//abc:disable nesting the loop over every datagram read
 func (s *server[A, S]) read() {
 	n, pid, done := s.self.Node(), s.self.PID(), s.self.Done()
 	buf := make([]byte, s.max+1) // one more: a datagram filling it is too large

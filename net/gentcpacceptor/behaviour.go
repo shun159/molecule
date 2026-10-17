@@ -85,6 +85,9 @@ func (adapter[S]) Init(self proc.PID, _ any) (conn[S], []actor.Effect, error) {
 	return conn[S]{id: &ident{self: self}}, nil, nil
 }
 
+// Handle hands the handler what its connection gets.
+//
+//abc:disable abc,cyclo the path of every message of a connection
 func (a adapter[S]) Handle(c conn[S], msg gen.Msg) (conn[S], []actor.Effect) {
 	info, ok := msg.(gen.InfoMsg)
 	if !ok {
@@ -92,12 +95,7 @@ func (a adapter[S]) Handle(c conn[S], msg gen.Msg) (conn[S], []actor.Effect) {
 	}
 	switch m := info.Msg.(type) {
 	case attached:
-		state, effs, err := a.b.Init(c.id.self, m.sock)
-		if err != nil {
-			return c, actor.Do(actor.Stop{Reason: err})
-		}
-		id := &ident{self: c.id.self, sock: m.sock, more: m.sock.SetActiveEffect(gentcp.N(1))}
-		return conn[S]{id: id, ready: true, state: state}, then(effs, m.sock.SetActiveEffect(gentcp.N(a.activeN)))
+		return a.attach(c, m.sock)
 	case gentcp.DataMsg:
 		if !c.mine(m.Sock) {
 			return c, nil
@@ -121,6 +119,16 @@ func (a adapter[S]) Handle(c conn[S], msg gen.Msg) (conn[S], []actor.Effect) {
 		}
 	}
 	return a.info(c, info.Msg)
+}
+
+// attach starts the handler of the connection on sock, its socket now.
+func (a adapter[S]) attach(c conn[S], sock gentcp.Socket) (conn[S], []actor.Effect) {
+	state, effs, err := a.b.Init(c.id.self, sock)
+	if err != nil {
+		return c, actor.Do(actor.Stop{Reason: err})
+	}
+	id := &ident{self: c.id.self, sock: sock, more: sock.SetActiveEffect(gentcp.N(1))}
+	return conn[S]{id: id, ready: true, state: state}, then(effs, sock.SetActiveEffect(gentcp.N(a.activeN)))
 }
 
 // mine reports whether sock is the socket of the connection.
