@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/shun159/molecule/proc"
 )
 
 // Pending is a call made without waiting for its reply, like the request
@@ -44,18 +46,7 @@ var ErrCancelled = errors.New("actor: request cancelled")
 // and genstatem call it with the type of the reply.
 func Request[Rep any](caller Caller, to Dest, req any) *Pending[Rep] {
 	p := &Pending[Rep]{done: make(chan struct{}), cancel: make(chan struct{})}
-	n := caller.Node()
-	var start time.Time
-	if n.Emitting() {
-		start = time.Now()
-	}
-	// done ends p with its outcome.
-	done := func() {
-		if !start.IsZero() {
-			n.Emit(CallDone{To: to, Req: req, Took: time.Since(start), Err: p.err})
-		}
-		close(p.done)
-	}
+	done := p.ender(caller.Node(), to, req)
 	a, abandon, err := sendCall(caller, to, func(f From) any { return CallMsg{From: f, Req: req} })
 	if err != nil {
 		p.err = err
@@ -63,34 +54,54 @@ func Request[Rep any](caller Caller, to Dest, req any) *Pending[Rep] {
 		return p
 	}
 	d, _ := caller.(dying)
-	var callerDone <-chan struct{}
-	if d != nil {
-		callerDone = d.Done()
-	}
-	go func() {
-		defer done()
-		defer a.Release()
-		select {
-		case m := <-a.C:
-			switch {
-			case m.Down:
-				p.err = &ExitError{To: to, Reason: m.Reason}
-			case m.Msg != nil:
-				rep, ok := m.Msg.(Rep)
-				if !ok {
-					p.err = fmt.Errorf("actor: reply of type %T, want %T", m.Msg, p.rep)
-				}
-				p.rep = rep
-			}
-		case <-p.cancel:
-			p.err = ErrCancelled
-			abandon()
-		case <-callerDone:
-			p.err = d.ExitReason()
-			abandon()
-		}
-	}()
+	go p.await(a, to, abandon, d, done)
 	return p
+}
+
+// ender returns what ends p with its outcome: closes Done, after a
+// CallDone timed from now, if the node emits events.
+func (p *Pending[Rep]) ender(n *proc.Node, to Dest, req any) func() {
+	if !n.Emitting() {
+		return func() { close(p.done) }
+	}
+	start := time.Now()
+	return func() {
+		n.Emit(CallDone{To: to, Req: req, Took: time.Since(start), Err: p.err})
+		close(p.done)
+	}
+}
+
+// await waits for the outcome of the request on a: the reply or the death
+// of the server at to, a Cancel, or the death of the caller d, if it may
+// die; and ends p with done. The server is told of a request abandoned.
+func (p *Pending[Rep]) await(a proc.Alias, to Dest, abandon func(), d dying, done func()) {
+	defer done()
+	defer a.Release()
+	select {
+	case m := <-a.C:
+		p.take(m, to)
+	case <-p.cancel:
+		p.err = ErrCancelled
+		abandon()
+	case <-doneOf(d):
+		p.err = d.ExitReason()
+		abandon()
+	}
+}
+
+// take takes what came on the alias: the death of the server at to, or
+// the reply, of type Rep.
+func (p *Pending[Rep]) take(m proc.AliasMsg, to Dest) {
+	switch {
+	case m.Down:
+		p.err = &ExitError{To: to, Reason: m.Reason}
+	case m.Msg != nil:
+		rep, ok := m.Msg.(Rep)
+		if !ok {
+			p.err = fmt.Errorf("actor: reply of type %T, want %T", m.Msg, p.rep)
+		}
+		p.rep = rep
+	}
 }
 
 // Done is closed once the outcome is there.

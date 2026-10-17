@@ -1,8 +1,6 @@
 # The size of each function over a limit, or left out by its directive,
 # which it may not pass:
 # see github.com/shun159/abc. Rewritten with -write.
-24.5 actor Request
-17.8 actor sendCall
 18.1 application Running.master
 10.4 application Running.master case actor.CallMsg
 10.8 application Running.master cyclo

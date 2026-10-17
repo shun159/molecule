@@ -91,17 +91,10 @@ func call(ctx context.Context, caller Caller, to Dest, wrap func(From) any, tell
 // before the request is sent. abandon tells the server the caller gave
 // up.
 func sendCall(caller Caller, to Dest, wrap func(From) any) (a proc.Alias, abandon func(), err error) {
-	n := caller.Node()
-	var self proc.PID
-	if p, ok := caller.(interface{ PID() proc.PID }); ok {
-		self = p.PID()
-	}
+	n, self := caller.Node(), selfOf(caller)
 	if r, ok := to.(Remote); ok && r.Node != n.Name() {
-		// The name is resolved there, and monitored there first.
-		a := n.MonitorAliasName(r.Node, r.Name)
-		from := From{PID: self, Tag: a.Ref}
-		n.SendName(r.Node, r.Name, wrap(from))
-		return a, func() { n.SendName(r.Node, r.Name, CallAbandoned{From: from}) }, nil
+		a, abandon := sendRemoteCall(n, self, r, wrap)
+		return a, abandon, nil
 	}
 	pid, ok := to.WhereIs(n)
 	if !ok {
@@ -116,20 +109,42 @@ func sendCall(caller Caller, to Dest, wrap func(From) any) (a proc.Alias, abando
 	return a, func() { n.Send(pid, CallAbandoned{From: from}) }, nil
 }
 
+// selfOf is the pid of caller, if a process, or the zero PID.
+func selfOf(caller Caller) proc.PID {
+	if p, ok := caller.(interface{ PID() proc.PID }); ok {
+		return p.PID()
+	}
+	return proc.PID{}
+}
+
+// sendRemoteCall sends a request to the name r of another node, from self:
+// the name is resolved there, and monitored there first.
+func sendRemoteCall(n *proc.Node, self proc.PID, r Remote, wrap func(From) any) (proc.Alias, func()) {
+	a := n.MonitorAliasName(r.Node, r.Name)
+	from := From{PID: self, Tag: a.Ref}
+	n.SendName(r.Node, r.Name, wrap(from))
+	return a, func() { n.SendName(r.Node, r.Name, CallAbandoned{From: from}) }
+}
+
 // dying is a caller that may die while it waits: a process.
 type dying interface {
 	Done() <-chan struct{}
 	ExitReason() error
 }
 
+// doneOf is closed when the caller d dies, if it may: never if d is nil.
+func doneOf(d dying) <-chan struct{} {
+	if d == nil {
+		return nil
+	}
+	return d.Done()
+}
+
 // awaitReply waits for the reply or the death of the server, both arriving
 // on c, for ctx, or for the death of the caller, whichever comes first. It
 // reports whether the caller gave up: ctx or the caller done first.
 func awaitReply(ctx context.Context, caller dying, to Dest, c <-chan proc.AliasMsg) (v any, gaveUp bool, err error) {
-	var callerDone <-chan struct{}
-	if caller != nil {
-		callerDone = caller.Done()
-	}
+	callerDone := doneOf(caller)
 	select {
 	case m := <-c:
 		if m.Down {
