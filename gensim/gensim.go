@@ -676,14 +676,30 @@ func (s *Sim) exit(p *process, reason error) {
 	p.runner.Abort()
 	p.mailbox = nil
 	s.record(Event{Kind: Exited, To: p.pid, Msg: reason})
+	p.unregister()
+	s.unwatch(p)
+	s.unlink(p, reason)
+	s.notifyWatchers(p, reason)
+}
+
+// unregister frees the name of p, if it still has it.
+func (p *process) unregister() {
 	if p.name != "" && p.node.names[p.name] == p.pid {
 		delete(p.node.names, p.name)
 	}
+}
+
+// unwatch ends the monitors p has of others.
+func (s *Sim) unwatch(p *process) {
 	for ref, target := range p.watching {
 		if t := s.byPID[target]; t != nil {
 			delete(t.watchers, ref)
 		}
 	}
+}
+
+// unlink signals the processes linked to p, alive, its exit with reason.
+func (s *Sim) unlink(p *process, reason error) {
 	for _, pid := range sortedPIDs(p.linked) {
 		delete(p.linked, pid)
 		if q := s.alive(pid); q != nil {
@@ -691,12 +707,12 @@ func (s *Sim) exit(p *process, reason error) {
 			s.signal(q, p.pid, reason, true)
 		}
 	}
-	refs := make([]proc.Ref, 0, len(p.watchers))
-	for ref := range p.watchers {
-		refs = append(refs, ref)
-	}
-	slices.SortFunc(refs, func(a, b proc.Ref) int { return cmp.Compare(a.String(), b.String()) })
-	for _, ref := range refs {
+}
+
+// notifyWatchers tells those monitoring p its exit with reason: a Down to
+// a process alive, a down to an alias.
+func (s *Sim) notifyWatchers(p *process, reason error) {
+	for _, ref := range sortedRefs(p.watchers) {
 		w := p.watchers[ref]
 		delete(p.watchers, ref)
 		if w.alias {

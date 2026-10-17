@@ -50,20 +50,20 @@ func (s *Sim) Resume(name string) {
 // nodes are told each other silent, after Silent. Heal delivers what was
 // held. Partition, rather, loses it, the connections lost at once.
 func (s *Sim) Silence(groups ...[]string) {
-	for i, g := range groups {
-		for _, h := range groups[i+1:] {
-			for _, x := range g {
-				for _, y := range h {
-					if x == y || s.held[[2]string{x, y}] {
-						continue
-					}
-					s.held[[2]string{x, y}], s.held[[2]string{y, x}] = true, true
-					s.record(Event{Kind: Fault, Msg: fmt.Sprintf("silence %s | %s", x, y)})
-				}
-			}
-		}
+	for x, y := range across(groups) {
+		s.hold(x, y)
 	}
 	s.listen()
+}
+
+// hold holds what x and y send each other, unless they are one node, or
+// held already.
+func (s *Sim) hold(x, y string) {
+	if x == y || s.held[[2]string{x, y}] {
+		return
+	}
+	s.held[[2]string{x, y}], s.held[[2]string{y, x}] = true, true
+	s.record(Event{Kind: Fault, Msg: fmt.Sprintf("silence %s | %s", x, y)})
 }
 
 // flows reports whether what is in flight on l can arrive: nothing holds
@@ -89,28 +89,32 @@ func (s *Sim) listen() {
 	names := s.nodeNames()
 	for _, x := range names {
 		for _, y := range names {
-			if x == y {
-				continue
-			}
-			pair := [2]string{x, y}
-			switch {
-			case !s.connected(x, y): // told down, if anything
-				s.unsilence(pair)
-				delete(s.told, pair)
-			case s.hears(x, y):
-				s.unsilence(pair)
-				if s.told[pair] {
-					delete(s.told, pair)
-					s.tellNode(x, proc.NodeHeard{Node: y})
-				}
-			case !s.told[pair] && s.silences[pair] == nil:
-				s.silences[pair] = s.after(s.Silent+time.Duration(s.rng.Int64N(int64(s.Silent/4)+1)), func() {
-					delete(s.silences, pair)
-					s.told[pair] = true
-					s.tellNode(x, proc.NodeSilent{Node: y})
-				})
+			if x != y {
+				s.listenPair(x, y)
 			}
 		}
+	}
+}
+
+// listenPair has x told of y, as listen does.
+func (s *Sim) listenPair(x, y string) {
+	pair := [2]string{x, y}
+	switch {
+	case !s.connected(x, y): // told down, if anything
+		s.unsilence(pair)
+		delete(s.told, pair)
+	case s.hears(x, y):
+		s.unsilence(pair)
+		if s.told[pair] {
+			delete(s.told, pair)
+			s.tellNode(x, proc.NodeHeard{Node: y})
+		}
+	case !s.told[pair] && s.silences[pair] == nil:
+		s.silences[pair] = s.after(s.Silent+time.Duration(s.rng.Int64N(int64(s.Silent/4)+1)), func() {
+			delete(s.silences, pair)
+			s.told[pair] = true
+			s.tellNode(x, proc.NodeSilent{Node: y})
+		})
 	}
 }
 

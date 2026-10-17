@@ -55,6 +55,9 @@ type fingerprinter struct {
 
 var locationType = reflect.TypeFor[time.Location]()
 
+// value writes v to the fingerprint, by its kind.
+//
+//abc:dispatch one case a kind of value
 func (f *fingerprinter) value(v reflect.Value) {
 	b := &f.b
 	if !v.IsValid() {
