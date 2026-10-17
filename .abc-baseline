@@ -28,11 +28,6 @@
 19.4 examples/pubsub main
 24.2 examples/tcp main
 17.1 gensim New
-36.1 gensim fingerprinter.value
-15.3 gensim fingerprinter.value case reflect.Map
-16.1 gensim fingerprinter.value case reflect.Pointer
-12.5 gensim fingerprinter.value cyclo
-45.4 gensim fingerprinter.value lines
 19.6 kvs Table.compact
 21 kvs bnode.grow
 17.2 kvs compareOf
