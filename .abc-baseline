@@ -17,8 +17,6 @@
 18.5 dist gobEncoder.Encode
 19.8 dist readSized
 11.6 examples/codelock CodeLock.HandleEvent case genstatem.Cast
-19.4 examples/pubsub main
-24.2 examples/tcp main
 17.1 gensim New
 21 kvs bnode.grow
 17.2 kvs compareOf

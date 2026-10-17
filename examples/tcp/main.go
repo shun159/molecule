@@ -27,6 +27,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/shun159/molecule/application"
 	"github.com/shun159/molecule/observer"
 	"github.com/shun159/molecule/proc"
 )
@@ -51,28 +52,13 @@ func (f *observeFlag) Set(v string) error {
 }
 
 func main() {
-	addr := flag.String("addr", "127.0.0.1:5555", "address to listen on")
-	var observe observeFlag
-	flag.Var(&observe, "observe", "serve the observer on 127.0.0.1:8080, or on `addr` with -observe=addr")
-	flag.Parse()
-	if flag.NArg() > 0 {
-		fmt.Fprintf(os.Stderr, "unexpected argument %q; an address for -observe goes as -observe=addr\n", flag.Arg(0))
-		flag.Usage()
-		os.Exit(2)
-	}
-	var ol net.Listener
-	if observe != "" {
-		var err error
-		if ol, err = net.Listen("tcp", string(observe)); err != nil {
-			log.Fatal(err)
-		}
-	}
+	addr, ol := parseFlags()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	n := proc.NewNode("echo@localhost")
-	app, a, err := startEcho(context.Background(), n, *addr)
+	app, a, err := startEcho(context.Background(), n, addr)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -86,10 +72,37 @@ func main() {
 	case <-ctx.Done():
 	case <-app.Done(): // the tree gave up
 	}
+	shutdown(n, app)
+}
+
+// parseFlags returns the address to listen on, and the listener of the
+// observer, if asked for.
+func parseFlags() (addr string, observerListener net.Listener) {
+	flag.StringVar(&addr, "addr", "127.0.0.1:5555", "address to listen on")
+	var observe observeFlag
+	flag.Var(&observe, "observe", "serve the observer on 127.0.0.1:8080, or on `addr` with -observe=addr")
+	flag.Parse()
+	if flag.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "unexpected argument %q; an address for -observe goes as -observe=addr\n", flag.Arg(0))
+		flag.Usage()
+		os.Exit(2)
+	}
+	if observe == "" {
+		return addr, nil
+	}
+	ol, err := net.Listen("tcp", string(observe))
+	if err != nil {
+		log.Fatal(err)
+	}
+	return addr, ol
+}
+
+// shutdown logs what the echo served, and stops its tree, in order: the
+// listener, the connections, the stats.
+func shutdown(n *proc.Node, app *application.Running) {
 	if s, err := statsRef.Call(context.Background(), n, GetStats{}); err == nil {
 		log.Printf("echo: served %d connections, %d bytes", s.Total, s.Bytes)
 	}
-	// The tree stops in order: the listener, the connections, the stats.
 	if err := app.Stop(context.Background()); err != nil {
 		log.Fatal(err)
 	}
