@@ -1,10 +1,6 @@
 # The size of each function over a limit, or left out by its directive,
 # which it may not pass:
 # see github.com/shun159/abc. Rewritten with -write.
-18.1 application Running.master
-10.4 application Running.master case actor.CallMsg
-10.8 application Running.master cyclo
-4 application Running.master nesting
 22 behaviours/genstatem adapter.Handle
 18.6 behaviours/genstatem adapter.Handle case gen.InfoMsg
 9.5 behaviours/genstatem adapter.Handle cyclo
