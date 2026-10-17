@@ -45,6 +45,8 @@ func (t *Table[K, V]) maybeCompact() {
 	}()
 }
 
+// compact snapshots the table as of a cut of the log, and removes the
+// segments before the cut and the snapshots before this one.
 func (t *Table[K, V]) compact() error {
 	cut := t.log.cut()
 	if cut.err != nil {
@@ -56,26 +58,37 @@ func (t *Table[K, V]) compact() error {
 		return err
 	}
 	t.log.disk.Add(size)
-	remove := func(name string) {
-		path := filepath.Join(t.dir, name)
-		if fi, err := os.Stat(path); err == nil && os.Remove(path) == nil {
-			t.log.disk.Add(-fi.Size())
-		}
-	}
 	for _, s := range cut.old {
-		remove(s)
+		t.removeFile(s)
 		t.log.segments.Add(-1)
 	}
-	if _, snaps, err := listLog(t.dir); err == nil {
-		for _, s := range snaps {
-			if s.name != name {
-				remove(s.name)
-			}
-		}
-	}
+	t.removeSnapshotsBut(name)
 	t.compactions.Add(1)
 	t.lastCompact.Store(time.Now().UnixNano())
 	return nil
+}
+
+// removeSnapshotsBut removes the snapshots of the table but the one of
+// name.
+func (t *Table[K, V]) removeSnapshotsBut(name string) {
+	_, snaps, err := listLog(t.dir)
+	if err != nil {
+		return
+	}
+	for _, s := range snaps {
+		if s.name != name {
+			t.removeFile(s.name)
+		}
+	}
+}
+
+// removeFile removes the file of name from the directory of the table, and
+// its size from the size on disk, if it was there.
+func (t *Table[K, V]) removeFile(name string) {
+	path := filepath.Join(t.dir, name)
+	if fi, err := os.Stat(path); err == nil && os.Remove(path) == nil {
+		t.log.disk.Add(-fi.Size())
+	}
 }
 
 // writeSnapshot writes the entries to the snapshot name, and returns its
