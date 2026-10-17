@@ -20,7 +20,6 @@
 19.4 examples/pubsub main
 24.2 examples/tcp main
 17.1 gensim New
-19.6 kvs Table.compact
 21 kvs bnode.grow
 17.2 kvs compareOf
 10.2 kvs compareOf case reflect.Array
