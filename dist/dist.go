@@ -267,44 +267,58 @@ func (d *Dist) accept(conn net.Conn) {
 	}
 	var chosen *peer
 	_, err := acceptHandshake(conn, d.hello(), d.cfg.Cookie, func(info peerInfo) string {
-		d.mu.Lock()
-		defer d.mu.Unlock()
-		if d.stopped {
-			return "stopping"
-		}
-		if info.name == d.n.Name() || info.name == "" {
-			return "same name"
-		}
-		p := d.peers[info.name]
-		switch {
-		case p == nil:
-			p = d.startPeer(info.name, false)
-		case p.up || p.incoming || p.ready != nil:
-			return "already connected"
-		case info.name < d.n.Name():
-			// Both dial: the dial of the node with the smaller name wins,
-			// here as there. A node waiting for it, its own dial refused,
-			// has the larger name.
-			p.incoming = true
-		default:
-			return refuseSimultaneous
-		}
+		p, refuse := d.choose(info)
 		chosen = p
-		return ""
+		return refuse
 	})
 	if chosen == nil {
 		conn.Close()
 		return
 	}
+	d.settle(chosen, conn, err)
+}
+
+// choose decides on the node that dials, info: the peer to hand its
+// connection to, or why to refuse it.
+func (d *Dist) choose(info peerInfo) (p *peer, refuse string) {
 	d.mu.Lock()
-	chosen.incoming, chosen.awaiting = false, false
+	defer d.mu.Unlock()
+	if d.stopped {
+		return nil, "stopping"
+	}
+	if info.name == d.n.Name() || info.name == "" {
+		return nil, "same name"
+	}
+	p = d.peers[info.name]
+	if p == nil {
+		return d.startPeer(info.name, false), ""
+	}
+	connected := p.up || p.incoming || p.ready != nil
+	switch {
+	case connected:
+		return nil, "already connected"
+	case info.name < d.n.Name():
+		// Both dial: the dial of the node with the smaller name wins,
+		// here as there. A node waiting for it, its own dial refused,
+		// has the larger name.
+		p.incoming = true
+		return p, ""
+	}
+	return nil, refuseSimultaneous
+}
+
+// settle hands conn to the peer p chosen for it, if its handshake went
+// through, or closes it; and wakes the process of p either way.
+func (d *Dist) settle(p *peer, conn net.Conn, err error) {
+	d.mu.Lock()
+	p.incoming, p.awaiting = false, false
 	if err == nil {
-		d.handOver(chosen, conn)
+		d.handOver(p, conn)
 	} else {
 		conn.Close()
 	}
 	d.mu.Unlock()
-	d.n.Send(chosen.pid, wake{})
+	d.n.Send(p.pid, wake{})
 }
 
 // dial connects to the node of p and runs the handshake.
