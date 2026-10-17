@@ -173,43 +173,66 @@ func (l *Listener) Stop(ctx context.Context, caller actor.Caller) error {
 	return supervisor.Stop(ctx, caller, l.PID())
 }
 
+// supervisorSpec is the tree of the listener: the socket, the supervisor of
+// the connections, and the acceptors, restarted after the socket if it
+// fails.
 func (l *Listener) supervisorSpec() supervisor.Spec {
-	spec, sh := l.spec, l.shared
-	acceptors := spec.Acceptors
-	if acceptors <= 0 {
-		acceptors = DefaultAcceptors
-	}
-	var accs []supervisor.ChildSpec
-	for i := range acceptors {
-		accs = append(accs, supervisor.ChildSpec{
-			ID: "acceptor" + strconv.Itoa(i),
-			Start: supervisor.StartFunc(func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
-				return parent.StartLink(ctx, func(s *proc.Self) error {
-					s.SetLabel("gentcpacceptor acceptor")
-					s.InitAck(nil)
-					return accept(s, sh, l.startConn)
-				})
-			}),
-		})
-	}
-
 	return supervisor.Spec{
 		Strategy: supervisor.RestForOne,
 		Children: []supervisor.ChildSpec{
-			{ID: "socket", Start: supervisor.StartFunc(func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
-				return parent.StartLink(ctx, func(s *proc.Self) error { return listen(s, spec.Addr, sh) })
-			})},
-			{ID: "conns", Type: supervisor.Supervisor, Start: supervisor.StartFunc(func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
-				pid, err := supervisor.StartDynamicLink(ctx, parent, supervisor.DynamicSpec{MaxChildren: spec.MaxConns})
-				if err == nil {
-					sh.mu.Lock()
-					sh.conns = pid
-					sh.mu.Unlock()
-				}
-				return pid, err
-			})},
-			{ID: "acceptors", Type: supervisor.Supervisor, Start: supervisor.Child(supervisor.Spec{Children: accs})},
+			{ID: "socket", Start: l.socketStart()},
+			{ID: "conns", Type: supervisor.Supervisor, Start: l.connsStart()},
+			{ID: "acceptors", Type: supervisor.Supervisor, Start: supervisor.Child(supervisor.Spec{Children: l.acceptors()})},
 		},
+	}
+}
+
+// socketStart starts the process of the listening socket.
+func (l *Listener) socketStart() supervisor.StartFunc {
+	addr, sh := l.spec.Addr, l.shared
+	return func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
+		return parent.StartLink(ctx, func(s *proc.Self) error { return listen(s, addr, sh) })
+	}
+}
+
+// connsStart starts the supervisor of the connections, and shares its PID
+// with the acceptors.
+func (l *Listener) connsStart() supervisor.StartFunc {
+	maxConns, sh := l.spec.MaxConns, l.shared
+	return func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
+		pid, err := supervisor.StartDynamicLink(ctx, parent, supervisor.DynamicSpec{MaxChildren: maxConns})
+		if err == nil {
+			sh.mu.Lock()
+			sh.conns = pid
+			sh.mu.Unlock()
+		}
+		return pid, err
+	}
+}
+
+// acceptors are the children of the supervisor of the acceptors, as many
+// as Acceptors, DefaultAcceptors if not set.
+func (l *Listener) acceptors() []supervisor.ChildSpec {
+	n := l.spec.Acceptors
+	if n <= 0 {
+		n = DefaultAcceptors
+	}
+	accs := make([]supervisor.ChildSpec, 0, n)
+	for i := range n {
+		accs = append(accs, supervisor.ChildSpec{ID: "acceptor" + strconv.Itoa(i), Start: l.acceptorStart()})
+	}
+	return accs
+}
+
+// acceptorStart starts an acceptor.
+func (l *Listener) acceptorStart() supervisor.StartFunc {
+	sh := l.shared
+	return func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
+		return parent.StartLink(ctx, func(s *proc.Self) error {
+			s.SetLabel("gentcpacceptor acceptor")
+			s.InitAck(nil)
+			return accept(s, sh, l.startConn)
+		})
 	}
 }
 
@@ -263,21 +286,26 @@ func accept(s *proc.Self, sh *shared, startConn startConn) error {
 			_, err := s.Receive(context.Background())
 			return err
 		}
-		if err != nil {
-			continue
+		if err == nil {
+			startHandler(s, conns, conn, startConn)
 		}
-		_, err = supervisor.StartChild(context.Background(), s, conns, supervisor.ChildSpec{
-			Restart: supervisor.Temporary,
-			Start: supervisor.StartFunc(func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
-				pid, err := startConn(ctx, parent, conn)
-				if err != nil {
-					conn.Close()
-				}
-				return pid, err
-			}),
-		})
-		if err != nil {
-			conn.Close() // over MaxConns, or the handler failed to start
-		}
+	}
+}
+
+// startHandler starts the handler of conn under conns, closing conn if it
+// cannot: over MaxConns, or the handler failed to start.
+func startHandler(s *proc.Self, conns proc.PID, conn net.Conn, startConn startConn) {
+	_, err := supervisor.StartChild(context.Background(), s, conns, supervisor.ChildSpec{
+		Restart: supervisor.Temporary,
+		Start: supervisor.StartFunc(func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
+			pid, err := startConn(ctx, parent, conn)
+			if err != nil {
+				conn.Close()
+			}
+			return pid, err
+		}),
+	})
+	if err != nil {
+		conn.Close()
 	}
 }

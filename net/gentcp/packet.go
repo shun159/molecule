@@ -102,6 +102,8 @@ func (d *decoder) grown(n int) int {
 // takes all there is, and a positive length exactly that many bytes; the
 // other packet types ignore length. A packet shares no memory with what
 // is left.
+//
+//abc:disable abc,cyclo,lines the path of every packet read
 func (d *decoder) next(length int) (pkt []byte, ok bool, err error) {
 	var end, from, to int // the packet is buf[from:to], what is left buf[end:]
 	switch d.packet {
@@ -143,7 +145,8 @@ func (d *decoder) next(length int) (pkt []byte, ok bool, err error) {
 		from, to = h, h+int(size)
 		end = to
 	}
-	if d.packet == Line && d.max > 0 && to-from > d.max {
+	limited := d.packet == Line && d.max > 0 // the other types check their header
+	if limited && to-from > d.max {
 		return nil, false, ErrPacketTooLarge
 	}
 	pkt = d.buf[from:to:to]

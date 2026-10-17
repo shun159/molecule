@@ -78,19 +78,13 @@ type pendingRecv struct {
 	cancel func()
 }
 
+// serve is the process of the socket sock over conn, owned by owner: it
+// hands the owner what the reader reads, and does what the owner asks.
+//
+//abc:disable abc,cyclo the loop over every message of a socket
 func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Options) error {
 	self.SetLabel("gentcp socket " + sock.RemoteAddr.String())
-	s := &server{
-		self:   self,
-		conn:   conn,
-		sock:   sock,
-		opts:   opts,
-		owner:  owner,
-		watch:  self.Monitor(owner),
-		active: opts.Active,
-		dec:    decoder{packet: opts.Packet, max: opts.PacketSize},
-		reads:  make(chan struct{}, 1),
-	}
+	s := newServer(self, conn, sock, owner, opts)
 	// Closing the connection also ends a read or write in progress once
 	// the process is dead.
 	context.AfterFunc(self.Context(), func() { conn.Close() })
@@ -108,22 +102,7 @@ func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Opt
 		}
 		switch m := msg.(type) {
 		case readResult:
-			s.mu.Lock()
-			s.reading = false
-			if s.broken {
-				s.mu.Unlock()
-				break // what comes after a failure is dropped
-			}
-			if len(m.b) > 0 {
-				s.dec.feed(m.b)
-			}
-			if m.err != nil {
-				s.eof = true
-				if !errors.Is(m.err, io.EOF) {
-					s.readErr = m.err
-				}
-			}
-			s.mu.Unlock()
+			s.received(m)
 		case actor.CallMsg:
 			reply, deferred, stop := s.handle(m.From, m.Req)
 			if !deferred {
@@ -140,10 +119,7 @@ func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Opt
 				return nil
 			}
 		case recvTimeout:
-			if s.recv != nil && s.recv.seq == m.seq {
-				actor.SendReply(self, s.recv.from, ErrTimeout)
-				s.recv = nil
-			}
+			s.recvTimedOut(m.seq)
 		case proc.DownMsg:
 			if m.Ref == s.watch {
 				return nil // the owner is gone, and with it the socket
@@ -152,8 +128,51 @@ func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Opt
 	}
 }
 
-// handle handles a request; requests sent as effects have a zero from. It returns the reply,
-// whether it comes later, and whether the socket is to close.
+func newServer(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Options) *server {
+	return &server{
+		self:   self,
+		conn:   conn,
+		sock:   sock,
+		opts:   opts,
+		owner:  owner,
+		watch:  self.Monitor(owner),
+		active: opts.Active,
+		dec:    decoder{packet: opts.Packet, max: opts.PacketSize},
+		reads:  make(chan struct{}, 1),
+	}
+}
+
+// received takes what the reader read, and its end: what comes after a
+// failure is dropped.
+func (s *server) received(m readResult) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reading = false
+	if s.broken {
+		return
+	}
+	if len(m.b) > 0 {
+		s.dec.feed(m.b)
+	}
+	if m.err != nil {
+		s.eof = true
+		if !errors.Is(m.err, io.EOF) {
+			s.readErr = m.err
+		}
+	}
+}
+
+// recvTimedOut ends the Recv of seq, if still waiting, with ErrTimeout.
+func (s *server) recvTimedOut(seq uint64) {
+	if s.recv != nil && s.recv.seq == seq {
+		actor.SendReply(s.self, s.recv.from, ErrTimeout)
+		s.recv = nil
+	}
+}
+
+// handle handles a request; requests sent as effects have a zero from. It
+// returns the reply, whether it comes later, and whether the socket is to
+// close.
 func (s *server) handle(from actor.From, req any) (reply any, deferred, stop bool) {
 	switch r := req.(type) {
 	case sendReq:
@@ -163,37 +182,15 @@ func (s *server) handle(from actor.From, req any) (reply any, deferred, stop boo
 		}
 		return err, false, false
 	case recvReq:
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		switch {
-		case from.PID != s.owner:
-			return ErrNotOwner, false, false
-		case s.active != Passive:
-			return ErrActive, false, false
-		case s.recv != nil:
-			return errors.New("gentcp: Recv already waiting"), false, false
-		}
-		s.recvSeq++
-		s.recv = &pendingRecv{from: from, length: r.length, seq: s.recvSeq, cancel: func() {}}
-		if r.timeout > 0 {
-			seq, n, pid := s.recvSeq, s.self.Node(), s.self.PID()
-			t := time.AfterFunc(r.timeout, func() { n.Send(pid, recvTimeout{seq}) })
-			s.recv.cancel = func() { t.Stop() }
+		if err := s.waitRecv(from, r); err != nil {
+			return err, false, false
 		}
 		return nil, true, false
 	case setActiveReq:
 		s.setActive(r.active)
 		return nil, false, false
 	case controlReq:
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		if from.PID != s.owner {
-			return ErrNotOwner, false, false
-		}
-		s.self.Demonitor(s.watch)
-		s.owner, s.watch = r.owner, s.self.Monitor(r.owner)
-		s.direct.owner = r.owner
-		return nil, false, false
+		return s.control(from, r.owner), false, false
 	case shutdownReq:
 		return s.shutdown(r.how), false, false
 	case closeReq:
@@ -201,6 +198,42 @@ func (s *server) handle(from actor.From, req any) (reply any, deferred, stop boo
 		return nil, false, true
 	}
 	return errors.New("gentcp: unknown request"), false, false
+}
+
+// waitRecv has the Recv of r, by the owner from, wait for a packet, until
+// its timeout, if any; one waits at a time, on a passive socket.
+func (s *server) waitRecv(from actor.From, r recvReq) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch {
+	case from.PID != s.owner:
+		return ErrNotOwner
+	case s.active != Passive:
+		return ErrActive
+	case s.recv != nil:
+		return errors.New("gentcp: Recv already waiting")
+	}
+	s.recvSeq++
+	s.recv = &pendingRecv{from: from, length: r.length, seq: s.recvSeq, cancel: func() {}}
+	if r.timeout > 0 {
+		seq, n, pid := s.recvSeq, s.self.Node(), s.self.PID()
+		t := time.AfterFunc(r.timeout, func() { n.Send(pid, recvTimeout{seq}) })
+		s.recv.cancel = func() { t.Stop() }
+	}
+	return nil
+}
+
+// control hands the socket to owner, asked by its owner from.
+func (s *server) control(from actor.From, owner proc.PID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if from.PID != s.owner {
+		return ErrNotOwner
+	}
+	s.self.Demonitor(s.watch)
+	s.owner, s.watch = owner, s.self.Monitor(owner)
+	s.direct.owner = owner
+	return nil
 }
 
 func (s *server) setActive(a Active) {
@@ -252,6 +285,8 @@ func (s *server) shutdown(how How) error {
 // active mode, or to a waiting Recv, and then the end of the connection,
 // when the owner wants data and there is no more. It reports when the
 // socket is to close.
+//
+//abc:disable abc,cyclo the path of every packet to the owner
 func (s *server) deliver() (done bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -280,8 +315,10 @@ func (s *server) deliver() (done bool) {
 			return s.closing()
 		}
 	}
-	if s.eof && s.active != Passive && !s.told {
-		// What is left is not a whole packet: the connection is over.
+	// What is left is not a whole packet: at the end of the connection, it
+	// is over, told once, in an active mode.
+	ended := s.eof && !s.told
+	if ended && s.active != Passive {
 		if s.readErr != nil {
 			s.self.Send(s.owner, ErrorMsg{s.sock, s.readErr})
 		}
@@ -339,6 +376,8 @@ func (s *server) answer(v any) {
 // false, the reader neither holds a request nor reads on by itself, as it
 // turns reading false only when it stops, and the process only on a
 // readResult, sent once the reader stopped.
+//
+//abc:disable abc the check before every message of a socket
 func (s *server) wantData() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -366,6 +405,8 @@ func (s *server) wantData() {
 // read reads on demand, in a goroutine of its own, and sends what it reads
 // to the process: a read filling most of the buffer hands the buffer over,
 // a smaller one is copied out, so the buffer follows the reads in size.
+//
+//abc:disable abc,cyclo the loop over every read of a connection
 func (s *server) read() {
 	n, pid, done := s.self.Node(), s.self.PID(), s.self.Done()
 	buf := make([]byte, minReadBuffer)

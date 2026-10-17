@@ -43,6 +43,8 @@ type sendFailed struct{ err error }
 // write writes packets, in one write if it can. A failure of the
 // connection is to be told to the socket process, which then fails it:
 // the stream is cut at an unknown place, and of no use anymore.
+//
+//abc:disable abc,cyclo,lines the path of every write
 func (w *writer) write(packets ...[]byte) (failed bool, err error) {
 	for _, data := range packets {
 		if _, err := w.packet.header(len(data)); err != nil {

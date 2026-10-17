@@ -37,38 +37,50 @@ func Listen(ctx context.Context, owner *proc.Self, addr string, opts Options) (*
 	if err != nil {
 		return nil, err
 	}
-	ownerPID := owner.PID()
-	pid, err := owner.Node().Start(ctx, func(s *proc.Self) error {
-		s.SetLabel("gentcp listener " + ln.Addr().String())
-		context.AfterFunc(s.Context(), func() { ln.Close() })
-		defer ln.Close()
-		watch := s.Monitor(ownerPID)
-		s.InitAck(nil)
-		for {
-			msg, err := s.Receive(context.Background())
-			if err != nil {
-				return err
-			}
-			switch m := msg.(type) {
-			case actor.CallMsg:
-				if _, ok := m.Req.(closeReq); ok {
-					ln.Close()
-					actor.SendReply(s, m.From, nil)
-					return nil
-				}
-			case proc.DownMsg:
-				if m.Ref == watch {
-					return nil
-				}
-			}
-		}
-	})
+	pid, err := owner.Node().Start(ctx, listener(ln, owner.PID()))
 	if err != nil {
 		ln.Close()
 		return nil, err
 	}
 	closed, _ := owner.Node().Watch(context.Background(), pid)
 	return &ListenSocket{PID: pid, ln: ln, opts: opts, closed: closed, accepted: make(chan accepted)}, nil
+}
+
+// listener is the process of ln, owned by owner: it closes ln when asked,
+// or when owner or itself dies.
+func listener(ln net.Listener, owner proc.PID) func(*proc.Self) error {
+	return func(s *proc.Self) error {
+		s.SetLabel("gentcp listener " + ln.Addr().String())
+		context.AfterFunc(s.Context(), func() { ln.Close() })
+		defer ln.Close()
+		watch := s.Monitor(owner)
+		s.InitAck(nil)
+		for {
+			msg, err := s.Receive(context.Background())
+			if err != nil {
+				return err
+			}
+			if closing(s, msg, watch, ln) {
+				return nil
+			}
+		}
+	}
+}
+
+// closing handles msg to the listener of ln, and reports whether it ends:
+// asked to close, or its owner, watched by watch, gone.
+func closing(s *proc.Self, msg any, watch proc.Ref, ln net.Listener) bool {
+	switch m := msg.(type) {
+	case actor.CallMsg:
+		if _, ok := m.Req.(closeReq); ok {
+			ln.Close()
+			actor.SendReply(s, m.From, nil)
+			return true
+		}
+	case proc.DownMsg:
+		return m.Ref == watch
+	}
+	return false
 }
 
 // Addr returns the address listened on.
@@ -79,28 +91,11 @@ func (l *ListenSocket) Addr() net.Addr { return l.ln.Addr() }
 // ends with ctx, or the death of owner; a connection arriving then waits
 // for the next Accept.
 func (l *ListenSocket) Accept(ctx context.Context, owner *proc.Self) (Socket, error) {
-	l.mu.Lock()
-	l.waiting++
-	if l.accepting < l.waiting {
-		l.accepting++
-		go l.accept()
-	}
-	l.mu.Unlock()
-	defer func() {
-		l.mu.Lock()
-		l.waiting--
-		l.mu.Unlock()
-	}()
-
+	done := l.wait()
+	defer done()
 	select {
 	case a := <-l.accepted:
-		if a.err != nil {
-			if errors.Is(a.err, net.ErrClosed) {
-				return Socket{}, ErrClosed
-			}
-			return Socket{}, a.err
-		}
-		return Start(owner.Node(), a.conn, owner.PID(), l.opts), nil
+		return l.took(a, owner)
 	case <-l.closed.Done():
 		return Socket{}, ErrClosed
 	case <-ctx.Done():
@@ -108,6 +103,34 @@ func (l *ListenSocket) Accept(ctx context.Context, owner *proc.Self) (Socket, er
 	case <-owner.Done():
 		return Socket{}, owner.ExitReason()
 	}
+}
+
+// wait counts one more waiting to accept, a goroutine accepting for it if
+// none is spare, and returns the func that counts it done.
+func (l *ListenSocket) wait() (done func()) {
+	l.mu.Lock()
+	l.waiting++
+	if l.accepting < l.waiting {
+		l.accepting++
+		go l.accept()
+	}
+	l.mu.Unlock()
+	return func() {
+		l.mu.Lock()
+		l.waiting--
+		l.mu.Unlock()
+	}
+}
+
+// took returns the socket of a, owned by owner, or why there is none.
+func (l *ListenSocket) took(a accepted, owner *proc.Self) (Socket, error) {
+	if errors.Is(a.err, net.ErrClosed) {
+		return Socket{}, ErrClosed
+	}
+	if a.err != nil {
+		return Socket{}, a.err
+	}
+	return Start(owner.Node(), a.conn, owner.PID(), l.opts), nil
 }
 
 // accept accepts one connection, and holds it until an Accept takes it or
