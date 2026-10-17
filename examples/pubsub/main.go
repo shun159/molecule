@@ -53,21 +53,8 @@ func main() {
 		log.Fatalf("%s is not in -nodes", *name)
 	}
 	n := proc.NewNode(*name)
-	d, err := dist.Start(n, dist.Config{
-		Listen:   addrs[*name],
-		Cookie:   "pubsub",
-		Resolve:  func(node string) (string, bool) { a, ok := addrs[node]; return a, ok },
-		TickTime: 4 * time.Second,
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
+	d := joinNodes(n, addrs)
 	defer d.Stop()
-	for other := range addrs {
-		if other != *name {
-			go keepConnected(d, other)
-		}
-	}
 
 	app, err := startPubsub(context.Background(), n)
 	if err != nil {
@@ -83,6 +70,26 @@ func main() {
 	case <-app.Done(): // the tree gave up
 		log.Print(app.Err())
 	}
+}
+
+// joinNodes starts the distribution of n, on its address of addrs, and
+// keeps it connected to the other nodes of addrs.
+func joinNodes(n *proc.Node, addrs map[string]string) *dist.Dist {
+	d, err := dist.Start(n, dist.Config{
+		Listen:   addrs[n.Name()],
+		Cookie:   "pubsub",
+		Resolve:  func(node string) (string, bool) { a, ok := addrs[node]; return a, ok },
+		TickTime: 4 * time.Second,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	for other := range addrs {
+		if other != n.Name() {
+			go keepConnected(d, other)
+		}
+	}
+	return d
 }
 
 // keepConnected connects to node, again once lost, for the scope of this
