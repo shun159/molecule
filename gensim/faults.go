@@ -3,6 +3,7 @@ package gensim
 import (
 	"cmp"
 	"fmt"
+	"iter"
 	"slices"
 	"time"
 
@@ -16,25 +17,53 @@ import (
 // Partition cuts the nodes of each group from those of the others; the
 // nodes of a group still reach each other.
 func (s *Sim) Partition(groups ...[]string) {
-	for i, g := range groups {
-		for _, h := range groups[i+1:] {
-			for _, x := range g {
-				for _, y := range h {
-					if x == y || s.cuts[[2]string{x, y}] {
-						continue
-					}
-					was := s.connected(x, y)
-					s.cuts[[2]string{x, y}], s.cuts[[2]string{y, x}] = true, true
-					s.record(Event{Kind: Fault, Msg: fmt.Sprintf("partition %s | %s", x, y)})
-					if was {
-						s.nodeEvent(x, y, false)
-					}
-					s.disconnect(x, y)
+	for x, y := range across(groups) {
+		s.cut(x, y)
+	}
+	s.listen()
+}
+
+// across ranges over the pairs of nodes of two groups, each pair once, in
+// the order of the groups.
+func across(groups [][]string) iter.Seq2[string, string] {
+	return func(yield func(x, y string) bool) {
+		for i, g := range groups {
+			for _, h := range groups[i+1:] {
+				if !between(g, h, yield) {
+					return
 				}
 			}
 		}
 	}
-	s.listen()
+}
+
+// between yields the pairs of a node of g and one of h, and reports whether
+// to go on.
+func between(g, h []string, yield func(x, y string) bool) bool {
+	for _, x := range g {
+		for _, y := range h {
+			if !yield(x, y) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// cut cuts x and y from each other, unless they are one node, or cut
+// already: they are told each other down, if connected, and lose what
+// they had between them.
+func (s *Sim) cut(x, y string) {
+	if x == y || s.cuts[[2]string{x, y}] {
+		return
+	}
+	was := s.connected(x, y)
+	s.cuts[[2]string{x, y}], s.cuts[[2]string{y, x}] = true, true
+	s.record(Event{Kind: Fault, Msg: fmt.Sprintf("partition %s | %s", x, y)})
+	if was {
+		s.nodeEvent(x, y, false)
+	}
+	s.disconnect(x, y)
 }
 
 // Heal undoes the partitions and the silences: all nodes up reach each
@@ -63,22 +92,40 @@ func (s *Sim) Crash(name string) {
 		return
 	}
 	s.record(Event{Kind: Fault, Msg: "crash " + name})
-	for _, other := range s.nodeNames() {
-		if other != name {
-			if s.connected(name, other) {
-				s.nodeEvent(name, other, false)
-			}
-			s.disconnect(name, other)
-		}
-	}
+	s.disconnectAll(name)
 	n.up = false
 	delete(s.paused, name)
 	s.listen()
+	s.dropFlights(name)
+	s.vanish(n)
+	clear(n.names)
+	s.releaseAliasesOf(name)
+}
+
+// disconnectAll has the other nodes lose name, told it down if connected.
+func (s *Sim) disconnectAll(name string) {
+	for _, other := range s.nodeNames() {
+		if other == name {
+			continue
+		}
+		if s.connected(name, other) {
+			s.nodeEvent(name, other, false)
+		}
+		s.disconnect(name, other)
+	}
+}
+
+// dropFlights loses what is in flight from or to the node name.
+func (s *Sim) dropFlights(name string) {
 	for _, l := range s.links {
 		if l.from.Node() == name || l.to.Node() == name {
 			s.dropQueue(l)
 		}
 	}
+}
+
+// vanish ends the processes of n alive, without Terminate.
+func (s *Sim) vanish(n *node) {
 	for _, p := range s.procs {
 		if p.node == n && p.alive {
 			p.alive = false
@@ -87,9 +134,12 @@ func (s *Sim) Crash(name string) {
 			s.record(Event{Kind: Exited, To: p.pid, Msg: ErrNodeDown})
 		}
 	}
-	clear(n.names)
-	// The requests of other nodes to it failed as disconnected; those of
-	// the driver are not pending, Call being synchronous.
+}
+
+// releaseAliasesOf releases the aliases of the processes of the node
+// name: the requests of other nodes to it failed as disconnected; those of
+// the driver are not pending, Call being synchronous.
+func (s *Sim) releaseAliasesOf(name string) {
 	for _, ref := range s.aliasRefs() {
 		if s.aliases[ref].owner.Node() == name {
 			s.releaseAlias(ref)
