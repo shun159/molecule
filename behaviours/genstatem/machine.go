@@ -91,10 +91,6 @@ func (a adapter[St, D]) Init(self proc.PID, _ any) (Machine[St, D], []actor.Effe
 }
 
 // Handle turns msg into the event of the machine, and runs it.
-//
-// It is kept whole: every event of every machine goes through it.
-//
-//abc:disable abc,cyclo the path of every event
 func (a adapter[St, D]) Handle(m Machine[St, D], msg gen.Msg) (Machine[St, D], []actor.Effect) {
 	var ev Event
 	switch x := msg.(type) {
@@ -109,32 +105,48 @@ func (a adapter[St, D]) Handle(m Machine[St, D], msg gen.Msg) (Machine[St, D], [
 		}
 		ev = Internal{Msg: x.Msg}
 	case gen.InfoMsg:
-		if ab, ok := x.Msg.(actor.CallAbandoned); ok {
-			if i := slices.IndexFunc(m.postponed, abandoned(ab.From)); i >= 0 {
-				// Never handled, and now never to be: dropped.
-				m.postponed = slices.Delete(slices.Clone(m.postponed), i, i+1)
-				return m, nil
-			}
+		if ab, ok := x.Msg.(actor.CallAbandoned); ok && m.dropAbandoned(ab) {
+			return m, nil
 		}
 		f, ok := x.Msg.(fired)
 		if !ok {
 			ev = Info{Msg: x.Msg}
 			break
 		}
-		switch k := f.key.(type) {
-		case stateTimerKey:
-			ev = StateTimeout{Msg: m.stateMsg}
-			m.stateTimer, m.stateMsg = false, nil
-		case eventTimerKey:
-			ev = EventTimeout{Msg: m.eventMsg}
-			m.eventTimer, m.eventMsg = false, nil
-		case genericTimerKey:
-			ev = Timeout{Name: k.name, Msg: m.generic[k.name]}
-			m.generic = without(m.generic, k.name)
-		}
+		ev = m.timeout(f)
 	}
 	out := a.run(&m, []Event{ev})
 	return m, out
+}
+
+// dropAbandoned drops the call ab tells abandoned, if postponed: never
+// handled, and now never to be. It reports whether it dropped one.
+func (m *Machine[St, D]) dropAbandoned(ab actor.CallAbandoned) bool {
+	i := slices.IndexFunc(m.postponed, abandoned(ab.From))
+	if i < 0 {
+		return false
+	}
+	m.postponed = slices.Delete(slices.Clone(m.postponed), i, i+1)
+	return true
+}
+
+// timeout is the event of the timer f, fired, and so over.
+func (m *Machine[St, D]) timeout(f fired) Event {
+	switch k := f.key.(type) {
+	case stateTimerKey:
+		ev := StateTimeout{Msg: m.stateMsg}
+		m.stateTimer, m.stateMsg = false, nil
+		return ev
+	case eventTimerKey:
+		ev := EventTimeout{Msg: m.eventMsg}
+		m.eventTimer, m.eventMsg = false, nil
+		return ev
+	case genericTimerKey:
+		ev := Timeout{Name: k.name, Msg: m.generic[k.name]}
+		m.generic = without(m.generic, k.name)
+		return ev
+	}
+	return nil
 }
 
 // abandoned matches the Call from from.
