@@ -1,9 +1,6 @@
 # The size of each function over a limit, or left out by its directive,
 # which it may not pass:
 # see github.com/shun159/abc. Rewritten with -write.
-22 behaviours/genstatem adapter.Handle
-18.6 behaviours/genstatem adapter.Handle case gen.InfoMsg
-9.5 behaviours/genstatem adapter.Handle cyclo
 18.6 behaviours/genstatem adapter.run
 7.7 behaviours/genstatem adapter.run cyclo
 25.2 behaviours/genstatem adapter.run lines
