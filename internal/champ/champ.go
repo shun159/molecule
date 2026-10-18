@@ -64,15 +64,7 @@ func (n *Node[K, V, M]) nodeSlot(bit uint32) int { return bits.OnesCount32(n.nod
 
 // Get returns the entry of k, of hash h, if any.
 func (n *Node[K, V, M]) Get(h uint64, k K) (*Entry[K, V, M], bool) {
-	for shift := uint(0); ; shift += hbits {
-		if shift >= 64 {
-			for i := range n.data {
-				if n.data[i].Key == k {
-					return &n.data[i], true
-				}
-			}
-			return nil, false
-		}
+	for shift := uint(0); shift < 64; shift += hbits {
 		bit := uint32(1) << ((h >> shift) & hmask)
 		if n.datamap&bit != 0 {
 			e := &n.data[n.dataSlot(bit)]
@@ -86,6 +78,18 @@ func (n *Node[K, V, M]) Get(h uint64, k K) (*Entry[K, V, M], bool) {
 		}
 		n = n.nodes[n.nodeSlot(bit)]
 	}
+	return n.getCollided(k)
+}
+
+// getCollided returns the entry of k in n, past the bits of the hash, if
+// any.
+func (n *Node[K, V, M]) getCollided(k K) (*Entry[K, V, M], bool) {
+	for i := range n.data {
+		if n.data[i].Key == k {
+			return &n.data[i], true
+		}
+	}
+	return nil, false
 }
 
 func (n *Node[K, V, M]) set(shift uint, e Entry[K, V, M]) (*Node[K, V, M], Entry[K, V, M], bool) {
