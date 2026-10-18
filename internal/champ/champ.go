@@ -91,13 +91,7 @@ func (n *Node[K, V, M]) Get(h uint64, k K) (*Entry[K, V, M], bool) {
 func (n *Node[K, V, M]) set(shift uint, e Entry[K, V, M]) (*Node[K, V, M], Entry[K, V, M], bool) {
 	var none Entry[K, V, M]
 	if shift >= 64 {
-		for i := range n.data {
-			if n.data[i].Key == e.Key {
-				c := &Node[K, V, M]{data: replaced(n.data, i, e)}
-				return c, n.data[i], true
-			}
-		}
-		return &Node[K, V, M]{data: inserted(n.data, len(n.data), e)}, none, false
+		return n.setCollided(e)
 	}
 	bit := uint32(1) << ((e.Hash >> shift) & hmask)
 	switch {
@@ -105,23 +99,28 @@ func (n *Node[K, V, M]) set(shift uint, e Entry[K, V, M]) (*Node[K, V, M], Entry
 		i := n.dataSlot(bit)
 		cur := n.data[i]
 		if cur.Hash == e.Hash && cur.Key == e.Key {
-			c := &Node[K, V, M]{datamap: n.datamap, nodemap: n.nodemap, data: replaced(n.data, i, e), nodes: n.nodes}
-			return c, cur, true
+			return n.withData(replaced(n.data, i, e)), cur, true
 		}
-		c := &Node[K, V, M]{datamap: n.datamap &^ bit, nodemap: n.nodemap | bit}
-		c.data = removed(n.data, i)
-		c.nodes = inserted(n.nodes, c.nodeSlot(bit), pair(shift+hbits, cur, e))
-		return c, none, false
+		return n.pushedDown(shift, bit, i, e), none, false
 	case n.nodemap&bit != 0:
 		i := n.nodeSlot(bit)
 		sub, old, ok := n.nodes[i].set(shift+hbits, e)
-		c := &Node[K, V, M]{datamap: n.datamap, nodemap: n.nodemap, data: n.data, nodes: replaced(n.nodes, i, sub)}
-		return c, old, ok
+		return n.withNodes(replaced(n.nodes, i, sub)), old, ok
 	default:
-		c := &Node[K, V, M]{datamap: n.datamap | bit, nodemap: n.nodemap, nodes: n.nodes}
-		c.data = inserted(n.data, c.dataSlot(bit), e)
-		return c, none, false
+		return n.withEntry(bit, e), none, false
 	}
+}
+
+// setCollided returns n, past the bits of the hash, with e in it, and the
+// entry of its key that e replaces, if any.
+func (n *Node[K, V, M]) setCollided(e Entry[K, V, M]) (*Node[K, V, M], Entry[K, V, M], bool) {
+	for i := range n.data {
+		if n.data[i].Key == e.Key {
+			return &Node[K, V, M]{data: replaced(n.data, i, e)}, n.data[i], true
+		}
+	}
+	var none Entry[K, V, M]
+	return &Node[K, V, M]{data: inserted(n.data, len(n.data), e)}, none, false
 }
 
 func (n *Node[K, V, M]) setInPlace(shift uint, e Entry[K, V, M]) (Entry[K, V, M], bool) {
@@ -130,17 +129,7 @@ func (n *Node[K, V, M]) setInPlace(shift uint, e Entry[K, V, M]) (Entry[K, V, M]
 		bit := uint32(1) << ((e.Hash >> shift) & hmask)
 		switch {
 		case n.datamap&bit != 0:
-			i := n.dataSlot(bit)
-			cur := n.data[i]
-			if cur.Hash == e.Hash && cur.Key == e.Key {
-				n.data[i] = e
-				return cur, true
-			}
-			n.datamap &^= bit
-			n.data = slices.Delete(n.data, i, i+1)
-			n.nodemap |= bit
-			n.nodes = slices.Insert(n.nodes, n.nodeSlot(bit), pair(shift+hbits, cur, e))
-			return none, false
+			return n.setOverInPlace(shift, bit, e)
 		case n.nodemap&bit != 0:
 			n = n.nodes[n.nodeSlot(bit)]
 		default:
@@ -149,6 +138,28 @@ func (n *Node[K, V, M]) setInPlace(shift uint, e Entry[K, V, M]) (Entry[K, V, M]
 			return none, false
 		}
 	}
+	return n.setCollidedInPlace(e)
+}
+
+// setOverInPlace puts e in place of the entry at bit of n, if of its key,
+// or in a node pushed down at shift with it, if not.
+func (n *Node[K, V, M]) setOverInPlace(shift uint, bit uint32, e Entry[K, V, M]) (Entry[K, V, M], bool) {
+	i := n.dataSlot(bit)
+	cur := n.data[i]
+	if cur.Hash == e.Hash && cur.Key == e.Key {
+		n.data[i] = e
+		return cur, true
+	}
+	n.datamap &^= bit
+	n.data = slices.Delete(n.data, i, i+1)
+	n.nodemap |= bit
+	n.nodes = slices.Insert(n.nodes, n.nodeSlot(bit), pair(shift+hbits, cur, e))
+	var none Entry[K, V, M]
+	return none, false
+}
+
+// setCollidedInPlace puts e in n, past the bits of the hash.
+func (n *Node[K, V, M]) setCollidedInPlace(e Entry[K, V, M]) (Entry[K, V, M], bool) {
 	for i := range n.data {
 		if n.data[i].Key == e.Key {
 			cur := n.data[i]
@@ -157,6 +168,7 @@ func (n *Node[K, V, M]) setInPlace(shift uint, e Entry[K, V, M]) (Entry[K, V, M]
 		}
 	}
 	n.data = append(n.data, e)
+	var none Entry[K, V, M]
 	return none, false
 }
 
@@ -178,12 +190,7 @@ func pair[K comparable, V, M any](shift uint, a, b Entry[K, V, M]) *Node[K, V, M
 func (n *Node[K, V, M]) del(shift uint, h uint64, k K) (*Node[K, V, M], Entry[K, V, M], bool) {
 	var none Entry[K, V, M]
 	if shift >= 64 {
-		for i := range n.data {
-			if n.data[i].Key == k {
-				return &Node[K, V, M]{data: removed(n.data, i)}, n.data[i], true
-			}
-		}
-		return n, none, false
+		return n.delCollided(k)
 	}
 	bit := uint32(1) << ((h >> shift) & hmask)
 	switch {
@@ -193,25 +200,75 @@ func (n *Node[K, V, M]) del(shift uint, h uint64, k K) (*Node[K, V, M], Entry[K,
 		if cur.Hash != h || cur.Key != k {
 			return n, none, false
 		}
-		c := &Node[K, V, M]{datamap: n.datamap &^ bit, nodemap: n.nodemap, data: removed(n.data, i), nodes: n.nodes}
-		return c, cur, true
+		return n.withoutEntry(bit, i), cur, true
 	case n.nodemap&bit != 0:
 		i := n.nodeSlot(bit)
 		sub, old, ok := n.nodes[i].del(shift+hbits, h, k)
-		if !ok {
+		switch {
+		case !ok:
 			return n, none, false
-		}
-		if len(sub.data) == 1 && len(sub.nodes) == 0 {
+		case len(sub.data) == 1 && len(sub.nodes) == 0:
 			// Alone, the entry left goes up.
-			c := &Node[K, V, M]{datamap: n.datamap | bit, nodemap: n.nodemap &^ bit}
-			c.data = inserted(n.data, c.dataSlot(bit), sub.data[0])
-			c.nodes = removed(n.nodes, i)
-			return c, old, true
+			return n.pulledUp(bit, i, sub.data[0]), old, true
 		}
-		c := &Node[K, V, M]{datamap: n.datamap, nodemap: n.nodemap, data: n.data, nodes: replaced(n.nodes, i, sub)}
-		return c, old, true
+		return n.withNodes(replaced(n.nodes, i, sub)), old, true
 	}
 	return n, none, false
+}
+
+// delCollided returns n, past the bits of the hash, without the entry of
+// k, and that entry, if any.
+func (n *Node[K, V, M]) delCollided(k K) (*Node[K, V, M], Entry[K, V, M], bool) {
+	for i := range n.data {
+		if n.data[i].Key == k {
+			return &Node[K, V, M]{data: removed(n.data, i)}, n.data[i], true
+		}
+	}
+	var none Entry[K, V, M]
+	return n, none, false
+}
+
+// The nodes a write makes of n: n but for what the write changes, its
+// slices new, the rest shared.
+
+// withData is n with data as its entries.
+func (n *Node[K, V, M]) withData(data []Entry[K, V, M]) *Node[K, V, M] {
+	return &Node[K, V, M]{datamap: n.datamap, nodemap: n.nodemap, data: data, nodes: n.nodes}
+}
+
+// withNodes is n with nodes as its nodes.
+func (n *Node[K, V, M]) withNodes(nodes []*Node[K, V, M]) *Node[K, V, M] {
+	return &Node[K, V, M]{datamap: n.datamap, nodemap: n.nodemap, data: n.data, nodes: nodes}
+}
+
+// withEntry is n with e at bit, where n has nothing.
+func (n *Node[K, V, M]) withEntry(bit uint32, e Entry[K, V, M]) *Node[K, V, M] {
+	c := &Node[K, V, M]{datamap: n.datamap | bit, nodemap: n.nodemap, nodes: n.nodes}
+	c.data = inserted(n.data, c.dataSlot(bit), e)
+	return c
+}
+
+// withoutEntry is n without its entry i, at bit.
+func (n *Node[K, V, M]) withoutEntry(bit uint32, i int) *Node[K, V, M] {
+	return &Node[K, V, M]{datamap: n.datamap &^ bit, nodemap: n.nodemap, data: removed(n.data, i), nodes: n.nodes}
+}
+
+// pushedDown is n with its entry i, at bit, and e, of another key, in a
+// node of the next shift in its place.
+func (n *Node[K, V, M]) pushedDown(shift uint, bit uint32, i int, e Entry[K, V, M]) *Node[K, V, M] {
+	c := &Node[K, V, M]{datamap: n.datamap &^ bit, nodemap: n.nodemap | bit}
+	c.data = removed(n.data, i)
+	c.nodes = inserted(n.nodes, c.nodeSlot(bit), pair(shift+hbits, n.data[i], e))
+	return c
+}
+
+// pulledUp is n with e, the entry left alone in its node i at bit, in
+// place of that node.
+func (n *Node[K, V, M]) pulledUp(bit uint32, i int, e Entry[K, V, M]) *Node[K, V, M] {
+	c := &Node[K, V, M]{datamap: n.datamap | bit, nodemap: n.nodemap &^ bit}
+	c.data = inserted(n.data, c.dataSlot(bit), e)
+	c.nodes = removed(n.nodes, i)
+	return c
 }
 
 // Each yields the entries under n, until yield returns false.
