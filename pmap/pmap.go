@@ -17,6 +17,14 @@ package pmap
 import (
 	"hash/maphash"
 	"iter"
+
+	"github.com/shun159/molecule/internal/champ"
+)
+
+// node and entry are of the hash trie a map holds the root of, as kvs's.
+type (
+	node[K comparable, V any]  = champ.Node[K, V, struct{}]
+	entry[K comparable, V any] = champ.Entry[K, V, struct{}]
 )
 
 // Map is a map of K to V, never changed: see the package documentation.
@@ -32,8 +40,8 @@ func (m Map[K, V]) Len() int { return m.n }
 // Get returns the value of k in m, if any.
 func (m Map[K, V]) Get(k K) (V, bool) {
 	if m.root != nil {
-		if e, ok := m.root.get(maphash.Comparable(m.seed, k), k); ok {
-			return e.val, true
+		if e, ok := m.root.Get(maphash.Comparable(m.seed, k), k); ok {
+			return e.Val, true
 		}
 	}
 	var zero V
@@ -45,7 +53,7 @@ func (m Map[K, V]) Set(k K, v V) Map[K, V] {
 	if m.root == nil {
 		m.root, m.seed = &node[K, V]{}, maphash.MakeSeed()
 	}
-	root, replaced := m.root.set(0, entry[K, V]{hash: maphash.Comparable(m.seed, k), key: k, val: v})
+	root, _, replaced := m.root.Set(entry[K, V]{Hash: maphash.Comparable(m.seed, k), Key: k, Val: v})
 	m.root = root
 	if !replaced {
 		m.n++
@@ -58,7 +66,7 @@ func (m Map[K, V]) Delete(k K) Map[K, V] {
 	if m.root == nil {
 		return m
 	}
-	root, deleted := m.root.del(0, maphash.Comparable(m.seed, k), k)
+	root, _, deleted := m.root.Delete(maphash.Comparable(m.seed, k), k)
 	if deleted {
 		m.root, m.n = root, m.n-1
 	}
@@ -69,7 +77,7 @@ func (m Map[K, V]) Delete(k K) Map[K, V] {
 func (m Map[K, V]) All() iter.Seq2[K, V] {
 	return func(yield func(K, V) bool) {
 		if m.root != nil {
-			m.root.each(func(e *entry[K, V]) bool { return yield(e.key, e.val) })
+			m.root.Each(func(e *entry[K, V]) bool { return yield(e.Key, e.Val) })
 		}
 	}
 }
@@ -79,7 +87,7 @@ func (m Map[K, V]) All() iter.Seq2[K, V] {
 func Collect[K comparable, V any](seq iter.Seq2[K, V]) Map[K, V] {
 	m := Map[K, V]{root: &node[K, V]{}, seed: maphash.MakeSeed()}
 	for k, v := range seq {
-		if !m.root.setInPlace(0, entry[K, V]{hash: maphash.Comparable(m.seed, k), key: k, val: v}) {
+		if _, replaced := m.root.SetInPlace(entry[K, V]{Hash: maphash.Comparable(m.seed, k), Key: k, Val: v}); !replaced {
 			m.n++
 		}
 	}

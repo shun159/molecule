@@ -137,15 +137,15 @@ func (t *Table[K, V]) writeEntries(w io.Writer, since uint64) (size int64, last 
 	var buf, out []byte
 	for shard := range t.idx.byShard(true) {
 		for l := range shard {
-			body, err := t.encode(&buf, opPut, l.key, l.val)
+			body, err := t.encode(&buf, opPut, l.Key, l.Val)
 			if err != nil {
 				return size, last, err
 			}
-			out = appendRecord(out[:0], newRec(body), l.rev)
+			out = appendRecord(out[:0], newRec(body), l.Meta.rev)
 			if _, err := w.Write(out); err != nil {
 				return size, last, err
 			}
-			last = max(last, l.rev)
+			last = max(last, l.Meta.rev)
 			size += int64(len(out))
 		}
 	}

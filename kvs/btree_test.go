@@ -26,15 +26,15 @@ func TestBTree(t *testing.T) {
 			if r.IntN(3) == 0 {
 				l, ok := tr.del(gen, k)
 				v, had := want[k]
-				if ok != had || ok && l.val != v {
-					t.Fatalf("cow %v step %d: del %d: %v %d, want %v %d", cow, i, k, ok, l.val, had, v)
+				if ok != had || ok && l.Val != v {
+					t.Fatalf("cow %v step %d: del %d: %v %d, want %v %d", cow, i, k, ok, l.Val, had, v)
 				}
 				delete(want, k)
 			} else {
-				l, ok := tr.set(gen, leaf[int, int]{key: k, val: i})
+				l, ok := tr.set(gen, leaf[int, int]{Key: k, Val: i})
 				v, had := want[k]
-				if ok != had || ok && l.val != v {
-					t.Fatalf("cow %v step %d: set %d replaced %v %d, want %v %d", cow, i, k, ok, l.val, had, v)
+				if ok != had || ok && l.Val != v {
+					t.Fatalf("cow %v step %d: set %d replaced %v %d, want %v %d", cow, i, k, ok, l.Val, had, v)
 				}
 				want[k] = i
 			}
@@ -81,7 +81,7 @@ func checkTree(t *testing.T, root *bnode[int, int], size int, want map[int]int) 
 			}
 			depth = d
 			for _, l := range n.items {
-				got = append(got, l.key)
+				got = append(got, l.Key)
 			}
 			return
 		}
@@ -91,7 +91,7 @@ func checkTree(t *testing.T, root *bnode[int, int], size int, want map[int]int) 
 		for i, c := range n.kids {
 			walk(c, d+1)
 			if i < len(n.items) {
-				got = append(got, n.items[i].key)
+				got = append(got, n.items[i].Key)
 			}
 		}
 	}
@@ -104,7 +104,7 @@ func checkTree(t *testing.T, root *bnode[int, int], size int, want map[int]int) 
 	}
 	tr := btree[int, int]{cmp: cmp.Compare[int], root: root}
 	for _, k := range keys {
-		if l, ok := tr.get(k); !ok || l.val != want[k] {
+		if l, ok := tr.get(k); !ok || l.Val != want[k] {
 			t.Fatalf("get %d: %v", k, ok)
 		}
 	}
@@ -113,7 +113,7 @@ func checkTree(t *testing.T, root *bnode[int, int], size int, want map[int]int) 
 		lo := b[0]
 		var got []int
 		for c.seek(root, &lo); c.cur != nil; c.next() {
-			got = append(got, c.cur.key)
+			got = append(got, c.cur.Key)
 		}
 		var want []int
 		for _, k := range keys {

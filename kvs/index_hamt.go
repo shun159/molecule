@@ -5,6 +5,8 @@ import (
 	"iter"
 	"sync"
 	"sync/atomic"
+
+	"github.com/shun159/molecule/internal/champ"
 )
 
 // hamtIndex is a persistent trie in each shard, its root replaced by each
@@ -21,6 +23,9 @@ type hamtShard[K comparable, V any] struct {
 	_    [cacheLine]byte
 }
 
+// hnode is a node of the trie of a shard.
+type hnode[K comparable, V any] = champ.Node[K, V, meta]
+
 type hroot[K comparable, V any] struct {
 	n    *hnode[K, V]
 	size int
@@ -36,12 +41,12 @@ func newHamtIndex[K comparable, V any](h hasher, live *atomic.Int64) *hamtIndex[
 
 func (x *hamtIndex[K, V]) get(k K) (V, uint64, bool) {
 	h := maphash.Comparable(x.seed, k)
-	l, ok := x.shards[x.hasher.shard(h)].root.Load().n.get(h, k)
+	l, ok := x.shards[x.hasher.shard(h)].root.Load().n.Get(h, k)
 	if !ok {
 		var zero V
 		return zero, 0, false
 	}
-	return l.val, l.rev, true
+	return l.Val, l.Meta.rev, true
 }
 
 func (x *hamtIndex[K, V]) put(log *wal, k K, v V, r rec, match matcher[V]) (*batch, error) {
@@ -51,11 +56,11 @@ func (x *hamtIndex[K, V]) put(log *wal, k K, v V, r rec, match matcher[V]) (*bat
 	cur := s.root.Load()
 	if match != nil {
 		var l leaf[K, V]
-		p, ok := cur.n.get(h, k)
+		p, ok := cur.n.Get(h, k)
 		if ok {
 			l = *p
 		}
-		if !match(l.val, l.rev, ok) {
+		if !match(l.Val, l.Meta.rev, ok) {
 			s.mu.Unlock()
 			return nil, ErrConflict
 		}
@@ -65,14 +70,14 @@ func (x *hamtIndex[K, V]) put(log *wal, k K, v V, r rec, match matcher[V]) (*bat
 		s.mu.Unlock()
 		return nil, err
 	}
-	n, old, replaced := cur.n.set(0, leaf[K, V]{hash: h, key: k, val: v, size: r.size(), rev: seq})
+	n, old, replaced := cur.n.Set(leaf[K, V]{Hash: h, Key: k, Val: v, Meta: meta{size: r.size(), rev: seq}})
 	size := cur.size
 	if !replaced {
 		size++
 	}
 	s.root.Store(&hroot[K, V]{n: n, size: size})
 	s.mu.Unlock()
-	x.live.Add(r.size() - old.size)
+	x.live.Add(r.size() - old.Meta.size)
 	return b, nil
 }
 
@@ -81,8 +86,8 @@ func (x *hamtIndex[K, V]) del(log *wal, k K, r rec, match matcher[V]) (*batch, e
 	s := &x.shards[x.hasher.shard(h)]
 	s.mu.Lock()
 	cur := s.root.Load()
-	n, old, ok := cur.n.del(0, h, k)
-	if match != nil && !match(old.val, old.rev, ok) {
+	n, old, ok := cur.n.Delete(h, k)
+	if match != nil && !match(old.Val, old.Meta.rev, ok) {
 		s.mu.Unlock()
 		return nil, ErrConflict
 	}
@@ -97,7 +102,7 @@ func (x *hamtIndex[K, V]) del(log *wal, k K, r rec, match matcher[V]) (*batch, e
 	}
 	s.root.Store(&hroot[K, V]{n: n, size: cur.size - 1})
 	s.mu.Unlock()
-	x.live.Add(-old.size)
+	x.live.Add(-old.Meta.size)
 	return b, nil
 }
 
@@ -113,7 +118,7 @@ func (x *hamtIndex[K, V]) byShard(cut bool) iter.Seq[entries[K, V]] {
 	return func(yield func(entries[K, V]) bool) {
 		for i := range x.shards {
 			root := x.root(i, cut)
-			if !yield(func(f func(*leaf[K, V]) bool) { root.n.each(f) }) {
+			if !yield(func(f func(*leaf[K, V]) bool) { root.n.Each(f) }) {
 				return
 			}
 		}
@@ -135,19 +140,19 @@ func (x *hamtIndex[K, V]) load(k K, v V, size int64, rev uint64) {
 	h := maphash.Comparable(x.seed, k)
 	s := &x.shards[x.hasher.shard(h)]
 	r := s.root.Load() // no reader yet: changed in place
-	old, replaced := r.n.setInPlace(0, leaf[K, V]{hash: h, key: k, val: v, size: size, rev: rev})
+	old, replaced := r.n.SetInPlace(leaf[K, V]{Hash: h, Key: k, Val: v, Meta: meta{size: size, rev: rev}})
 	if !replaced {
 		r.size++
 	}
-	x.live.Add(size - old.size)
+	x.live.Add(size - old.Meta.size)
 }
 
 func (x *hamtIndex[K, V]) unload(k K) {
 	h := maphash.Comparable(x.seed, k)
 	s := &x.shards[x.hasher.shard(h)]
 	cur := s.root.Load()
-	if n, old, ok := cur.n.del(0, h, k); ok {
+	if n, old, ok := cur.n.Delete(h, k); ok {
 		s.root.Store(&hroot[K, V]{n: n, size: cur.size - 1})
-		x.live.Add(-old.size)
+		x.live.Add(-old.Meta.size)
 	}
 }

@@ -71,7 +71,7 @@ func (x *treeIndex[K, V]) get(k K) (V, uint64, bool) {
 	if !x.lockless {
 		s.mu.RUnlock()
 	}
-	return e.val, e.rev, ok
+	return e.Val, e.Meta.rev, ok
 }
 
 func (x *treeIndex[K, V]) put(log *wal, k K, v V, r rec, match matcher[V]) (*batch, error) {
@@ -84,7 +84,7 @@ func (x *treeIndex[K, V]) put(log *wal, k K, v V, r rec, match matcher[V]) (*bat
 		if ok {
 			cur = *p
 		}
-		if !match(cur.val, cur.rev, ok) {
+		if !match(cur.Val, cur.Meta.rev, ok) {
 			s.mu.Unlock()
 			return nil, ErrConflict
 		}
@@ -94,10 +94,10 @@ func (x *treeIndex[K, V]) put(log *wal, k K, v V, r rec, match matcher[V]) (*bat
 		s.mu.Unlock()
 		return nil, err
 	}
-	old, _ := t.set(gen, leaf[K, V]{key: k, val: v, size: r.size(), rev: seq})
+	old, _ := t.set(gen, leaf[K, V]{Key: k, Val: v, Meta: meta{size: r.size(), rev: seq}})
 	s.root.Store(&troot[K, V]{t.root, t.size})
 	s.mu.Unlock()
-	x.live.Add(r.size() - old.size)
+	x.live.Add(r.size() - old.Meta.size)
 	return b, nil
 }
 
@@ -110,7 +110,7 @@ func (x *treeIndex[K, V]) del(log *wal, k K, r rec, match matcher[V]) (*batch, e
 	if ok {
 		cur = *p
 	}
-	if match != nil && !match(cur.val, cur.rev, ok) {
+	if match != nil && !match(cur.Val, cur.Meta.rev, ok) {
 		s.mu.Unlock()
 		return nil, ErrConflict
 	}
@@ -126,7 +126,7 @@ func (x *treeIndex[K, V]) del(log *wal, k K, r rec, match matcher[V]) (*batch, e
 	t.del(gen, k)
 	s.root.Store(&troot[K, V]{t.root, t.size})
 	s.mu.Unlock()
-	x.live.Add(-cur.size)
+	x.live.Add(-cur.Meta.size)
 	return b, nil
 }
 
@@ -191,7 +191,7 @@ func (x *treeIndex[K, V]) ascend(lo, hi *K, yield func(*leaf[K, V]) bool) {
 		}
 	}
 	// A heap of the cursors, by the keys at them.
-	less := func(i, j int) bool { return x.cmp(cs[i].cur.key, cs[j].cur.key) < 0 }
+	less := func(i, j int) bool { return x.cmp(cs[i].cur.Key, cs[j].cur.Key) < 0 }
 	down := func(i int) {
 		for {
 			m := i
@@ -228,9 +228,9 @@ func (x *treeIndex[K, V]) load(k K, v V, size int64, rev uint64) {
 	s := x.shard(k)
 	r := s.root.Load() // no reader yet: changed in place
 	t := btree[K, V]{cmp: x.cmp, root: r.n, size: r.size}
-	old, _ := t.set(s.gen, leaf[K, V]{key: k, val: v, size: size, rev: rev})
+	old, _ := t.set(s.gen, leaf[K, V]{Key: k, Val: v, Meta: meta{size: size, rev: rev}})
 	s.root.Store(&troot[K, V]{t.root, t.size})
-	x.live.Add(size - old.size)
+	x.live.Add(size - old.Meta.size)
 }
 
 func (x *treeIndex[K, V]) unload(k K) {
@@ -239,6 +239,6 @@ func (x *treeIndex[K, V]) unload(k K) {
 	t := btree[K, V]{cmp: x.cmp, root: r.n, size: r.size}
 	if old, ok := t.del(s.gen, k); ok {
 		s.root.Store(&troot[K, V]{t.root, t.size})
-		x.live.Add(-old.size)
+		x.live.Add(-old.Meta.size)
 	}
 }

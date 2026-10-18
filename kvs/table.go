@@ -217,10 +217,10 @@ func (t *Table[K, V]) Select(keep func(K, V) bool) iter.Seq2[K, V] {
 	return func(yield func(K, V) bool) {
 		// kept yields l, unless left out, and reports whether to go on.
 		kept := func(l *leaf[K, V]) bool {
-			if keep != nil && !keep(l.key, l.val) {
+			if keep != nil && !keep(l.Key, l.Val) {
 				return true
 			}
-			return yield(l.key, l.val)
+			return yield(l.Key, l.Val)
 		}
 		if x, ok := t.idx.(*treeIndex[K, V]); ok {
 			x.ascend(nil, nil, kept) // in order, merging the shards
@@ -247,7 +247,7 @@ func (t *Table[K, V]) Range(lo, hi K) iter.Seq2[K, V] {
 		panic("kvs: Range of a Set")
 	}
 	return func(yield func(K, V) bool) {
-		x.ascend(&lo, &hi, func(l *leaf[K, V]) bool { return yield(l.key, l.val) })
+		x.ascend(&lo, &hi, func(l *leaf[K, V]) bool { return yield(l.Key, l.Val) })
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"hash/maphash"
 	"iter"
 	"sync/atomic"
+
+	"github.com/shun159/molecule/internal/champ"
 )
 
 // index holds the entries of a table in memory. A write takes the lock of
@@ -29,6 +31,16 @@ type index[K comparable, V any] interface {
 	// load sets or deletes entries on opening, without the log.
 	load(k K, v V, size int64, rev uint64)
 	unload(k K)
+}
+
+// leaf is an entry of an index: a key, its value, and the size and seq of
+// the record that wrote it in the log; and its hash, of the hash trie.
+type leaf[K comparable, V any] = champ.Entry[K, V, meta]
+
+// meta is what an index keeps of an entry beside its key and value.
+type meta struct {
+	size int64  // of the record that wrote it in the log
+	rev  uint64 // the seq of that record
 }
 
 // entries are the entries of a shard, to range over.

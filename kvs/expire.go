@@ -165,8 +165,8 @@ func (x *expiries[K, V]) rebuild() {
 	x.h = x.h[:0]
 	for shard := range t.idx.byShard(false) {
 		for l := range shard {
-			if at := t.opts.Expires(l.val); !at.IsZero() {
-				x.h = append(x.h, expiry[K]{at.UnixNano(), l.key})
+			if at := t.opts.Expires(l.Val); !at.IsZero() {
+				x.h = append(x.h, expiry[K]{at.UnixNano(), l.Key})
 			}
 		}
 	}
