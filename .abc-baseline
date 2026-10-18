@@ -22,6 +22,8 @@
 15.6 kvs wal.syncNow
 17.6 kvs wal.syncNow lines
 29.6 net/gentcp decoder.next
+7.5 net/gentcp decoder.next case Line
+8.6 net/gentcp decoder.next case Raw
 12.2 net/gentcp decoder.next case default
 13.2 net/gentcp decoder.next cyclo
 36.8 net/gentcp decoder.next lines
