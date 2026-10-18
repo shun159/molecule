@@ -182,21 +182,10 @@ func (e *gobEncoder) Encode(msg any) ([]byte, error) {
 			return b, err
 		}
 	}
-	e.buf.Reset()
-	flag := sameStream
-	if e.enc == nil {
-		e.enc = gob.NewEncoder(&e.buf)
-		flag = newStream
-	}
+	flag := e.start()
 	var err error
 	if ok {
-		var id [8]byte
-		binary.BigEndian.PutUint64(id[:], t.id)
-		e.buf.WriteByte(flag | typed)
-		e.buf.Write(id[:])
-		if !t.empty {
-			err = e.enc.Encode(msg)
-		}
+		err = e.encodeTyped(flag, t, msg)
 	} else {
 		e.buf.WriteByte(flag)
 		err = e.enc.Encode(envelope{msg})
@@ -206,6 +195,30 @@ func (e *gobEncoder) Encode(msg any) ([]byte, error) {
 		return nil, err
 	}
 	return bytes.Clone(e.buf.Bytes()), nil
+}
+
+// start empties the buffer for a message, and returns the flag of its
+// stream: a new one, if the last encoding failed or none was yet.
+func (e *gobEncoder) start() byte {
+	e.buf.Reset()
+	if e.enc != nil {
+		return sameStream
+	}
+	e.enc = gob.NewEncoder(&e.buf)
+	return newStream
+}
+
+// encodeTyped encodes msg, of the registered type t, after the ID of t:
+// its value alone, or nothing if t has no fields.
+func (e *gobEncoder) encodeTyped(flag byte, t typeID, msg any) error {
+	var id [8]byte
+	binary.BigEndian.PutUint64(id[:], t.id)
+	e.buf.WriteByte(flag | typed)
+	e.buf.Write(id[:])
+	if t.empty {
+		return nil
+	}
+	return e.enc.Encode(msg)
 }
 
 // encodeBinary encodes msg, of the binary type t, as its own bytes.

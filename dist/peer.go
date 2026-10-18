@@ -335,25 +335,7 @@ func (c *connection) gather(f frame) ([]frame, any) {
 // send sends frames, in one write, and reports whether the connection is
 // still up. A message that fails to encode is dropped.
 func (c *connection) send(frames ...frame) bool {
-	c.buf, c.ends, c.packets = c.buf[:0], c.ends[:0], c.packets[:0]
-	for _, f := range frames {
-		switch f.op {
-		case opSend, opSendName, opSendAlias:
-			b, err := c.enc.Encode(f.msg)
-			if err != nil {
-				c.d.n.Logger().Warn("dist: message not sent", "node", c.p.node, "type", typeName(f.msg), "error", err)
-				continue
-			}
-			f.payload = b
-		}
-		c.buf = appendFrame(c.buf, f)
-		c.ends = append(c.ends, len(c.buf))
-	}
-	start := 0
-	for _, end := range c.ends {
-		c.packets = append(c.packets, c.buf[start:end])
-		start = end
-	}
+	c.appendFrames(frames)
 	clear(c.frames) // keep no message
 	if len(c.packets) == 0 {
 		return true
@@ -365,6 +347,36 @@ func (c *connection) send(frames ...frame) bool {
 		c.buf = nil // keep no large buffer
 	}
 	return err == nil
+}
+
+// appendFrames appends frames to the buffer, their messages encoded, and
+// makes each its packet. A message that fails to encode is dropped.
+func (c *connection) appendFrames(frames []frame) {
+	c.buf, c.ends, c.packets = c.buf[:0], c.ends[:0], c.packets[:0]
+	for _, f := range frames {
+		if f.op.carriesMsg() && !c.encode(&f) {
+			continue
+		}
+		c.buf = appendFrame(c.buf, f)
+		c.ends = append(c.ends, len(c.buf))
+	}
+	start := 0
+	for _, end := range c.ends {
+		c.packets = append(c.packets, c.buf[start:end])
+		start = end
+	}
+}
+
+// encode encodes the message of f as its payload, and reports whether it
+// could; a message that could not is logged.
+func (c *connection) encode(f *frame) bool {
+	b, err := c.enc.Encode(f.msg)
+	if err != nil {
+		c.d.n.Logger().Warn("dist: message not sent", "node", c.p.node, "type", typeName(f.msg), "error", err)
+		return false
+	}
+	f.payload = b
+	return true
 }
 
 // receive hands the frame b to the node. The other node speaks only for
