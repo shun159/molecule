@@ -103,7 +103,7 @@ func (d *decoder) grown(n int) int {
 // other packet types ignore length. A packet shares no memory with what
 // is left.
 //
-//abc:disable abc,cyclo,lines the path of every packet read
+//abc:disable abc,cyclo,lines,case the path of every packet read
 func (d *decoder) next(length int) (pkt []byte, ok bool, err error) {
 	var end, from, to int // the packet is buf[from:to], what is left buf[end:]
 	switch d.packet {

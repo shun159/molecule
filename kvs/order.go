@@ -36,12 +36,37 @@ func (t Type) String() string {
 // arrays of bytes.
 func compareOf[K comparable]() (func(a, b K) int, bool) {
 	t := reflect.TypeFor[K]()
-	if m, ok := t.MethodByName("Compare"); ok {
-		if f, ok := m.Func.Interface().(func(a, b K) int); ok {
-			return f, true
-		}
+	if f, ok := methodOrder[K](t); ok {
+		return f, true
 	}
-	switch t.Kind() {
+	if t.Kind() == reflect.Array && t.Elem().Kind() == reflect.Uint8 {
+		return bytesOrder[K](t.Len()), true
+	}
+	return kindOrder[K](t.Kind())
+}
+
+// methodOrder returns the method Compare(K) int of t, the type K, if it
+// has one.
+func methodOrder[K comparable](t reflect.Type) (func(a, b K) int, bool) {
+	m, ok := t.MethodByName("Compare")
+	if !ok {
+		return nil, false
+	}
+	f, ok := m.Func.Interface().(func(a, b K) int)
+	return f, ok
+}
+
+// bytesOrder orders keys of type K, arrays of n bytes, as bytes.Compare.
+func bytesOrder[K comparable](n int) func(a, b K) int {
+	return func(a, b K) int {
+		return bytes.Compare(unsafe.Slice((*byte)(unsafe.Pointer(&a)), n), unsafe.Slice((*byte)(unsafe.Pointer(&b)), n))
+	}
+}
+
+// kindOrder orders keys of type K as cmp.Compare their underlying type of
+// the kind, a string or a number, if it is one.
+func kindOrder[K comparable](kind reflect.Kind) (func(a, b K) int, bool) {
+	switch kind {
 	case reflect.String:
 		return as[string, K](), true
 	case reflect.Int:
@@ -70,13 +95,6 @@ func compareOf[K comparable]() (func(a, b K) int, bool) {
 		return as[float32, K](), true
 	case reflect.Float64:
 		return as[float64, K](), true
-	case reflect.Array:
-		if t.Elem().Kind() == reflect.Uint8 {
-			n := t.Len()
-			return func(a, b K) int {
-				return bytes.Compare(unsafe.Slice((*byte)(unsafe.Pointer(&a)), n), unsafe.Slice((*byte)(unsafe.Pointer(&b)), n))
-			}, true
-		}
 	}
 	return nil, false
 }
