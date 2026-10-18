@@ -15,15 +15,15 @@
 19.8 dist readSized
 11.6 examples/codelock CodeLock.HandleEvent case genstatem.Cast
 17.1 gensim New
+4 internal/champ Node.Get nesting
+20.7 internal/champ Node.del
+21.1 internal/champ Node.set
+19.5 internal/champ Node.setInPlace
 21 kvs bnode.grow
 17.2 kvs compareOf
 10.2 kvs compareOf case reflect.Array
 4 kvs cursor.next nesting
 17.7 kvs hamtIndex.put
-20.7 kvs hnode.del
-4 kvs hnode.get nesting
-21.1 kvs hnode.set
-19.7 kvs hnode.setInPlace
 25.9 kvs readRecords
 10.7 kvs readRecords cyclo
 28.4 kvs readRecords lines
@@ -53,11 +53,6 @@
 7.2 net/internal/dgram Serve cyclo
 14.7 net/internal/dgram server.deliver
 4 net/internal/dgram server.read nesting
-20.1 pmap node.del
-10.1 pmap node.del cyclo
-4 pmap node.get nesting
-19.2 pmap node.set
-18.2 pmap node.setInPlace
 14.8 proc Node.Watch
 11.1 proc Node.monitorAlias
 17 proc Self.Link

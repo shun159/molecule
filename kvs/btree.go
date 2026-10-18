@@ -38,13 +38,13 @@ func (n *bnode[K, V]) find(cmp func(a, b K) int, k K) (int, bool) {
 	lo, hi := 0, len(n.items)
 	for lo < hi {
 		m := int(uint(lo+hi) >> 1)
-		if cmp(n.items[m].key, k) < 0 {
+		if cmp(n.items[m].Key, k) < 0 {
 			lo = m + 1
 		} else {
 			hi = m
 		}
 	}
-	return lo, lo < len(n.items) && cmp(n.items[lo].key, k) == 0
+	return lo, lo < len(n.items) && cmp(n.items[lo].Key, k) == 0
 }
 
 func (t *btree[K, V]) get(k K) (*leaf[K, V], bool) {
@@ -114,7 +114,7 @@ func (t *btree[K, V]) set(gen uint64, l leaf[K, V]) (leaf[K, V], bool) {
 // full nodes on its way down.
 func (n *bnode[K, V]) insert(cmp func(a, b K) int, gen uint64, l leaf[K, V]) (leaf[K, V], bool) {
 	for {
-		i, ok := n.find(cmp, l.key)
+		i, ok := n.find(cmp, l.Key)
 		if ok {
 			old := n.items[i]
 			n.items[i] = l
@@ -284,7 +284,7 @@ func (c *cursor[K, V]) next() {
 				n = n.kids[0]
 			}
 		}
-		if c.hasHi && c.cmp(l.key, c.hi) >= 0 {
+		if c.hasHi && c.cmp(l.Key, c.hi) >= 0 {
 			break
 		}
 		c.cur = l

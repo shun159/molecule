@@ -120,7 +120,7 @@ func (x *mapIndex[K, V]) copied(i int) []leaf[K, V] {
 	defer s.mu.RUnlock()
 	ls := make([]leaf[K, V], 0, len(s.m))
 	for k, e := range s.m {
-		ls = append(ls, leaf[K, V]{key: k, val: e.val, size: e.size, rev: e.rev})
+		ls = append(ls, leaf[K, V]{Key: k, Val: e.val, Meta: meta{size: e.size, rev: e.rev}})
 	}
 	return ls
 }
