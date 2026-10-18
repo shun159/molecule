@@ -54,16 +54,9 @@ func (x *hamtIndex[K, V]) put(log *wal, k K, v V, r rec, match matcher[V]) (*bat
 	s := &x.shards[x.hasher.shard(h)]
 	s.mu.Lock()
 	cur := s.root.Load()
-	if match != nil {
-		var l leaf[K, V]
-		p, ok := cur.n.Get(h, k)
-		if ok {
-			l = *p
-		}
-		if !match(l.Val, l.Meta.rev, ok) {
-			s.mu.Unlock()
-			return nil, ErrConflict
-		}
+	if match != nil && !cur.matches(h, k, match) {
+		s.mu.Unlock()
+		return nil, ErrConflict
 	}
 	seq, b, err := log.append(r)
 	if err != nil {
@@ -79,6 +72,17 @@ func (x *hamtIndex[K, V]) put(log *wal, k K, v V, r rec, match matcher[V]) (*bat
 	s.mu.Unlock()
 	x.live.Add(r.size() - old.Meta.size)
 	return b, nil
+}
+
+// matches reports whether the entry of k, of hash h, in r, or its lack,
+// is what match asks for.
+func (r *hroot[K, V]) matches(h uint64, k K, match matcher[V]) bool {
+	var l leaf[K, V]
+	p, ok := r.n.Get(h, k)
+	if ok {
+		l = *p
+	}
+	return match(l.Val, l.Meta.rev, ok)
 }
 
 func (x *hamtIndex[K, V]) del(log *wal, k K, r rec, match matcher[V]) (*batch, error) {
