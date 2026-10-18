@@ -104,6 +104,7 @@ func (d *decoder) grown(n int) int {
 // is left.
 //
 //abc:disable abc,cyclo,lines,case the path of every packet read
+//abc:hot net/gentcpacceptor/BenchmarkEcho,net/gentcpacceptor/BenchmarkStream
 func (d *decoder) next(length int) (pkt []byte, ok bool, err error) {
 	var end, from, to int // the packet is buf[from:to], what is left buf[end:]
 	switch d.packet {

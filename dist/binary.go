@@ -65,6 +65,7 @@ const (
 // It is kept a table, a line a kind: split, every value paid a call more.
 //
 //abc:disable abc a table of the kinds of value, on the path of every value sent
+//abc:hot BenchmarkCodecBinary
 func AppendAny(b []byte, v any) ([]byte, error) {
 	switch x := v.(type) {
 	case nil:
@@ -130,6 +131,8 @@ var errShort = errors.New("dist: binary value cut short")
 
 // ReadAny reads the value AppendAny appended at the start of b, and
 // returns it with the rest of b.
+//
+//abc:hot BenchmarkCodecBinary
 func ReadAny(b []byte) (any, []byte, error) {
 	if len(b) == 0 {
 		return nil, b, errShort

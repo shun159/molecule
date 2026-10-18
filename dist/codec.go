@@ -174,6 +174,7 @@ type gobEncoder struct {
 	bin []byte // to append a binary message to
 }
 
+//abc:hot BenchmarkCodec,BenchmarkCodecBinary
 func (e *gobEncoder) Encode(msg any) ([]byte, error) {
 	t, ok := typeOf(msg)
 	if ok && t.bin != nil {

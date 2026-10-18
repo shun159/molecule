@@ -49,6 +49,7 @@ func (x *hamtIndex[K, V]) get(k K) (V, uint64, bool) {
 	return l.Val, l.Meta.rev, true
 }
 
+//abc:hot BenchmarkPut,BenchmarkMixed
 func (x *hamtIndex[K, V]) put(log *wal, k K, v V, r rec, match matcher[V]) (*batch, error) {
 	h := maphash.Comparable(x.seed, k)
 	s := &x.shards[x.hasher.shard(h)]

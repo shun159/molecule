@@ -82,6 +82,7 @@ type pendingRecv struct {
 // hands the owner what the reader reads, and does what the owner asks.
 //
 //abc:disable abc,cyclo the loop over every message of a socket
+//abc:hot net/gentcpacceptor/BenchmarkEcho
 func serve(self *proc.Self, conn net.Conn, sock Socket, owner proc.PID, opts Options) error {
 	self.SetLabel("gentcp socket " + sock.RemoteAddr.String())
 	s := newServer(self, conn, sock, owner, opts)
@@ -287,6 +288,7 @@ func (s *server) shutdown(how How) error {
 // socket is to close.
 //
 //abc:disable abc,cyclo the path of every packet to the owner
+//abc:hot net/gentcpacceptor/BenchmarkEcho
 func (s *server) deliver() (done bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -378,6 +380,7 @@ func (s *server) answer(v any) {
 // readResult, sent once the reader stopped.
 //
 //abc:disable abc the check before every message of a socket
+//abc:hot net/gentcpacceptor/BenchmarkEcho
 func (s *server) wantData() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -407,6 +410,7 @@ func (s *server) wantData() {
 // a smaller one is copied out, so the buffer follows the reads in size.
 //
 //abc:disable abc,cyclo the loop over every read of a connection
+//abc:hot net/gentcpacceptor/BenchmarkEcho,net/gentcpacceptor/BenchmarkStream
 func (s *server) read() {
 	n, pid, done := s.self.Node(), s.self.PID(), s.self.Done()
 	buf := make([]byte, minReadBuffer)

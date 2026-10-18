@@ -44,6 +44,8 @@ var ErrCancelled = errors.New("actor: request cancelled")
 // Request sends req to the server at to, as Call does, without waiting
 // for the reply. Behaviours return a SendRequest effect instead; genserver
 // and genstatem call it with the type of the reply.
+//
+//abc:hot behaviours/genserver/BenchmarkSendRequest
 func Request[Rep any](caller Caller, to Dest, req any) *Pending[Rep] {
 	p := &Pending[Rep]{done: make(chan struct{}), cancel: make(chan struct{})}
 	done := p.ender(caller.Node(), to, req)

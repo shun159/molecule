@@ -88,6 +88,7 @@ func (adapter[S]) Init(self proc.PID, _ any) (conn[S], []actor.Effect, error) {
 // Handle hands the handler what its connection gets.
 //
 //abc:disable abc,cyclo the path of every message of a connection
+//abc:hot BenchmarkEcho
 func (a adapter[S]) Handle(c conn[S], msg gen.Msg) (conn[S], []actor.Effect) {
 	info, ok := msg.(gen.InfoMsg)
 	if !ok {
