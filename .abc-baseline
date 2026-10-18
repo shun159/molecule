@@ -16,16 +16,12 @@
 11.6 examples/codelock CodeLock.HandleEvent case genstatem.Cast
 17.1 gensim New
 4 internal/champ Node.Get nesting
-21 kvs bnode.grow
 17.2 kvs compareOf
 10.2 kvs compareOf case reflect.Array
-4 kvs cursor.next nesting
 17.7 kvs hamtIndex.put
 25.9 kvs readRecords
 10.7 kvs readRecords cyclo
 28.4 kvs readRecords lines
-28.2 kvs treeIndex.ascend
-11.4 kvs treeIndex.ascend cyclo
 14.9 kvs wal.append
 24.3 kvs wal.append lines
 15.6 kvs wal.syncNow

@@ -177,6 +177,31 @@ func (x *treeIndex[K, V]) inOrder(root *bnode[K, V]) entries[K, V] {
 // ascend yields the entries from lo, if not nil, up to hi, if not nil, in
 // order, merging those of the shards, each frozen as it was at a moment.
 func (x *treeIndex[K, V]) ascend(lo, hi *K, yield func(*leaf[K, V]) bool) {
+	cs := x.cursors(lo, hi)
+	if len(cs) == 1 {
+		// One shard, or one with entries in range: nothing to merge.
+		for c := cs[0]; c.cur != nil && yield(c.cur); c.next() {
+		}
+		return
+	}
+	h := cursorHeap[K, V]{cmp: x.cmp, cs: cs}
+	h.init()
+	for len(h.cs) > 0 {
+		c := h.cs[0]
+		if !yield(c.cur) {
+			return
+		}
+		if c.next(); c.cur == nil {
+			h.cs[0] = h.cs[len(h.cs)-1]
+			h.cs = h.cs[:len(h.cs)-1]
+		}
+		h.down(0)
+	}
+}
+
+// cursors returns a cursor of each shard frozen, at its first entry from
+// lo, if not nil, stopping before hi, if not nil; but those at no entry.
+func (x *treeIndex[K, V]) cursors(lo, hi *K) []*cursor[K, V] {
 	all := make([]cursor[K, V], len(x.shards))
 	stacks := make([]frame[K, V], len(x.shards)*8) // deep enough for most
 	cs := make([]*cursor[K, V], 0, len(x.shards))
@@ -190,37 +215,42 @@ func (x *treeIndex[K, V]) ascend(lo, hi *K, yield func(*leaf[K, V]) bool) {
 			cs = append(cs, c)
 		}
 	}
-	// A heap of the cursors, by the keys at them.
-	less := func(i, j int) bool { return x.cmp(cs[i].cur.Key, cs[j].cur.Key) < 0 }
-	down := func(i int) {
-		for {
-			m := i
-			if l := 2*i + 1; l < len(cs) && less(l, m) {
-				m = l
-			}
-			if r := 2*i + 2; r < len(cs) && less(r, m) {
-				m = r
-			}
-			if m == i {
-				return
-			}
-			cs[i], cs[m] = cs[m], cs[i]
-			i = m
+	return cs
+}
+
+// A cursorHeap is a heap of cursors, by the keys at them: the first at the
+// least.
+type cursorHeap[K comparable, V any] struct {
+	cmp func(a, b K) int
+	cs  []*cursor[K, V]
+}
+
+func (h *cursorHeap[K, V]) init() {
+	for i := len(h.cs)/2 - 1; i >= 0; i-- {
+		h.down(i)
+	}
+}
+
+func (h *cursorHeap[K, V]) less(i, j int) bool {
+	return h.cmp(h.cs[i].cur.Key, h.cs[j].cur.Key) < 0
+}
+
+// down moves the cursor i down the heap, to where it is not after its
+// children.
+func (h *cursorHeap[K, V]) down(i int) {
+	for {
+		m := i
+		if l := 2*i + 1; l < len(h.cs) && h.less(l, m) {
+			m = l
 		}
-	}
-	for i := len(cs)/2 - 1; i >= 0; i-- {
-		down(i)
-	}
-	for len(cs) > 0 {
-		c := cs[0]
-		if !yield(c.cur) {
+		if r := 2*i + 2; r < len(h.cs) && h.less(r, m) {
+			m = r
+		}
+		if m == i {
 			return
 		}
-		if c.next(); c.cur == nil {
-			cs[0] = cs[len(cs)-1]
-			cs = cs[:len(cs)-1]
-		}
-		down(0)
+		h.cs[i], h.cs[m] = h.cs[m], h.cs[i]
+		i = m
 	}
 }
 
