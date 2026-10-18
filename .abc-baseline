@@ -10,10 +10,6 @@
 10.2 dist connection.run cyclo
 11.6 examples/codelock CodeLock.HandleEvent case genstatem.Cast
 17.1 gensim New
-4 internal/champ Node.Get nesting
-17.2 kvs compareOf
-10.2 kvs compareOf case reflect.Array
-17.7 kvs hamtIndex.put
 25.9 kvs readRecords
 10.7 kvs readRecords cyclo
 28.4 kvs readRecords lines
