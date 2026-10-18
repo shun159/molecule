@@ -16,9 +16,6 @@
 11.6 examples/codelock CodeLock.HandleEvent case genstatem.Cast
 17.1 gensim New
 4 internal/champ Node.Get nesting
-20.7 internal/champ Node.del
-21.1 internal/champ Node.set
-19.5 internal/champ Node.setInPlace
 21 kvs bnode.grow
 17.2 kvs compareOf
 10.2 kvs compareOf case reflect.Array
