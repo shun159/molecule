@@ -91,11 +91,15 @@ func (c *client) closedByServer() bool {
 
 func count(t *testing.T, n *proc.Node, l *gentcpacceptor.Listener) int {
 	t.Helper()
-	c, err := supervisor.CountChildren(context.Background(), n, l.Conns())
-	if err != nil {
-		t.Fatal(err)
+	total := 0
+	for _, conns := range l.Conns() {
+		c, err := supervisor.CountChildren(context.Background(), n, conns)
+		if err != nil {
+			t.Fatal(err)
+		}
+		total += c
 	}
-	return c
+	return total
 }
 
 // eventually polls cond, as the end of a connection reaches its process
@@ -160,6 +164,30 @@ func TestHandlerExitClosesConnection(t *testing.T) {
 		t.Error("connection left open after a crash")
 	}
 	eventually(t, "the connection processes to be gone", func() bool { return count(t, n, l) == 0 })
+}
+
+// TestMaxConnsShared has MaxConns shared out among the supervisors of the
+// connections, 2 and 1: together they take MaxConns, no more. Which one a
+// connection goes to when its own is full is TestStartHandlerFull.
+func TestMaxConnsShared(t *testing.T) {
+	n, l := start(t, gentcpacceptor.Spec{Acceptors: 2, MaxConns: 3}, lineHandler{})
+	for i := range 10 {
+		var cs []*client
+		for j := range 3 {
+			c := dial(t, l)
+			if got := c.send("hi"); got != "hi" {
+				t.Fatalf("round %d, connection %d answered %q", i, j, got)
+			}
+			cs = append(cs, c)
+		}
+		if !dial(t, l).closedByServer() {
+			t.Fatal("connection over MaxConns not closed")
+		}
+		for _, c := range cs {
+			c.conn.Close()
+		}
+		eventually(t, "the connection processes to stop", func() bool { return count(t, n, l) == 0 })
+	}
 }
 
 func TestMaxConns(t *testing.T) {
