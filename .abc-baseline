@@ -9,7 +9,6 @@
 21.5 dist connection.run
 10.2 dist connection.run cyclo
 11.6 examples/codelock CodeLock.HandleEvent case genstatem.Cast
-17.1 gensim New
 25.9 kvs readRecords
 10.7 kvs readRecords cyclo
 28.4 kvs readRecords lines
@@ -35,12 +34,12 @@
 38.9 net/gentcp writer.write lines
 14.1 net/gentcpacceptor adapter.Handle
 7.8 net/gentcpacceptor adapter.Handle cyclo
-16.4 net/internal/dgram Serve
+15.9 net/internal/dgram Serve
 7.2 net/internal/dgram Serve cyclo
 14.7 net/internal/dgram server.deliver
 4 net/internal/dgram server.read nesting
 14.8 proc Node.Watch
-11.1 proc Node.monitorAlias
+11 proc Node.monitorAlias
 17 proc Self.Link
-17.3 proc Self.Monitor
+17.2 proc Self.Monitor
 13.2 proc process.die
