@@ -6,13 +6,10 @@
 25.2 behaviours/genstatem adapter.run lines
 4 behaviours/genstatem adapter.run nesting
 17.1 dist AppendAny
-19.7 dist ReadAny
-10.1 dist ReadAny cyclo
 21.5 dist connection.run
 10.2 dist connection.run cyclo
 18.6 dist connection.send
 18.5 dist gobEncoder.Encode
-19.8 dist readSized
 11.6 examples/codelock CodeLock.HandleEvent case genstatem.Cast
 17.1 gensim New
 4 internal/champ Node.Get nesting

@@ -61,6 +61,10 @@ const (
 // AppendAny appends v to b, for ReadAny to read: nil, a bool, an integer,
 // a float, a string, a []byte, a PID, a Ref, or a value of a registered
 // binary type. Of another type, it returns ErrNotBinary.
+//
+// It is kept a table, a line a kind: split, every value paid a call more.
+//
+//abc:disable abc a table of the kinds of value, on the path of every value sent
 func AppendAny(b []byte, v any) ([]byte, error) {
 	switch x := v.(type) {
 	case nil:
@@ -148,26 +152,10 @@ func ReadAny(b []byte) (any, []byte, error) {
 			return nil, b, errShort
 		}
 		return unsigned(kind, x), b[n:], nil
-	case anyFloat32:
-		if len(b) < 4 {
-			return nil, b, errShort
-		}
-		return math.Float32frombits(binary.BigEndian.Uint32(b)), b[4:], nil
-	case anyFloat64:
-		if len(b) < 8 {
-			return nil, b, errShort
-		}
-		return math.Float64frombits(binary.BigEndian.Uint64(b)), b[8:], nil
+	case anyFloat32, anyFloat64:
+		return readFloat(kind, b)
 	case anyString, anyBytes:
-		l, n := binary.Uvarint(b)
-		if n <= 0 || uint64(len(b)-n) < l {
-			return nil, b, errShort
-		}
-		s, rest := b[n:n+int(l)], b[n+int(l):]
-		if kind == anyString {
-			return string(s), rest, nil
-		}
-		return slices.Clone(s), rest, nil
+		return readLengthed(kind, b)
 	case anyPID, anyRef, anyTyped:
 		return readSized(kind, b)
 	}
@@ -202,19 +190,43 @@ func unsigned(kind byte, x uint64) any {
 	return uint(x)
 }
 
+// readFloat reads a float of the kind, as its bits in 4 or 8 bytes.
+func readFloat(kind byte, b []byte) (any, []byte, error) {
+	if kind == anyFloat32 {
+		if len(b) < 4 {
+			return nil, b, errShort
+		}
+		return math.Float32frombits(binary.BigEndian.Uint32(b)), b[4:], nil
+	}
+	if len(b) < 8 {
+		return nil, b, errShort
+	}
+	return math.Float64frombits(binary.BigEndian.Uint64(b)), b[8:], nil
+}
+
+// readLengthed reads a string or a []byte, of the kind, after its length
+// as a uvarint.
+func readLengthed(kind byte, b []byte) (any, []byte, error) {
+	l, n := binary.Uvarint(b)
+	if n <= 0 || uint64(len(b)-n) < l {
+		return nil, b, errShort
+	}
+	s, rest := b[n:n+int(l)], b[n+int(l):]
+	if kind == anyString {
+		return string(s), rest, nil
+	}
+	return slices.Clone(s), rest, nil
+}
+
 // readSized reads a PID, a Ref or a value of a binary type, after its
 // length.
 func readSized(kind byte, b []byte) (any, []byte, error) {
 	var t typeID
 	if kind == anyTyped {
-		if len(b) < 8 {
-			return nil, b, errShort
+		var err error
+		if t, b, err = readTypeID(b); err != nil {
+			return nil, b, err
 		}
-		var ok bool
-		if t, ok = typeByID(binary.BigEndian.Uint64(b)); !ok || t.bin == nil {
-			return nil, b, fmt.Errorf("dist: a binary value of a type not registered, %#x", binary.BigEndian.Uint64(b))
-		}
-		b = b[8:]
 	}
 	if len(b) < 4 || uint64(len(b)-4) < uint64(binary.BigEndian.Uint32(b)) {
 		return nil, b, errShort
@@ -233,6 +245,19 @@ func readSized(kind byte, b []byte) (any, []byte, error) {
 	}
 	x, err := t.bin.decode(v)
 	return x, rest, err
+}
+
+// readTypeID reads the ID of a registered binary type.
+func readTypeID(b []byte) (typeID, []byte, error) {
+	if len(b) < 8 {
+		return typeID{}, b, errShort
+	}
+	id := binary.BigEndian.Uint64(b)
+	t, ok := typeByID(id)
+	if !ok || t.bin == nil {
+		return typeID{}, b, fmt.Errorf("dist: a binary value of a type not registered, %#x", id)
+	}
+	return t, b[8:], nil
 }
 
 // binaryCodec encodes the values of a binary type.
