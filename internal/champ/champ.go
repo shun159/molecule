@@ -63,6 +63,8 @@ func (n *Node[K, V, M]) dataSlot(bit uint32) int { return bits.OnesCount32(n.dat
 func (n *Node[K, V, M]) nodeSlot(bit uint32) int { return bits.OnesCount32(n.nodemap & (bit - 1)) }
 
 // Get returns the entry of k, of hash h, if any.
+//
+//abc:hot kvs/BenchmarkGet,pmap/BenchmarkGet
 func (n *Node[K, V, M]) Get(h uint64, k K) (*Entry[K, V, M], bool) {
 	for shift := uint(0); shift < 64; shift += hbits {
 		bit := uint32(1) << ((h >> shift) & hmask)
@@ -92,6 +94,7 @@ func (n *Node[K, V, M]) getCollided(k K) (*Entry[K, V, M], bool) {
 	return nil, false
 }
 
+//abc:hot kvs/BenchmarkPut,pmap/BenchmarkSet
 func (n *Node[K, V, M]) set(shift uint, e Entry[K, V, M]) (*Node[K, V, M], Entry[K, V, M], bool) {
 	var none Entry[K, V, M]
 	if shift >= 64 {
@@ -127,6 +130,7 @@ func (n *Node[K, V, M]) setCollided(e Entry[K, V, M]) (*Node[K, V, M], Entry[K, 
 	return &Node[K, V, M]{data: inserted(n.data, len(n.data), e)}, none, false
 }
 
+//abc:hot kvs/BenchmarkOpen
 func (n *Node[K, V, M]) setInPlace(shift uint, e Entry[K, V, M]) (Entry[K, V, M], bool) {
 	var none Entry[K, V, M]
 	for ; shift < 64; shift += hbits {

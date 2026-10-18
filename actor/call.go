@@ -90,6 +90,8 @@ func call(ctx context.Context, caller Caller, to Dest, wrap func(From) any, tell
 // or the death of the server: the server is monitored, by the alias,
 // before the request is sent. abandon tells the server the caller gave
 // up.
+//
+//abc:hot behaviours/genserver/BenchmarkCall
 func sendCall(caller Caller, to Dest, wrap func(From) any) (a proc.Alias, abandon func(), err error) {
 	n, self := caller.Node(), selfOf(caller)
 	if r, ok := to.(Remote); ok && r.Node != n.Name() {

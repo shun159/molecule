@@ -143,6 +143,7 @@ func (s *segment) close() error {
 // lock of the log, and split in steps it measured some 8% slower.
 //
 //abc:disable abc,lines the hot path of every write, under mu
+//abc:hot BenchmarkPut,BenchmarkPutDurable
 func (w *wal) append(r rec) (uint64, *batch, error) {
 	n := r.size()
 	w.mu.Lock()
@@ -269,6 +270,7 @@ func (w *wal) run() {
 // split in steps it measured some 25% slower for a writer alone.
 //
 //abc:disable abc,lines the hot path of every durable write
+//abc:hot BenchmarkPutDurable
 func (w *wal) syncNow() {
 	w.mu.Lock()
 	if w.err != nil || !w.batchHas {

@@ -176,6 +176,8 @@ func (x *treeIndex[K, V]) inOrder(root *bnode[K, V]) entries[K, V] {
 
 // ascend yields the entries from lo, if not nil, up to hi, if not nil, in
 // order, merging those of the shards, each frozen as it was at a moment.
+//
+//abc:hot BenchmarkOrdered
 func (x *treeIndex[K, V]) ascend(lo, hi *K, yield func(*leaf[K, V]) bool) {
 	cs := x.cursors(lo, hi)
 	if len(cs) == 1 {

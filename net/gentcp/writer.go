@@ -45,6 +45,7 @@ type sendFailed struct{ err error }
 // the stream is cut at an unknown place, and of no use anymore.
 //
 //abc:disable abc,cyclo,lines the path of every write
+//abc:hot net/gentcpacceptor/BenchmarkEcho,net/gentcpacceptor/BenchmarkStream
 func (w *writer) write(packets ...[]byte) (failed bool, err error) {
 	for _, data := range packets {
 		if _, err := w.packet.header(len(data)); err != nil {

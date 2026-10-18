@@ -172,6 +172,7 @@ var errTorn = errors.New("kvs: torn record")
 // through it, and split in steps it measured some 3-6% slower.
 //
 //abc:disable abc,lines,cyclo the loop over every record of the log, on opening
+//abc:hot BenchmarkOpen
 func readRecords(r io.Reader, f func(seq uint64, op byte, key, val []byte, size int64) error) (int64, error) {
 	br := bufio.NewReaderSize(r, 1<<20)
 	var off int64

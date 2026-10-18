@@ -91,6 +91,8 @@ func (a adapter[St, D]) Init(self proc.PID, _ any) (Machine[St, D], []actor.Effe
 }
 
 // Handle turns msg into the event of the machine, and runs it.
+//
+//abc:hot BenchmarkHandle
 func (a adapter[St, D]) Handle(m Machine[St, D], msg gen.Msg) (Machine[St, D], []actor.Effect) {
 	var ev Event
 	switch x := msg.(type) {
@@ -185,6 +187,7 @@ func (a adapter[St, D]) Terminate(m Machine[St, D], reason error) []actor.Effect
 // It is kept whole: every event of every machine goes through it.
 //
 //abc:disable abc,nesting,cyclo,lines the loop over the events of every message
+//abc:hot BenchmarkHandle
 func (a adapter[St, D]) run(m *Machine[St, D], queue []Event) []actor.Effect {
 	var out []actor.Effect
 	for len(queue) > 0 {
