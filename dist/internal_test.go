@@ -447,7 +447,12 @@ func TestStaleDial(t *testing.T) {
 	gone := db.peers["a@test"]
 	db.mu.Unlock()
 	db.Disconnect("a@test")
-	until(t, "a forgets b", func() bool { return len(da.Nodes()) == 0 })
+	// a has a peer of b since it accepted b, up or not yet.
+	until(t, "a forgets b", func() bool {
+		da.mu.Lock()
+		defer da.mu.Unlock()
+		return da.peers["b@test"] == nil
+	})
 
 	db.dial(gone)
 	until(t, "b connected again", func() bool { return len(db.Nodes()) == 1 })
