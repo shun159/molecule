@@ -1,12 +1,16 @@
 package gentcpacceptor
 
 import (
+	"context"
 	"errors"
+	"io"
+	"net"
 	"reflect"
 	"testing"
 
 	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/gen"
+	"github.com/shun159/molecule/behaviours/supervisor"
 	"github.com/shun159/molecule/net/gentcp"
 	"github.com/shun159/molecule/proc"
 )
@@ -160,4 +164,47 @@ func TestAdapterTerminate(t *testing.T) {
 func initial[S any](a adapter[S]) conn[S] {
 	c, _, _ := a.Init(proc.PID{}, nil)
 	return c
+}
+
+// TestStartHandlerFull has an acceptor whose supervisor of connections is
+// full start the next connections under the others, in turn, and close
+// the one there is no room for.
+func TestStartHandlerFull(t *testing.T) {
+	ctx := context.Background()
+	n := proc.NewNode("")
+	sh := &shared{}
+	for range 3 {
+		sup, err := supervisor.StartDynamic(ctx, n, supervisor.DynamicSpec{MaxChildren: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sh.conns = append(sh.conns, sup)
+	}
+	idle := func(ctx context.Context, parent *proc.Self, _ net.Conn) (proc.PID, error) {
+		return parent.StartLink(ctx, func(s *proc.Self) error {
+			s.InitAck(nil)
+			_, err := s.Receive(context.Background())
+			return err
+		})
+	}
+	var peers []net.Conn
+	done := make(chan struct{})
+	n.Spawn(func(s *proc.Self) error {
+		defer close(done)
+		for range 4 {
+			conn, peer := net.Pipe()
+			peers = append(peers, peer)
+			startHandler(s, sh, 1, conn, idle)
+		}
+		return nil
+	})
+	<-done
+	for i, sup := range sh.conns {
+		if c, err := supervisor.CountChildren(ctx, n, sup); c != 1 || err != nil {
+			t.Errorf("supervisor %d has %d connections, %v", i, c, err)
+		}
+	}
+	if _, err := peers[3].Write([]byte("x")); !errors.Is(err, io.ErrClosedPipe) {
+		t.Errorf("connection over the caps: write %v, want it closed", err)
+	}
 }

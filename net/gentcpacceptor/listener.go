@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"slices"
 	"strconv"
 	"sync"
 
@@ -24,7 +25,9 @@ type Spec struct {
 	// Acceptors is the number of processes accepting connections.
 	Acceptors int
 	// MaxConns, if positive, caps the connections: those beyond it are
-	// closed as soon as accepted.
+	// closed as soon as accepted. The cap is shared out among the
+	// supervisors of the connections; a connection goes to another when
+	// that of its acceptor is full.
 	MaxConns int
 	// ActiveN is how many packets may be ahead of the handler, like
 	// {active, N} in Erlang: more keeps data flowing while the handler
@@ -48,10 +51,13 @@ const maxActive = 1024
 //
 //	listener (RestForOne)
 //	├── socket     the net.Listener, closed when this process dies
-//	├── conns      dynamic supervisor of the handlers
+//	├── conns      one-for-one supervisor of the supervisors of the handlers
+//	│   └── conns0…  a dynamic supervisor for each acceptor
 //	└── acceptors  one-for-one supervisor of the acceptors
 //
-// If the socket fails, everything after it is restarted.
+// If the socket fails, everything after it is restarted. Each acceptor
+// starts its handlers under a supervisor of its own, as Ranch's
+// num_conns_sups does, so that acceptors do not wait on one another.
 //
 // A Listener runs on its own with Start, or under a supervisor of the
 // application through ChildSpec.
@@ -66,19 +72,27 @@ type Listener struct {
 type startConn func(ctx context.Context, parent *proc.Self, conn net.Conn) (proc.PID, error)
 
 // shared is what the children started by one listener supervisor hand to
-// the later ones: the socket to the acceptors, the conns supervisor to the
-// acceptors.
+// the later ones: the socket and the supervisors of the connections to
+// the acceptors.
 type shared struct {
 	mu    sync.Mutex
 	sup   proc.PID
 	ln    net.Listener
-	conns proc.PID
+	conns []proc.PID // as many as shards, set as each is started
 }
 
-func (sh *shared) get() (net.Listener, proc.PID) {
+func (sh *shared) listener() net.Listener {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
-	return sh.ln, sh.conns
+	return sh.ln
+}
+
+// connsAt returns the supervisor of the connections of shard i, the one
+// started last.
+func (sh *shared) connsAt(i int) proc.PID {
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	return sh.conns[i]
 }
 
 // NewListener returns a listener running b for spec, not yet started.
@@ -97,7 +111,40 @@ func NewListener[S any](spec Spec, b Behaviour[S]) *Listener {
 }
 
 func newListener(spec Spec, start startConn) *Listener {
-	return &Listener{spec: spec, startConn: start, shared: &shared{}}
+	l := &Listener{spec: spec, startConn: start, shared: &shared{}}
+	l.shared.conns = make([]proc.PID, l.shards())
+	return l
+}
+
+// numAcceptors is Spec.Acceptors, DefaultAcceptors if not set.
+func (l *Listener) numAcceptors() int {
+	if l.spec.Acceptors <= 0 {
+		return DefaultAcceptors
+	}
+	return l.spec.Acceptors
+}
+
+// shards is the number of supervisors of the connections: one for each
+// acceptor, but no more than MaxConns, for each to take one at least.
+func (l *Listener) shards() int {
+	n := l.numAcceptors()
+	if m := l.spec.MaxConns; m > 0 && m < n {
+		return m
+	}
+	return n
+}
+
+// shardMax is the MaxChildren of the supervisor of shard i: MaxConns
+// shared out, the remainder to the first ones.
+func shardMax(maxConns, shards, i int) int {
+	if maxConns <= 0 {
+		return 0
+	}
+	m := maxConns / shards
+	if i < maxConns%shards {
+		m++
+	}
+	return m
 }
 
 func activeN(spec Spec) int {
@@ -155,15 +202,15 @@ func (l *Listener) PID() proc.PID {
 
 // Addr returns the address the listener listens on.
 func (l *Listener) Addr() net.Addr {
-	ln, _ := l.shared.get()
-	return ln.Addr()
+	return l.shared.listener().Addr()
 }
 
-// Conns returns the dynamic supervisor of the connection handlers, to
-// count or list them.
-func (l *Listener) Conns() proc.PID {
-	_, conns := l.shared.get()
-	return conns
+// Conns returns the dynamic supervisors of the connection handlers, one
+// for each acceptor, to count or list them.
+func (l *Listener) Conns() []proc.PID {
+	l.shared.mu.Lock()
+	defer l.shared.mu.Unlock()
+	return slices.Clone(l.shared.conns)
 }
 
 // Stop stops a listener started with Start: it stops accepting, and
@@ -181,7 +228,7 @@ func (l *Listener) supervisorSpec() supervisor.Spec {
 		Strategy: supervisor.RestForOne,
 		Children: []supervisor.ChildSpec{
 			{ID: "socket", Start: l.socketStart()},
-			{ID: "conns", Type: supervisor.Supervisor, Start: l.connsStart()},
+			{ID: "conns", Type: supervisor.Supervisor, Start: supervisor.Child(supervisor.Spec{Children: l.connsSups()})},
 			{ID: "acceptors", Type: supervisor.Supervisor, Start: supervisor.Child(supervisor.Spec{Children: l.acceptors()})},
 		},
 	}
@@ -195,15 +242,26 @@ func (l *Listener) socketStart() supervisor.StartFunc {
 	}
 }
 
-// connsStart starts the supervisor of the connections, and shares its PID
-// with the acceptors.
-func (l *Listener) connsStart() supervisor.StartFunc {
-	maxConns, sh := l.spec.MaxConns, l.shared
+// connsSups are the children of the supervisor of the connections, one
+// for each shard.
+func (l *Listener) connsSups() []supervisor.ChildSpec {
+	n := l.shards()
+	sups := make([]supervisor.ChildSpec, 0, n)
+	for i := range n {
+		sups = append(sups, supervisor.ChildSpec{ID: "conns" + strconv.Itoa(i), Type: supervisor.Supervisor, Start: l.connsStart(i)})
+	}
+	return sups
+}
+
+// connsStart starts the supervisor of the connections of shard i, and
+// shares its PID with the acceptors.
+func (l *Listener) connsStart(i int) supervisor.StartFunc {
+	maxChildren, sh := shardMax(l.spec.MaxConns, l.shards(), i), l.shared
 	return func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
-		pid, err := supervisor.StartDynamicLink(ctx, parent, supervisor.DynamicSpec{MaxChildren: maxConns})
+		pid, err := supervisor.StartDynamicLink(ctx, parent, supervisor.DynamicSpec{MaxChildren: maxChildren})
 		if err == nil {
 			sh.mu.Lock()
-			sh.conns = pid
+			sh.conns[i] = pid
 			sh.mu.Unlock()
 		}
 		return pid, err
@@ -213,25 +271,23 @@ func (l *Listener) connsStart() supervisor.StartFunc {
 // acceptors are the children of the supervisor of the acceptors, as many
 // as Acceptors, DefaultAcceptors if not set.
 func (l *Listener) acceptors() []supervisor.ChildSpec {
-	n := l.spec.Acceptors
-	if n <= 0 {
-		n = DefaultAcceptors
-	}
+	n := l.numAcceptors()
 	accs := make([]supervisor.ChildSpec, 0, n)
 	for i := range n {
-		accs = append(accs, supervisor.ChildSpec{ID: "acceptor" + strconv.Itoa(i), Start: l.acceptorStart()})
+		accs = append(accs, supervisor.ChildSpec{ID: "acceptor" + strconv.Itoa(i), Start: l.acceptorStart(i % l.shards())})
 	}
 	return accs
 }
 
-// acceptorStart starts an acceptor.
-func (l *Listener) acceptorStart() supervisor.StartFunc {
+// acceptorStart starts an acceptor, starting its handlers under the
+// supervisor of shard first.
+func (l *Listener) acceptorStart(first int) supervisor.StartFunc {
 	sh := l.shared
 	return func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
 		return parent.StartLink(ctx, func(s *proc.Self) error {
 			s.SetLabel("gentcpacceptor acceptor")
 			s.InitAck(nil)
-			return accept(s, sh, l.startConn)
+			return accept(s, sh, first, l.startConn)
 		})
 	}
 }
@@ -265,10 +321,10 @@ func listen(s *proc.Self, addr string, sh *shared) error {
 	}
 }
 
-// accept accepts connections and starts a handler for each under the conns
-// supervisor.
-func accept(s *proc.Self, sh *shared, startConn startConn) error {
-	ln, conns := sh.get()
+// accept accepts connections and starts a handler for each under a
+// supervisor of the connections, that of shard first if it can.
+func accept(s *proc.Self, sh *shared, first int, startConn startConn) error {
+	ln := sh.listener()
 	for {
 		conn, err := ln.Accept()
 		if reason := s.ExitReason(); reason != nil {
@@ -287,15 +343,16 @@ func accept(s *proc.Self, sh *shared, startConn startConn) error {
 			return err
 		}
 		if err == nil {
-			startHandler(s, conns, conn, startConn)
+			startHandler(s, sh, first, conn, startConn)
 		}
 	}
 }
 
-// startHandler starts the handler of conn under conns, closing conn if it
-// cannot: over MaxConns, or the handler failed to start.
-func startHandler(s *proc.Self, conns proc.PID, conn net.Conn, startConn startConn) {
-	_, err := supervisor.StartChild(context.Background(), s, conns, supervisor.ChildSpec{
+// startHandler starts the handler of conn under the supervisor of shard
+// first, or of the next ones in turn while they are full. It closes conn
+// if it cannot: all full, over MaxConns, or the handler failed to start.
+func startHandler(s *proc.Self, sh *shared, first int, conn net.Conn, startConn startConn) {
+	spec := supervisor.ChildSpec{
 		Restart: supervisor.Temporary,
 		Start: supervisor.StartFunc(func(ctx context.Context, parent *proc.Self) (proc.PID, error) {
 			pid, err := startConn(ctx, parent, conn)
@@ -304,8 +361,17 @@ func startHandler(s *proc.Self, conns proc.PID, conn net.Conn, startConn startCo
 			}
 			return pid, err
 		}),
-	})
-	if err != nil {
-		conn.Close()
 	}
+	shards := len(sh.conns)
+	for k := range shards {
+		conns := sh.connsAt((first + k) % shards)
+		_, err := supervisor.StartChild(context.Background(), s, conns, spec)
+		if !errors.Is(err, supervisor.ErrMaxChildren) {
+			if err != nil {
+				conn.Close()
+			}
+			return
+		}
+	}
+	conn.Close()
 }

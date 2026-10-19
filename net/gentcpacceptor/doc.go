@@ -16,18 +16,22 @@
 //
 //	listener (rest_for_one)
 //	├── socket     the listening socket, closed when this process dies
-//	├── conns      dynamic supervisor of the connection processes
+//	├── conns      supervisor of the supervisors of the connections
+//	│   └── conns0…  dynamic supervisor of connection processes, one an acceptor
 //	└── acceptors  supervisor of the acceptors
 //
 // If the socket fails, the connections and acceptors are restarted with
-// it. A Listener runs on its own with [Start], or under a supervisor of
-// the program with [Listener.ChildSpec].
+// it. Each acceptor starts connections under a supervisor of its own, as
+// with Ranch's num_conns_sups, so that the acceptors do not wait on one
+// supervisor; MaxConns is shared out among them. A Listener runs on its
+// own with [Start], or under a supervisor of the program with
+// [Listener.ChildSpec].
 //
 // The fields of [Spec]:
 //
 //	Addr       the address, as for net.Listen
 //	Acceptors  processes accepting connections; DefaultAcceptors if zero
-//	MaxConns   connections allowed at a time; no limit if zero
+//	MaxConns   connections allowed at a time, all acceptors together; no limit if zero
 //	ActiveN    packets allowed ahead of the handler; DefaultActiveN if zero
 //	Options    the gentcp options of the sockets: framing, PacketSize,
 //	           HalfClosed, SendTimeout
