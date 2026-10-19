@@ -61,6 +61,7 @@ type pendingRecv struct {
 // it ends.
 //
 //abc:disable abc,cyclo the loop over every message of a socket
+//abc:hot net/genudp/BenchmarkEcho
 func Serve[A, S any](self *proc.Self, k *Kind[A, S], conn Conn[A], sock S, owner proc.PID, active Active, max int, label string) error {
 	self.SetLabel(k.Name + " " + label)
 	s := &server[A, S]{
@@ -211,6 +212,7 @@ func (s *server[A, S]) setActive(a Active) {
 // someone still wants a datagram. It reports when the socket is to close.
 //
 //abc:disable abc the path of every datagram to the owner
+//abc:hot net/genudp/BenchmarkEcho
 func (s *server[A, S]) deliver() (done bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -274,6 +276,7 @@ func (s *server[A, S]) poke() {
 // until poked, and for good when reading fails, telling the process.
 //
 //abc:disable nesting the loop over every datagram read
+//abc:hot net/genudp/BenchmarkEcho
 func (s *server[A, S]) read() {
 	n, pid, done := s.self.Node(), s.self.PID(), s.self.Done()
 	buf := make([]byte, s.max+1) // one more: a datagram filling it is too large
