@@ -171,7 +171,8 @@ func (d *Dist) Nodes() []string {
 
 // Disconnect drops the connection to node, like
 // erlang:disconnect_node: the links and monitors through it fail with
-// proc.NoConnection. It returns once they have.
+// proc.NoConnection. It returns once they have. A dial begun before may
+// still connect the node again, as a send does.
 func (d *Dist) Disconnect(node string) {
 	d.mu.Lock()
 	p := d.peers[node]
@@ -313,7 +314,7 @@ func (d *Dist) settle(p *peer, conn net.Conn, err error) {
 	d.mu.Lock()
 	p.incoming, p.awaiting = false, false
 	if err == nil {
-		d.handOver(p, conn)
+		p = d.handOver(p, conn)
 	} else {
 		conn.Close()
 	}
@@ -326,11 +327,12 @@ func (d *Dist) dial(p *peer) {
 	conn, _, err := d.dialNode(p.node)
 	d.mu.Lock()
 	p.dialing = false
+	woken := p
 	switch {
 	case err == nil && p.incoming:
 		conn.Close() // the connection of the other node wins
 	case err == nil:
-		d.handOver(p, conn)
+		woken = d.handOver(p, conn)
 	case errors.Is(err, errSimultaneous):
 		// The node dials too, and wins: wait for its connection, for a
 		// while.
@@ -345,17 +347,37 @@ func (d *Dist) dial(p *peer) {
 		d.n.Logger().Debug("dist: cannot connect", "node", p.node, "error", err)
 	}
 	d.mu.Unlock()
-	d.n.Send(p.pid, wake{})
+	d.n.Send(woken.pid, wake{})
 }
 
-// handOver leaves conn for the process of p to take, unless p is gone or
-// has a connection already. d.mu is held.
-func (d *Dist) handOver(p *peer, conn net.Conn) {
+// handOver leaves conn for the process of the connection to the node of p
+// to take, unless the node has a connection already, and returns the peer
+// of that process. d.mu is held.
+func (d *Dist) handOver(p *peer, conn net.Conn) *peer {
+	p = d.taker(p)
 	if d.peers[p.node] != p || p.up || p.ready != nil {
 		conn.Close()
-		return
+		return p
 	}
 	p.ready = conn
+	return p
+}
+
+// taker returns the peer to take a connection made for p: the peer of its
+// node, p unless p is gone meanwhile, or one started for it. The other
+// node took the connection for its own: dropped, what it sends on it would
+// be lost. Only stopped, the distribution starts none, and returns p.
+// d.mu is held.
+func (d *Dist) taker(p *peer) *peer {
+	if q := d.peers[p.node]; q != nil {
+		return q
+	}
+	if d.stopped {
+		return p
+	}
+	q := d.startPeer(p.node, false)
+	q.incoming = false // its connection is the one given
+	return q
 }
 
 var errUnknownNode = errors.New("dist: unknown node")

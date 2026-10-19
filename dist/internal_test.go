@@ -410,3 +410,64 @@ func isSyscallConn(c net.Conn) bool {
 	_, ok := c.(syscall.Conn)
 	return ok
 }
+
+// TestStaleDial has a dial end after the connection it was for was
+// dropped, as the dial of two nodes connecting at once may (#89). The node
+// dialed took it for its connection: it is kept, and what comes on it
+// arrives.
+func TestStaleDial(t *testing.T) {
+	addrs := map[string]string{}
+	resolve := func(node string) (string, bool) { addr, ok := addrs[node]; return addr, ok }
+	a, b := proc.NewNode("a@test"), proc.NewNode("b@test")
+	var ds []*Dist
+	for _, n := range []*proc.Node{a, b} {
+		d, err := Start(n, Config{Listen: "127.0.0.1:0", Resolve: resolve})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer d.Stop()
+		addrs[n.Name()] = d.Addr().String()
+		ds = append(ds, d)
+	}
+	da, db := ds[0], ds[1]
+	got := make(chan any, 8)
+	pb := b.Spawn(func(s *proc.Self) error {
+		for {
+			msg, err := s.Receive(context.Background())
+			if err != nil {
+				return err
+			}
+			got <- msg
+		}
+	})
+	if err := db.Connect(context.Background(), "a@test"); err != nil {
+		t.Fatal(err)
+	}
+	db.mu.Lock()
+	gone := db.peers["a@test"]
+	db.mu.Unlock()
+	db.Disconnect("a@test")
+	until(t, "a forgets b", func() bool { return len(da.Nodes()) == 0 })
+
+	db.dial(gone)
+	until(t, "b connected again", func() bool { return len(db.Nodes()) == 1 })
+	a.Send(pb, "again")
+	select {
+	case m := <-got:
+		if m != "again" {
+			t.Errorf("got %#v", m)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("nothing received")
+	}
+}
+
+// until waits for cond to hold, for 5 seconds at most.
+func until(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); !cond(); time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("not so: %s", what)
+		}
+	}
+}
