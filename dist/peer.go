@@ -130,7 +130,10 @@ func (d *Dist) connected(self *proc.Self, p *peer, conn net.Conn, waiters []proc
 		SendTimeout: d.cfg.TickTime,
 	})
 	c := &connection{d: d, self: self, p: p, sock: sock, enc: d.cfg.Codec.NewEncoder(), dec: d.cfg.Codec.NewDecoder(),
-		reads: reads, heard: time.Now()}
+		reads: reads, heard: time.Now(), gathers: maxGathered}
+	if q := d.cfg.MaxQueue; q > 0 {
+		c.gathers = min(maxGathered, q)
+	}
 	go ticker(d.n, self.PID(), self.Done(), min(d.cfg.TickTime, d.cfg.Silent)/ticksPerTime)
 	d.remote.NodeUp(p.node)
 	for _, ref := range waiters {
@@ -227,6 +230,7 @@ type connection struct {
 	buf  []byte
 
 	frames  []frame  // gathered, to send at once
+	gathers int      // the most frames gathered, see maxGathered
 	ends    []int    // where each frame ends in buf
 	packets [][]byte // of the frames, in buf
 
@@ -294,7 +298,8 @@ func (c *connection) hear() {
 	}
 }
 
-// maxGathered is the most frames sent at once.
+// maxGathered is the most frames sent at once. With a MaxQueue fewer, it
+// is MaxQueue: the frames gathered, out of the mailbox, wait all the same.
 const maxGathered = 256
 
 // gathered is a context done already: Receive with it takes a message
@@ -313,7 +318,7 @@ var gathered = func() context.Context {
 func (c *connection) gather(f frame) ([]frame, any) {
 	c.frames = append(c.frames[:0], f)
 	yielded := false
-	for len(c.frames) < maxGathered {
+	for len(c.frames) < c.gathers {
 		msg, err := c.self.Receive(gathered)
 		if err != nil {
 			if yielded {
