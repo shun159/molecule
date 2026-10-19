@@ -18,7 +18,7 @@ import (
 
 // cluster starts distributed nodes on loopback, which find each other by
 // name.
-func cluster(t *testing.T, cookie string, names ...string) ([]*proc.Node, []*dist.Dist) {
+func cluster(t testing.TB, cookie string, names ...string) ([]*proc.Node, []*dist.Dist) {
 	t.Helper()
 	var mu sync.Mutex
 	addrs := map[string]string{}

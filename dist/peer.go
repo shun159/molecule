@@ -143,6 +143,7 @@ func (d *Dist) connected(self *proc.Self, p *peer, conn net.Conn, waiters []proc
 // received to the node, until the connection ends.
 //
 //abc:disable abc,cyclo the loop over every message of a connection
+//abc:hot BenchmarkConnection
 func (c *connection) run() error {
 	d, p, self := c.d, c.p, c.self
 	var next any // a message taken while gathering frames
@@ -334,6 +335,8 @@ func (c *connection) gather(f frame) ([]frame, any) {
 
 // send sends frames, in one write, and reports whether the connection is
 // still up. A message that fails to encode is dropped.
+//
+//abc:hot BenchmarkConnection
 func (c *connection) send(frames ...frame) bool {
 	c.appendFrames(frames)
 	clear(c.frames) // keep no message
