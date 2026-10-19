@@ -314,6 +314,8 @@ func BenchmarkIdleConnMemory(b *testing.B) {
 }
 
 // BenchmarkConnect measures connection setup: dial, one round trip, close.
+// The client closes with a reset, for no connection to stay in TIME_WAIT:
+// they would run out of ports, and stall the dials.
 func BenchmarkConnect(b *testing.B) {
 	for _, srv := range servers {
 		b.Run(srv.name, func(b *testing.B) {
@@ -329,6 +331,7 @@ func BenchmarkConnect(b *testing.B) {
 					if _, err = conn.Write(buf); err == nil {
 						_, err = io.ReadFull(conn, buf)
 					}
+					conn.(*net.TCPConn).SetLinger(0)
 					conn.Close()
 					if err != nil {
 						b.Error(err)
