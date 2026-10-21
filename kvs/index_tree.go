@@ -22,22 +22,21 @@ type treeIndex[K comparable, V any] struct {
 
 type treeShard[K comparable, V any] struct {
 	mu   sync.RWMutex
-	root atomic.Pointer[troot[K, V]]
+	root atomic.Pointer[bnode[K, V]]
+	size atomic.Int64
 	gen  uint64 // of the nodes a write may change in place, under mu
 	_    [cacheLine]byte
 }
 
-type troot[K comparable, V any] struct {
-	n    *bnode[K, V]
-	size int
+// store makes t the tree of s, under its lock: its size first, so that a
+// reader seeing an entry in the root sees it counted.
+func (s *treeShard[K, V]) store(t btree[K, V]) {
+	s.size.Store(int64(t.size))
+	s.root.Store(t.root)
 }
 
 func newTreeIndex[K comparable, V any](h hasher, cmp func(a, b K) int, lockless bool, live *atomic.Int64) *treeIndex[K, V] {
-	x := &treeIndex[K, V]{hasher: h, cmp: cmp, lockless: lockless, shards: make([]treeShard[K, V], 1<<h.bits), live: live}
-	for i := range x.shards {
-		x.shards[i].root.Store(&troot[K, V]{})
-	}
-	return x
+	return &treeIndex[K, V]{hasher: h, cmp: cmp, lockless: lockless, shards: make([]treeShard[K, V], 1<<h.bits), live: live}
 }
 
 func (x *treeIndex[K, V]) shard(k K) *treeShard[K, V] {
@@ -47,14 +46,18 @@ func (x *treeIndex[K, V]) shard(k K) *treeShard[K, V] {
 	return &x.shards[x.hasher.shard(maphash.Comparable(x.seed, k))]
 }
 
+// loaded returns the tree of s as stored.
+func (x *treeIndex[K, V]) loaded(s *treeShard[K, V]) btree[K, V] {
+	return btree[K, V]{cmp: x.cmp, root: s.root.Load(), size: int(s.size.Load())}
+}
+
 // tree returns the tree of s to write in, under its lock, and its
 // generation.
 func (x *treeIndex[K, V]) tree(s *treeShard[K, V]) (btree[K, V], uint64) {
 	if x.lockless {
 		s.gen++ // the root read without lock is not to change
 	}
-	r := s.root.Load()
-	return btree[K, V]{cmp: x.cmp, root: r.n, size: r.size}, s.gen
+	return x.loaded(s), s.gen
 }
 
 func (x *treeIndex[K, V]) get(k K) (V, uint64, bool) {
@@ -62,8 +65,7 @@ func (x *treeIndex[K, V]) get(k K) (V, uint64, bool) {
 	if !x.lockless {
 		s.mu.RLock()
 	}
-	r := s.root.Load()
-	l, ok := (&btree[K, V]{cmp: x.cmp, root: r.n}).get(k)
+	l, ok := (&btree[K, V]{cmp: x.cmp, root: s.root.Load()}).get(k)
 	var e leaf[K, V]
 	if ok {
 		e = *l
@@ -95,7 +97,7 @@ func (x *treeIndex[K, V]) put(log *wal, k K, v V, r rec, match matcher[V]) (*bat
 		return nil, err
 	}
 	old, _ := t.set(gen, leaf[K, V]{Key: k, Val: v, Meta: meta{size: r.size(), rev: seq}})
-	s.root.Store(&troot[K, V]{t.root, t.size})
+	s.store(t)
 	s.mu.Unlock()
 	x.live.Add(r.size() - old.Meta.size)
 	return b, nil
@@ -124,7 +126,7 @@ func (x *treeIndex[K, V]) del(log *wal, k K, r rec, match matcher[V]) (*batch, e
 		return nil, err
 	}
 	t.del(gen, k)
-	s.root.Store(&troot[K, V]{t.root, t.size})
+	s.store(t)
 	s.mu.Unlock()
 	x.live.Add(-cur.Meta.size)
 	return b, nil
@@ -133,7 +135,7 @@ func (x *treeIndex[K, V]) del(log *wal, k K, r rec, match matcher[V]) (*batch, e
 func (x *treeIndex[K, V]) len() int {
 	n := 0
 	for i := range x.shards {
-		n += x.shards[i].root.Load().size
+		n += int(x.shards[i].size.Load())
 	}
 	return n
 }
@@ -144,13 +146,13 @@ func (x *treeIndex[K, V]) len() int {
 func (x *treeIndex[K, V]) frozen(i int, cut bool) *bnode[K, V] {
 	s := &x.shards[i]
 	if x.lockless && !cut {
-		return s.root.Load().n
+		return s.root.Load()
 	}
 	s.mu.Lock()
 	if !x.lockless {
 		s.gen++
 	}
-	n := s.root.Load().n
+	n := s.root.Load()
 	s.mu.Unlock()
 	return n
 }
@@ -258,19 +260,17 @@ func (h *cursorHeap[K, V]) down(i int) {
 
 func (x *treeIndex[K, V]) load(k K, v V, size int64, rev uint64) {
 	s := x.shard(k)
-	r := s.root.Load() // no reader yet: changed in place
-	t := btree[K, V]{cmp: x.cmp, root: r.n, size: r.size}
+	t := x.loaded(s) // no reader yet: changed in place
 	old, _ := t.set(s.gen, leaf[K, V]{Key: k, Val: v, Meta: meta{size: size, rev: rev}})
-	s.root.Store(&troot[K, V]{t.root, t.size})
+	s.store(t)
 	x.live.Add(size - old.Meta.size)
 }
 
 func (x *treeIndex[K, V]) unload(k K) {
 	s := x.shard(k)
-	r := s.root.Load()
-	t := btree[K, V]{cmp: x.cmp, root: r.n, size: r.size}
+	t := x.loaded(s)
 	if old, ok := t.del(s.gen, k); ok {
-		s.root.Store(&troot[K, V]{t.root, t.size})
+		s.store(t)
 		x.live.Add(-old.Meta.size)
 	}
 }
