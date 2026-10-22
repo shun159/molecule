@@ -61,16 +61,26 @@ func (t *btree[K, V]) get(k K) (*leaf[K, V], bool) {
 	return nil, false
 }
 
-// mut returns n, or a copy of it if of another generation than gen.
-func (n *bnode[K, V]) mut(gen uint64) *bnode[K, V] {
+// mut returns n, to change in generation gen with more entries put in
+// it: n itself, if of gen and with room for them; or a copy of it, with
+// room. Out of room in its own generation, n is growing in place, as
+// without ReadConcurrency or on opening: its copy has the most room, not
+// to be copied again as it grows.
+func (n *bnode[K, V]) mut(gen uint64, more int) *bnode[K, V] {
 	if n.gen == gen {
-		return n
+		if len(n.items)+more <= cap(n.items) {
+			return n
+		}
+		more = maxItems - len(n.items)
 	}
-	return &bnode[K, V]{gen: gen, items: slices.Clone(n.items), kids: slices.Clone(n.kids)}
+	c := newBnode[K, V](gen, len(n.items), len(n.kids), more)
+	copy(c.items, n.items)
+	copy(c.kids, n.kids)
+	return c
 }
 
 func (n *bnode[K, V]) kid(i int, gen uint64) *bnode[K, V] {
-	c := n.kids[i].mut(gen)
+	c := n.kids[i].mut(gen, 0)
 	n.kids[i] = c
 	return c
 }
@@ -79,11 +89,12 @@ func (n *bnode[K, V]) kid(i int, gen uint64) *bnode[K, V] {
 // and the node of those after it.
 func (n *bnode[K, V]) split(i int, gen uint64) (leaf[K, V], *bnode[K, V]) {
 	mid := n.items[i]
-	right := &bnode[K, V]{gen: gen, items: slices.Clone(n.items[i+1:])}
+	right := newBnode[K, V](gen, len(n.items)-i-1, max(len(n.kids)-i-1, 0), 0)
+	copy(right.items, n.items[i+1:])
 	clear(n.items[i:])
 	n.items = n.items[:i]
 	if len(n.kids) > 0 {
-		right.kids = slices.Clone(n.kids[i+1:])
+		copy(right.kids, n.kids[i+1:])
 		clear(n.kids[i+1:])
 		n.kids = n.kids[:i+1]
 	}
@@ -94,43 +105,56 @@ func (n *bnode[K, V]) split(i int, gen uint64) (leaf[K, V], *bnode[K, V]) {
 // key that l replaces, if any.
 func (t *btree[K, V]) set(gen uint64, l leaf[K, V]) (leaf[K, V], bool) {
 	if t.root == nil {
-		t.root = &bnode[K, V]{gen: gen, items: []leaf[K, V]{l}}
+		t.root = newBnode[K, V](gen, 1, 0, 0)
+		t.root.items[0] = l
 		t.size = 1
 		return leaf[K, V]{}, false
 	}
-	t.root = t.root.mut(gen)
 	if len(t.root.items) >= maxItems {
-		mid, right := t.root.split(maxItems/2, gen)
-		t.root = &bnode[K, V]{gen: gen, items: []leaf[K, V]{mid}, kids: []*bnode[K, V]{t.root, right}}
+		left := t.root.mut(gen, 0)
+		mid, right := left.split(maxItems/2, gen)
+		t.root = newBnode[K, V](gen, 1, 2, 0)
+		t.root.items[0], t.root.kids[0], t.root.kids[1] = mid, left, right
 	}
-	old, ok := t.root.insert(t.cmp, gen, l)
+	old, ok := t.insert(gen, l)
 	if !ok {
 		t.size++
 	}
 	return old, ok
 }
 
-// insert puts l under n, of generation gen and not full, splitting the
-// full nodes on its way down.
-func (n *bnode[K, V]) insert(cmp func(a, b K) int, gen uint64, l leaf[K, V]) (leaf[K, V], bool) {
+// insert puts l under the root, not full, in generation gen, splitting the
+// full nodes on its way down. Each node is made of gen as it is changed,
+// at the place that holds it: with room for an entry more if it takes one.
+func (t *btree[K, V]) insert(gen uint64, l leaf[K, V]) (leaf[K, V], bool) {
+	at := &t.root
 	for {
-		i, ok := n.find(cmp, l.Key)
-		if ok {
+		n := *at
+		i, ok := n.find(t.cmp, l.Key)
+		switch {
+		case ok:
+			n = n.mut(gen, 0)
+			*at = n
 			old := n.items[i]
 			n.items[i] = l
 			return old, true
-		}
-		if len(n.kids) == 0 {
+		case len(n.kids) == 0:
+			n = n.mut(gen, 1)
+			*at = n
 			n.items = slices.Insert(n.items, i, l)
 			return leaf[K, V]{}, false
-		}
-		if len(n.kids[i].items) >= maxItems {
+		case len(n.kids[i].items) >= maxItems:
+			n = n.mut(gen, 1)
+			*at = n
 			mid, right := n.kid(i, gen).split(maxItems/2, gen)
 			n.items = slices.Insert(n.items, i, mid)
 			n.kids = slices.Insert(n.kids, i+1, right)
-			continue // l goes left of mid, right, or replaces it
+			// l goes left of mid, right, or replaces it: in n again.
+		default:
+			n = n.mut(gen, 0)
+			*at = n
+			at = &n.kids[i]
 		}
-		n = n.kid(i, gen)
 	}
 }
 
@@ -142,7 +166,7 @@ func (t *btree[K, V]) del(gen uint64, k K) (leaf[K, V], bool) {
 	if _, ok := t.get(k); !ok {
 		return leaf[K, V]{}, false // copying nothing
 	}
-	t.root = t.root.mut(gen)
+	t.root = t.root.mut(gen, 0)
 	old, _ := t.root.remove(t.cmp, gen, &k)
 	t.size--
 	switch {
@@ -240,15 +264,120 @@ func (n *bnode[K, V]) takeRight(i int, gen uint64) {
 }
 
 // merge merges child i+1 of n into child i, with the entry of n between
-// them.
+// them, in a node made for all of them.
 func (n *bnode[K, V]) merge(i int, gen uint64) {
-	c, right := n.kid(i, gen), n.kids[i+1]
-	c.items = append(c.items, n.items[i])
-	c.items = append(c.items, right.items...)
-	c.kids = append(c.kids, right.kids...)
+	left, right := n.kids[i], n.kids[i+1]
+	c := newBnode[K, V](gen, len(left.items)+1+len(right.items), len(left.kids)+len(right.kids), 0)
+	c.items = append(append(append(c.items[:0], left.items...), n.items[i]), right.items...)
+	c.kids = append(append(c.kids[:0], left.kids...), right.kids...)
+	n.kids[i] = c
 	n.items = slices.Delete(n.items, i, i+1)
 	n.kids = slices.Delete(n.kids, i+1, i+2)
 }
+
+// newBnode makes a node of generation gen, of items entries and kids
+// children, to fill, with room for more of each. As a write with
+// ReadConcurrency copies a node at each level of its path, the node comes
+// in one allocation with the room: the least of a few sizes that holds
+// them. The least, 8, holds an entry more than minItems, for grow.
+func newBnode[K comparable, V any](gen uint64, items, kids, more int) *bnode[K, V] {
+	var n *bnode[K, V]
+	if kids == 0 {
+		n = newBleaf[K, V](items + more)
+	} else {
+		n = newBinner[K, V](items + more)
+	}
+	n.gen, n.items, n.kids = gen, n.items[:items], n.kids[:kids]
+	return n
+}
+
+// newBleaf makes a node of no children with room for room entries, but
+// maxItems at most.
+func newBleaf[K comparable, V any](room int) *bnode[K, V] {
+	switch {
+	case room <= 8:
+		r := new(bleafRoom8[K, V])
+		r.items = r.itemRoom[:]
+		return &r.bnode
+	case room <= 10:
+		r := new(bleafRoom10[K, V])
+		r.items = r.itemRoom[:]
+		return &r.bnode
+	case room <= 12:
+		r := new(bleafRoom12[K, V])
+		r.items = r.itemRoom[:]
+		return &r.bnode
+	default:
+		r := new(bleafRoom15[K, V])
+		r.items = r.itemRoom[:]
+		return &r.bnode
+	}
+}
+
+// newBinner makes a node with room for room entries, but maxItems at
+// most, and a child more.
+func newBinner[K comparable, V any](room int) *bnode[K, V] {
+	switch {
+	case room <= 8:
+		r := new(binnerRoom8[K, V])
+		r.items, r.kids = r.itemRoom[:], r.kidRoom[:]
+		return &r.bnode
+	case room <= 10:
+		r := new(binnerRoom10[K, V])
+		r.items, r.kids = r.itemRoom[:], r.kidRoom[:]
+		return &r.bnode
+	case room <= 12:
+		r := new(binnerRoom12[K, V])
+		r.items, r.kids = r.itemRoom[:], r.kidRoom[:]
+		return &r.bnode
+	default:
+		r := new(binnerRoom15[K, V])
+		r.items, r.kids = r.itemRoom[:], r.kidRoom[:]
+		return &r.bnode
+	}
+}
+
+// A node and the room for its entries, and its children, allocated
+// together.
+type (
+	bleafRoom8[K comparable, V any] struct {
+		bnode[K, V]
+		itemRoom [8]leaf[K, V]
+	}
+	bleafRoom10[K comparable, V any] struct {
+		bnode[K, V]
+		itemRoom [10]leaf[K, V]
+	}
+	bleafRoom12[K comparable, V any] struct {
+		bnode[K, V]
+		itemRoom [12]leaf[K, V]
+	}
+	bleafRoom15[K comparable, V any] struct {
+		bnode[K, V]
+		itemRoom [maxItems]leaf[K, V]
+	}
+
+	binnerRoom8[K comparable, V any] struct {
+		bnode[K, V]
+		itemRoom [8]leaf[K, V]
+		kidRoom  [9]*bnode[K, V]
+	}
+	binnerRoom10[K comparable, V any] struct {
+		bnode[K, V]
+		itemRoom [10]leaf[K, V]
+		kidRoom  [11]*bnode[K, V]
+	}
+	binnerRoom12[K comparable, V any] struct {
+		bnode[K, V]
+		itemRoom [12]leaf[K, V]
+		kidRoom  [13]*bnode[K, V]
+	}
+	binnerRoom15[K comparable, V any] struct {
+		bnode[K, V]
+		itemRoom [maxItems]leaf[K, V]
+		kidRoom  [maxItems + 1]*bnode[K, V]
+	}
+)
 
 // cursor goes through the entries of a tree in order, from a key on, up
 // to an end.
