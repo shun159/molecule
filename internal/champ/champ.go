@@ -106,7 +106,7 @@ func (n *Node[K, V, M]) set(shift uint, e Entry[K, V, M]) (*Node[K, V, M], Entry
 		i := n.dataSlot(bit)
 		cur := n.data[i]
 		if cur.Hash == e.Hash && cur.Key == e.Key {
-			return n.withData(replaced(n.data, i, e)), cur, true
+			return n.withReplaced(i, e), cur, true
 		}
 		return n.pushedDown(shift, bit, i, e), none, false
 	case n.nodemap&bit != 0:
@@ -123,11 +123,13 @@ func (n *Node[K, V, M]) set(shift uint, e Entry[K, V, M]) (*Node[K, V, M], Entry
 func (n *Node[K, V, M]) setCollided(e Entry[K, V, M]) (*Node[K, V, M], Entry[K, V, M], bool) {
 	for i := range n.data {
 		if n.data[i].Key == e.Key {
-			return &Node[K, V, M]{data: replaced(n.data, i, e)}, n.data[i], true
+			return n.withReplaced(i, e), n.data[i], true
 		}
 	}
+	c := newNode[K, V, M](0, 0, len(n.data)+1, 0)
+	insertedInto(c.data, n.data, len(n.data), e)
 	var none Entry[K, V, M]
-	return &Node[K, V, M]{data: inserted(n.data, len(n.data), e)}, none, false
+	return c, none, false
 }
 
 //abc:hot kvs/BenchmarkOpen
@@ -183,18 +185,22 @@ func (n *Node[K, V, M]) setCollidedInPlace(e Entry[K, V, M]) (Entry[K, V, M], bo
 // pair makes the node at shift of two entries of different keys.
 func pair[K comparable, V, M any](shift uint, a, b Entry[K, V, M]) *Node[K, V, M] {
 	if shift >= 64 {
-		return &Node[K, V, M]{data: []Entry[K, V, M]{a, b}}
+		c := newNode[K, V, M](0, 0, 2, 0)
+		c.data[0], c.data[1] = a, b
+		return c
 	}
 	ia, ib := (a.Hash>>shift)&hmask, (b.Hash>>shift)&hmask
 	if ia == ib {
-		c := newNode[K, V, M](0, 1<<ia, nil, 1)
+		c := newNode[K, V, M](0, 1<<ia, 0, 1)
 		c.nodes[0] = pair(shift+hbits, a, b)
 		return c
 	}
 	if ia > ib {
 		a, b = b, a
 	}
-	return &Node[K, V, M]{datamap: 1<<ia | 1<<ib, data: []Entry[K, V, M]{a, b}}
+	c := newNode[K, V, M](1<<ia|1<<ib, 0, 2, 0)
+	c.data[0], c.data[1] = a, b
+	return c
 }
 
 func (n *Node[K, V, M]) del(shift uint, h uint64, k K) (*Node[K, V, M], Entry[K, V, M], bool) {
@@ -231,43 +237,49 @@ func (n *Node[K, V, M]) del(shift uint, h uint64, k K) (*Node[K, V, M], Entry[K,
 func (n *Node[K, V, M]) delCollided(k K) (*Node[K, V, M], Entry[K, V, M], bool) {
 	for i := range n.data {
 		if n.data[i].Key == k {
-			return &Node[K, V, M]{data: removed(n.data, i)}, n.data[i], true
+			c := newNode[K, V, M](0, 0, len(n.data)-1, 0)
+			removedInto(c.data, n.data, i)
+			return c, n.data[i], true
 		}
 	}
 	var none Entry[K, V, M]
 	return n, none, false
 }
 
-// The nodes a write makes of n: n but for what the write changes, its
-// data new or shared. Its nodes are always new, made with it: shared, an
-// array of nodes would keep alive the node it was made with, and the
-// entries that node held.
+// The nodes a write makes of n: n but for what the write changes. Its
+// data are shared only by withNode, of a node with nodes: the data of a
+// node with none are in its room, and shared, would keep alive that node
+// and the entries it held. Its nodes are always new, made with it, for
+// the same reason.
 
-// withData is n with data as its entries.
-func (n *Node[K, V, M]) withData(data []Entry[K, V, M]) *Node[K, V, M] {
-	c := newNode(n.datamap, n.nodemap, data, len(n.nodes))
+// withReplaced is n with e in place of its entry i.
+func (n *Node[K, V, M]) withReplaced(i int, e Entry[K, V, M]) *Node[K, V, M] {
+	c := newNode[K, V, M](n.datamap, n.nodemap, len(n.data), len(n.nodes))
+	replacedInto(c.data, n.data, i, e)
 	copy(c.nodes, n.nodes)
 	return c
 }
 
 // withNode is n with sub as its node i.
 func (n *Node[K, V, M]) withNode(i int, sub *Node[K, V, M]) *Node[K, V, M] {
-	c := newNode(n.datamap, n.nodemap, n.data, len(n.nodes))
+	c := newNode[K, V, M](n.datamap, n.nodemap, 0, len(n.nodes))
+	c.data = n.data
 	replacedInto(c.nodes, n.nodes, i, sub)
 	return c
 }
 
 // withEntry is n with e at bit, where n has nothing.
 func (n *Node[K, V, M]) withEntry(bit uint32, e Entry[K, V, M]) *Node[K, V, M] {
-	c := newNode[K, V, M](n.datamap|bit, n.nodemap, nil, len(n.nodes))
-	c.data = inserted(n.data, c.dataSlot(bit), e)
+	c := newNode[K, V, M](n.datamap|bit, n.nodemap, len(n.data)+1, len(n.nodes))
+	insertedInto(c.data, n.data, c.dataSlot(bit), e)
 	copy(c.nodes, n.nodes)
 	return c
 }
 
 // withoutEntry is n without its entry i, at bit.
 func (n *Node[K, V, M]) withoutEntry(bit uint32, i int) *Node[K, V, M] {
-	c := newNode(n.datamap&^bit, n.nodemap, removed(n.data, i), len(n.nodes))
+	c := newNode[K, V, M](n.datamap&^bit, n.nodemap, len(n.data)-1, len(n.nodes))
+	removedInto(c.data, n.data, i)
 	copy(c.nodes, n.nodes)
 	return c
 }
@@ -275,7 +287,8 @@ func (n *Node[K, V, M]) withoutEntry(bit uint32, i int) *Node[K, V, M] {
 // pushedDown is n with its entry i, at bit, and e, of another key, in a
 // node of the next shift in its place.
 func (n *Node[K, V, M]) pushedDown(shift uint, bit uint32, i int, e Entry[K, V, M]) *Node[K, V, M] {
-	c := newNode(n.datamap&^bit, n.nodemap|bit, removed(n.data, i), len(n.nodes)+1)
+	c := newNode[K, V, M](n.datamap&^bit, n.nodemap|bit, len(n.data)-1, len(n.nodes)+1)
+	removedInto(c.data, n.data, i)
 	insertedInto(c.nodes, n.nodes, c.nodeSlot(bit), pair(shift+hbits, n.data[i], e))
 	return c
 }
@@ -283,51 +296,107 @@ func (n *Node[K, V, M]) pushedDown(shift uint, bit uint32, i int, e Entry[K, V, 
 // pulledUp is n with e, the entry left alone in its node i at bit, in
 // place of that node.
 func (n *Node[K, V, M]) pulledUp(bit uint32, i int, e Entry[K, V, M]) *Node[K, V, M] {
-	c := newNode[K, V, M](n.datamap|bit, n.nodemap&^bit, nil, len(n.nodes)-1)
-	c.data = inserted(n.data, c.dataSlot(bit), e)
+	c := newNode[K, V, M](n.datamap|bit, n.nodemap&^bit, len(n.data)+1, len(n.nodes)-1)
+	insertedInto(c.data, n.data, c.dataSlot(bit), e)
 	removedInto(c.nodes, n.nodes, i)
 	return c
 }
 
-// newNode makes a node of the bitmaps and data given, and of nodes nodes,
-// to fill: in one allocation with the node, as a write copies a node and
-// its nodes at each level of its path. The room for them comes in a few
-// sizes, the least that holds them.
-func newNode[K comparable, V, M any](datamap, nodemap uint32, data []Entry[K, V, M], nodes int) *Node[K, V, M] {
+// newNode makes a node of the bitmaps given, and of entries entries and
+// nodes nodes, to fill. As a write copies a node at each level of its
+// path, the node comes in one allocation with what is most of it: its
+// nodes, if it has any, or its entries, if not.
+func newNode[K comparable, V, M any](datamap, nodemap uint32, entries, nodes int) *Node[K, V, M] {
 	var c *Node[K, V, M]
-	switch {
-	case nodes == 0:
-		c = &Node[K, V, M]{}
-	case nodes == 1:
-		r := new(nodeRoom1[K, V, M])
-		r.nodes = r.room[:]
-		c = &r.Node
-	case nodes <= 2:
-		r := new(nodeRoom2[K, V, M])
-		r.nodes = r.room[:nodes:nodes]
-		c = &r.Node
-	case nodes <= 4:
-		r := new(nodeRoom4[K, V, M])
-		r.nodes = r.room[:nodes:nodes]
-		c = &r.Node
-	case nodes <= 8:
-		r := new(nodeRoom8[K, V, M])
-		r.nodes = r.room[:nodes:nodes]
-		c = &r.Node
-	case nodes <= 16:
-		r := new(nodeRoom16[K, V, M])
-		r.nodes = r.room[:nodes:nodes]
-		c = &r.Node
-	default:
-		r := new(nodeRoom32[K, V, M])
-		r.nodes = r.room[:nodes:nodes]
-		c = &r.Node
+	if nodes == 0 {
+		c = newLeaf[K, V, M](entries)
+	} else {
+		c = newBranch[K, V, M](nodes)
+		if entries > 0 {
+			c.data = make([]Entry[K, V, M], entries)
+		}
 	}
-	c.datamap, c.nodemap, c.data = datamap, nodemap, data
+	c.datamap, c.nodemap = datamap, nodemap
 	return c
 }
 
-// A node and the room for its nodes, allocated together.
+// newBranch makes a node with room for nodes nodes, the least of a few
+// sizes that holds them.
+func newBranch[K comparable, V, M any](nodes int) *Node[K, V, M] {
+	switch {
+	case nodes == 1:
+		r := new(nodeRoom1[K, V, M])
+		r.nodes = r.room[:]
+		return &r.Node
+	case nodes <= 2:
+		r := new(nodeRoom2[K, V, M])
+		r.nodes = r.room[:nodes:nodes]
+		return &r.Node
+	case nodes <= 4:
+		r := new(nodeRoom4[K, V, M])
+		r.nodes = r.room[:nodes:nodes]
+		return &r.Node
+	case nodes <= 8:
+		r := new(nodeRoom8[K, V, M])
+		r.nodes = r.room[:nodes:nodes]
+		return &r.Node
+	case nodes <= 16:
+		r := new(nodeRoom16[K, V, M])
+		r.nodes = r.room[:nodes:nodes]
+		return &r.Node
+	default:
+		r := new(nodeRoom32[K, V, M])
+		r.nodes = r.room[:nodes:nodes]
+		return &r.Node
+	}
+}
+
+// newLeaf makes a node of no nodes with room for entries entries, the
+// least of a few sizes that holds them. The sizes are closer than those
+// of nodes, as an entry is larger than a pointer, and most nodes of no
+// nodes hold 2 to 6 entries. One of a single entry, a root, takes the
+// room of 2; one of more than 16, rare, has its entries apart.
+func newLeaf[K comparable, V, M any](entries int) *Node[K, V, M] {
+	switch {
+	case entries == 0:
+		return &Node[K, V, M]{}
+	case entries <= 2:
+		r := new(leafRoom2[K, V, M])
+		r.data = r.room[:entries:entries]
+		return &r.Node
+	case entries == 3:
+		r := new(leafRoom3[K, V, M])
+		r.data = r.room[:]
+		return &r.Node
+	case entries == 4:
+		r := new(leafRoom4[K, V, M])
+		r.data = r.room[:]
+		return &r.Node
+	case entries <= 6:
+		r := new(leafRoom6[K, V, M])
+		r.data = r.room[:entries:entries]
+		return &r.Node
+	case entries <= 8:
+		r := new(leafRoom8[K, V, M])
+		r.data = r.room[:entries:entries]
+		return &r.Node
+	case entries <= 12:
+		r := new(leafRoom12[K, V, M])
+		r.data = r.room[:entries:entries]
+		return &r.Node
+	case entries <= 16:
+		r := new(leafRoom16[K, V, M])
+		r.data = r.room[:entries:entries]
+		return &r.Node
+	default:
+		c := &Node[K, V, M]{}
+		c.data = make([]Entry[K, V, M], entries)
+		return c
+	}
+}
+
+// A node and the room for its nodes, or for its entries, allocated
+// together.
 type (
 	nodeRoom1[K comparable, V, M any] struct {
 		Node[K, V, M]
@@ -353,6 +422,35 @@ type (
 		Node[K, V, M]
 		room [32]*Node[K, V, M]
 	}
+
+	leafRoom2[K comparable, V, M any] struct {
+		Node[K, V, M]
+		room [2]Entry[K, V, M]
+	}
+	leafRoom3[K comparable, V, M any] struct {
+		Node[K, V, M]
+		room [3]Entry[K, V, M]
+	}
+	leafRoom4[K comparable, V, M any] struct {
+		Node[K, V, M]
+		room [4]Entry[K, V, M]
+	}
+	leafRoom6[K comparable, V, M any] struct {
+		Node[K, V, M]
+		room [6]Entry[K, V, M]
+	}
+	leafRoom8[K comparable, V, M any] struct {
+		Node[K, V, M]
+		room [8]Entry[K, V, M]
+	}
+	leafRoom12[K comparable, V, M any] struct {
+		Node[K, V, M]
+		room [12]Entry[K, V, M]
+	}
+	leafRoom16[K comparable, V, M any] struct {
+		Node[K, V, M]
+		room [16]Entry[K, V, M]
+	}
 )
 
 // Each yields the entries under n, until yield returns false.
@@ -370,23 +468,8 @@ func (n *Node[K, V, M]) Each(yield func(*Entry[K, V, M]) bool) bool {
 	return true
 }
 
-// The slices of a node are never changed: these make new ones, or fill
-// c, made for them.
-
-func inserted[T any](s []T, i int, v T) []T {
-	return insertedInto(make([]T, len(s)+1), s, i, v)
-}
-
-func removed[T any](s []T, i int) []T {
-	if len(s) == 1 {
-		return nil
-	}
-	return removedInto(make([]T, len(s)-1), s, i)
-}
-
-func replaced[T any](s []T, i int, v T) []T {
-	return replacedInto(make([]T, len(s)), s, i, v)
-}
+// The slices of a node are never changed: these fill c, made for them,
+// from s.
 
 func insertedInto[T any](c, s []T, i int, v T) []T {
 	copy(c, s[:i])
