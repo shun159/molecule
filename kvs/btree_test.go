@@ -75,6 +75,9 @@ func checkTree(t *testing.T, root *bnode[int, int], size int, want map[int]int) 
 		if len(n.items) > maxItems || n != root && len(n.items) < minItems {
 			t.Fatalf("a node of %d entries", len(n.items))
 		}
+		if cap(n.items) > maxItems || len(n.kids) > 0 && cap(n.kids) != cap(n.items)+1 {
+			t.Fatalf("a node of room %d, %d, out of its room", cap(n.items), cap(n.kids))
+		}
 		if len(n.kids) == 0 {
 			if depth >= 0 && depth != d {
 				t.Fatalf("leaves at depths %d and %d", depth, d)
