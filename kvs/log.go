@@ -76,14 +76,16 @@ func newRec(body []byte) rec { return rec{body: body, crc: crc32.Checksum(body, 
 
 func (r rec) size() int64 { return int64(headerLen + len(r.body) + seqLen) }
 
-// appendRecord appends r with seq to b.
+// appendRecord appends r with seq to b. Its crc is of the seq as in b: an
+// array of its own would escape, by crc32.Update, and be allocated.
 func appendRecord(b []byte, r rec, seq uint64) []byte {
-	var tail [seqLen]byte
-	binary.LittleEndian.PutUint64(tail[:], seq)
 	b = binary.LittleEndian.AppendUint32(b, uint32(len(r.body)+seqLen))
-	b = binary.LittleEndian.AppendUint32(b, crc32.Update(r.crc, castagnoli, tail[:]))
+	at := len(b)
+	b = binary.LittleEndian.AppendUint32(b, 0) // the crc, once the seq is in
 	b = append(b, r.body...)
-	return append(b, tail[:]...)
+	b = binary.LittleEndian.AppendUint64(b, seq)
+	binary.LittleEndian.PutUint32(b[at:], crc32.Update(r.crc, castagnoli, b[len(b)-seqLen:]))
+	return b
 }
 
 // batch is the records written to the log together: done is closed once
