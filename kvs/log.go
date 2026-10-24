@@ -123,15 +123,6 @@ func parseName(name, ext string) (uint64, bool) {
 	return n, err == nil
 }
 
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
-}
-
 type logFile struct {
 	name string
 	seq  uint64
