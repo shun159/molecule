@@ -193,7 +193,8 @@ func (t *Table[K, V]) loadSegment(s logFile, base uint64, isLast bool, r *recove
 	if err != nil && !torn {
 		return err
 	}
-	// Cut what follows the records: zeros, or a write cut short.
+	// Cut what follows the records: zeros, or a write cut short; and make
+	// the records durable, read maybe from the page cache only.
 	if err := truncate(path, n); err != nil {
 		return err
 	}
@@ -244,7 +245,10 @@ func (t *Table[K, V]) loadRecord(name string, seq uint64, op byte, kb, vb []byte
 	return nil
 }
 
-// truncate cuts the file at path to n bytes, if longer, and syncs it.
+// truncate cuts the file at path to n bytes, if longer, and syncs it, cut
+// or not: a process dying before a sync leaves its writes in the page
+// cache only, where opening reads them, and the writes after are made
+// durable after them.
 func truncate(path string, n int64) error {
 	f, err := os.OpenFile(path, os.O_WRONLY, 0)
 	if err != nil {
@@ -255,11 +259,10 @@ func truncate(path string, n int64) error {
 	if err != nil {
 		return err
 	}
-	if fi.Size() == n {
-		return nil // nothing to cut
-	}
-	if err := f.Truncate(n); err != nil {
-		return err
+	if fi.Size() != n {
+		if err := f.Truncate(n); err != nil {
+			return err
+		}
 	}
 	return syncFile(f, false)
 }
