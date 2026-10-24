@@ -112,7 +112,7 @@ func (t *Table[K, V]) writeSnapshot(name string, seq uint64) (int64, error) {
 		werr = w.Flush()
 	}
 	if werr == nil {
-		werr = f.Sync()
+		werr = syncFile(f, false)
 	}
 	if err := f.Close(); werr == nil {
 		werr = err

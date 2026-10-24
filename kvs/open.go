@@ -261,5 +261,5 @@ func truncate(path string, n int64) error {
 	if err := f.Truncate(n); err != nil {
 		return err
 	}
-	return f.Sync()
+	return syncFile(f, false)
 }
