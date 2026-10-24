@@ -187,7 +187,7 @@ func readRecords(r io.Reader, f func(seq uint64, op byte, key, val []byte, size 
 		}
 		buf = buf[:n]
 		if _, err := io.ReadFull(br, buf); err != nil {
-			return off, errTorn
+			return off, tornOr(err)
 		}
 		if crc32.Checksum(buf, castagnoli) != binary.LittleEndian.Uint32(hdr[4:]) {
 			return off, errTorn
@@ -212,9 +212,22 @@ func readRecords(r io.Reader, f func(seq uint64, op byte, key, val []byte, size 
 // if none is past them, or zeros too few for a header, as a segment
 // synced and not yet cut to its records leaves; else a write cut short.
 func endOrTorn(read []byte, err error) error {
-	atEnd := err == io.EOF || err == io.ErrUnexpectedEOF
-	if atEnd && !slices.ContainsFunc(read, func(b byte) bool { return b != 0 }) {
-		return nil
+	err = tornOr(err)
+	if !errors.Is(err, errTorn) {
+		return err
+	}
+	if !slices.ContainsFunc(read, func(b byte) bool { return b != 0 }) {
+		return nil // zeros too few for a header
+	}
+	return err
+}
+
+// tornOr tells what a read failing with err ends: a write cut short, at
+// the end of the file; else it is that failure.
+func tornOr(err error) error {
+	atEnd := errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+	if !atEnd {
+		return err
 	}
 	return errTorn
 }
