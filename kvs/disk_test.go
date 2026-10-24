@@ -1,6 +1,7 @@
 package kvs
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"math/rand/v2"
@@ -346,5 +347,187 @@ func checkLoss(t *testing.T, l loss, h []write, o Options[string, int]) {
 	}
 	if err := tab.Put("after", -1); err != nil {
 		t.Errorf("lost at %d writes acked: a write after: %v", l.acked, err)
+	}
+}
+
+// crashClose ends tab as its process dying would: nothing synced or cut,
+// its files left as the page cache has them, its lock let go.
+func crashClose[K comparable, V any](tab *Table[K, V]) {
+	tab.closed.Store(true)
+
+	tab.compactMu.Lock()
+	defer tab.compactMu.Unlock()
+
+	w := tab.log
+	close(w.closing)
+	<-w.done
+	w.wmu.Lock()
+	defer w.wmu.Unlock()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if s := w.seg; s.f != nil { // nil: failed rotating, closed already
+		if s.m != nil {
+			munmap(s.m)
+		}
+		s.f.Close() // not s.close(): it would cut the file to its records
+	}
+	w.seg, w.err = &segment{}, ErrClosed // appends fail after
+	unlockDir(tab.lock)
+}
+
+// TestCrashClose checks crashClose ends a table as a dying process: the
+// lock let go, and a write copied, with SyncNone, still there.
+func TestCrashClose(t *testing.T) {
+	dir := t.TempDir()
+	o := Options[string, int]{Sync: SyncNone}
+	tab, err := Open(dir, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tab.Put("a", 1); err != nil {
+		t.Fatal(err)
+	}
+	crashClose(tab)
+	if err := tab.Put("b", 2); err == nil {
+		t.Error("a put after crashClose succeeded")
+	}
+	tab, err = Open(dir, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tab.Close()
+	if v, ok := tab.Get("a"); !ok || v != 1 {
+		t.Errorf("a = %d, %v after a crash; want 1", v, ok)
+	}
+}
+
+// errCrash fails a sync, for the process to die before it.
+var errCrash = errors.New("crash")
+
+// recordsPerSegment is the records of TestCrashThenPowerLoss a segment
+// holds, to the byte.
+const recordsPerSegment = 10
+
+// TestCrashThenPowerLoss kills the process before each sync of a run of
+// writes, as the page cache holds them; opens the table, and writes once;
+// then loses the power. What the open found stays, with the write after.
+// The segments are filled to the byte, so that the last one, open, ends
+// at the end of its file.
+func TestCrashThenPowerLoss(t *testing.T) {
+	o := Options[string, string]{SegmentSize: recordsPerSegment * recordSize(t)}
+	for n := 1; ; n++ {
+		crashed := true
+		t.Run(strconv.Itoa(n), func(t *testing.T) {
+			crashed = crashThenPowerLoss(t, o, n)
+		})
+		if !crashed {
+			return // the run ended before its nth sync
+		}
+	}
+}
+
+// crashThenPowerLoss runs TestCrashThenPowerLoss with the process killed
+// before the nth sync, and reports whether it was.
+func crashThenPowerLoss(t *testing.T, o Options[string, string], n int) bool {
+	dir := t.TempDir()
+	d := newDisk(t, dir)
+	syncs := 0
+	d.onSync = func(*os.File) error {
+		if syncs++; syncs == n {
+			return errCrash
+		}
+		return nil
+	}
+	tab, err := Open(dir, o)
+	if err != nil {
+		return errors.Is(err, errCrash) // killed opening: nothing to check
+	}
+	var h []write
+	acked := 0
+	for i := range 3*recordsPerSegment + 5 {
+		w := write{key: fmt.Sprintf("k%03d", i%50), val: i}
+		h = append(h, w)
+		if err := tab.Put(w.key, value(w.val)); err != nil {
+			break
+		}
+		acked++
+	}
+	if acked == len(h) {
+		tab.Close()
+		return false
+	}
+	crashClose(tab)
+	d.onSync = nil
+
+	// Opened after the crash: the first s writes, s from those acked to
+	// those made.
+	tab, err = Open(dir, o)
+	if err != nil {
+		t.Fatalf("killed at %d writes acked: open: %v", acked, err)
+	}
+	found := contents(tab)
+	s := prefixOf(t, h, acked, found)
+	if err := tab.Put("after", value(-1)); err != nil {
+		t.Fatal(err)
+	}
+	crashClose(tab)
+
+	// Opened after the power lost: what the first open found, and the
+	// write after it.
+	if err := d.powerLoss(dir); err != nil {
+		t.Fatal(err)
+	}
+	tab, err = Open(dir, o)
+	if err != nil {
+		t.Fatalf("killed at %d writes acked, %d found: open after the power lost: %v", acked, s, err)
+	}
+	defer tab.Close()
+	want := maps.Clone(found)
+	want["after"] = value(-1)
+	if got := contents(tab); !maps.Equal(got, want) {
+		t.Errorf("killed at %d writes acked, %d found: after the power lost, %d entries, want %d", acked, s, len(got), len(want))
+		logDir(t, "the disk", dir)
+	}
+	return true
+}
+
+// recordSize returns the size of a record in the log of a put of a key
+// of 4 bytes and a value of 8: measured, not reckoned from the format.
+func recordSize(t *testing.T) int64 {
+	tab, err := Open(t.TempDir(), Options[string, string]{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tab.Close()
+	if err := tab.Put("k000", value(0)); err != nil {
+		t.Fatal(err)
+	}
+	tab.log.mu.Lock()
+	defer tab.log.mu.Unlock()
+	return tab.log.seg.off
+}
+
+// value is the value of 8 bytes of a write i.
+func value(i int) string { return fmt.Sprintf("v%07d", i) }
+
+func contents(tab *Table[string, string]) map[string]string { return maps.Collect(tab.All()) }
+
+// prefixOf returns the s, from acked to len(h), whose first s writes leave
+// got, failing the test if none does.
+func prefixOf(t *testing.T, h []write, acked int, got map[string]string) int {
+	t.Helper()
+	want := map[string]string{}
+	for _, w := range h[:acked] {
+		want[w.key] = value(w.val)
+	}
+	for s := acked; ; s++ {
+		if maps.Equal(got, want) {
+			return s
+		}
+		if s == len(h) {
+			t.Fatalf("killed at %d writes acked, %d made: the entries of none of them", acked, len(h))
+		}
+		want[h[s].key] = value(h[s].val)
 	}
 }
