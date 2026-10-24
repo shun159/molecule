@@ -172,11 +172,8 @@ func readRecords(r io.Reader, f func(seq uint64, op byte, key, val []byte, size 
 	var hdr [headerLen]byte
 	var buf []byte
 	for {
-		if _, err := io.ReadFull(br, hdr[:]); err != nil {
-			if err == io.EOF {
-				return off, nil
-			}
-			return off, errTorn
+		if k, err := io.ReadFull(br, hdr[:]); err != nil {
+			return off, endOrTorn(hdr[:k], err)
 		}
 		n := binary.LittleEndian.Uint32(hdr[:4])
 		if n == 0 && binary.LittleEndian.Uint32(hdr[4:]) == 0 {
@@ -209,4 +206,15 @@ func readRecords(r io.Reader, f func(seq uint64, op byte, key, val []byte, size 
 		}
 		off += int64(headerLen + n)
 	}
+}
+
+// endOrTorn tells what a header read short, with err, ends: the records,
+// if none is past them, or zeros too few for a header, as a segment
+// synced and not yet cut to its records leaves; else a write cut short.
+func endOrTorn(read []byte, err error) error {
+	atEnd := err == io.EOF || err == io.ErrUnexpectedEOF
+	if atEnd && !slices.ContainsFunc(read, func(b byte) bool { return b != 0 }) {
+		return nil
+	}
+	return errTorn
 }
