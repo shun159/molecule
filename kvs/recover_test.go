@@ -2,9 +2,12 @@ package kvs
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"syscall"
 	"testing"
 )
 
@@ -76,6 +79,58 @@ func TestZeroTailShorterThanHeader(t *testing.T) {
 		tail[k-1] = 1
 		if _, err := readRecords(bytes.NewReader(append(slices.Clone(recs), tail...)), none); err != errTorn {
 			t.Errorf("%d bytes after, not all zeros: %v; want errTorn", k, err)
+		}
+	}
+
+	// A header whole, its body cut off, is a write cut short, though the
+	// buffer it is read into holds zeros.
+	if _, err := readRecords(bytes.NewReader(recs[:headerLen]), none); err != errTorn {
+		t.Errorf("a header, its body cut off: %v; want errTorn", err)
+	}
+}
+
+// A failingReader reads r up to at bytes, then fails with err: a disk
+// that cannot read past at.
+type failingReader struct {
+	r   io.Reader
+	at  int
+	err error
+}
+
+func (f *failingReader) Read(p []byte) (int, error) {
+	if f.at <= 0 {
+		return 0, f.err
+	}
+	if len(p) > f.at {
+		p = p[:f.at]
+	}
+	n, err := f.r.Read(p)
+	f.at -= n
+	return n, err
+}
+
+// A read failing, at any byte of the records or past them, is that
+// failure: not a write cut short, which opening would cut off, nor the
+// end of the records.
+func TestReadError(t *testing.T) {
+	dir := t.TempDir()
+	tab, err := Open(dir, Options[string, int]{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab.Put("a", 1)
+	tab.Put("b", 2)
+	tab.Close()
+	segs, _, _ := listLog(dir)
+	recs, err := os.ReadFile(filepath.Join(dir, segs[0].name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	none := func(uint64, byte, []byte, []byte, int64) error { return nil }
+	for at := 0; at <= len(recs); at++ {
+		r := &failingReader{r: bytes.NewReader(recs), at: at, err: syscall.EIO}
+		if _, err := readRecords(r, none); !errors.Is(err, syscall.EIO) {
+			t.Errorf("a read failing at %d of %d: %v; want EIO", at, len(recs), err)
 		}
 	}
 }
