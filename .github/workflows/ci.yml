@@ -26,6 +26,9 @@ jobs:
           fi
       - name: vet
         run: go vet ./...
+      - name: vet kvs/compare
+        working-directory: kvs/compare
+        run: go vet ./...
       - name: staticcheck
         run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
       - name: abc
