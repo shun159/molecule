@@ -20,6 +20,10 @@ import (
 // is left empty; a name removed and not synced since is left. It sees the
 // syncs of the package through syncFile and syncDir.
 //
+// A sync onSync fails with EIO drops what the file held that was not on
+// disk: as Linux may mark the pages it failed to write clean, a sync
+// after succeeds without them (fsyncgate). They stay in the page cache.
+//
 // It is right with SyncEach and SyncEvery, which write a file only under
 // the lock a sync is under; not with SyncNone, whose writes to the mapping
 // go on while a sync is read.
@@ -32,10 +36,11 @@ type disk struct {
 	// the table opens, not while it runs.
 	onSync func(f *os.File) error
 
-	mu    sync.Mutex
-	files map[uint64][]byte // by inode, what the file held at its last sync
-	names map[string]uint64 // the inode of each name, at the last sync of dir
-	err   error             // the first failure to read what was synced
+	mu      sync.Mutex
+	files   map[uint64][]byte // by inode, what the file held at its last sync
+	names   map[string]uint64 // the inode of each name, at the last sync of dir
+	dropped map[uint64][]byte // by inode, what the file held as a sync failed
+	err     error             // the first failure to read what was synced
 }
 
 // newDisk models dir, all in it already on disk, while the test runs.
@@ -45,11 +50,14 @@ func newDisk(t *testing.T, dir string) *disk {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := &disk{t: t, dir: dir}
+	d := &disk{t: t, dir: dir, dropped: map[uint64][]byte{}}
 	d.scan()
 	origFile, origDir := syncFile, syncDir
 	syncFile = func(f *os.File, dataOnly bool) error {
 		if err := d.before(f); err != nil {
+			if errors.Is(err, syscall.EIO) {
+				d.drop(f) // a process killed before the sync drops nothing
+			}
 			return err
 		}
 		if err := origFile(f, dataOnly); err != nil {
@@ -101,26 +109,69 @@ func inoOf(fi os.FileInfo) uint64 { return fi.Sys().(*syscall.Stat_t).Ino }
 func (d *disk) recordFile(f *os.File) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	ino, b, ok := d.read(f)
+	if !ok {
+		return
+	}
+	if at, ok := d.dropped[ino]; ok {
+		b = d.withoutDropped(ino, at, b)
+	}
+	d.files[ino] = b
+}
+
+// drop notes what f holds as a sync of it fails, to be dropped.
+func (d *disk) drop(f *os.File) {
+	if f == nil {
+		return // a directory: what it lost is its names since its last sync
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if ino, b, ok := d.read(f); ok {
+		d.dropped[ino] = b
+	}
+}
+
+// withoutDropped returns b, just synced, but for the bytes the file still
+// holds as at a sync of it failed, at: those are on disk as they were
+// before it.
+func (d *disk) withoutDropped(ino uint64, at, b []byte) []byte {
+	b = slices.Clone(b)
+	disk := d.files[ino]
+	for i := range min(len(b), len(at)) {
+		if b[i] != at[i] {
+			continue // written again since: synced now
+		}
+		b[i] = 0
+		if i < len(disk) {
+			b[i] = disk[i]
+		}
+	}
+	return b
+}
+
+// read returns the inode of f and what it holds, if it is in the
+// directory, under mu.
+func (d *disk) read(f *os.File) (uint64, []byte, bool) {
 	fd := fmt.Sprintf("/proc/self/fd/%d", f.Fd())
 	path, err := os.Readlink(fd)
 	if err != nil {
 		d.fail(err)
-		return
+		return 0, nil, false
 	}
 	if filepath.Dir(path) != d.dir {
-		return // a file of another table
+		return 0, nil, false // a file of another table
 	}
 	fi, err := f.Stat()
 	if err != nil {
 		d.fail(err)
-		return
+		return 0, nil, false
 	}
 	b, err := os.ReadFile(fd)
 	if err != nil {
 		d.fail(err)
-		return
+		return 0, nil, false
 	}
-	d.files[inoOf(fi)] = b
+	return inoOf(fi), b, true
 }
 
 // recordDir notes the names of the directory, just synced.
