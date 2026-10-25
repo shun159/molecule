@@ -1,12 +1,14 @@
 package kvs
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -64,6 +66,10 @@ type segment struct {
 	zeroed int64 // the size of f
 }
 
+// writeAt writes b to f at off. A variable, for a test to fail the
+// writes, as a disk full would.
+var writeAt = func(f *os.File, b []byte, off int64) (int, error) { return f.WriteAt(b, off) }
+
 // startWAL starts the log of dir, its last seq being seq, in a new segment.
 func startWAL(dir string, seq uint64, disk int64, segments int, o Sync, segSize int64) (*wal, error) {
 	w := &wal{
@@ -105,11 +111,12 @@ func openSegment(dir string, first uint64, size int64, mapped bool) (*segment, e
 }
 
 // room fills the segment with zeros ahead of its records, for n bytes
-// more of them.
+// more of them: the space of the records is taken before they are
+// written, and writing them over the zeros takes none.
 func (s *segment) room(n int64) error {
 	for s.zeroed < s.off+n {
 		c := min(zeroChunk, s.size-s.zeroed)
-		if _, err := s.f.WriteAt(zeros[:c], s.zeroed); err != nil {
+		if _, err := writeAt(s.f, zeros[:c], s.zeroed); err != nil {
 			return err
 		}
 		if s.m != nil {
@@ -161,8 +168,7 @@ func (w *wal) append(r rec) (uint64, *batch, error) {
 	}
 	s := w.seg
 	if err := s.room(n); err != nil {
-		w.fail(err)
-		err = w.err
+		err = w.noRoom(err)
 		w.mu.Unlock()
 		return 0, nil, err
 	}
@@ -187,6 +193,17 @@ func (w *wal) append(r rec) (uint64, *batch, error) {
 	w.mu.Unlock()
 	w.disk.Add(n)
 	return seq, b, nil
+}
+
+// noRoom fails the log after err, of making room for a write, under mu;
+// but for the disk full, which fails the write alone: nothing of it is in
+// the log yet, and the writes after try again.
+func (w *wal) noRoom(err error) error {
+	if errors.Is(err, syscall.ENOSPC) {
+		return err
+	}
+	w.fail(err)
+	return w.err
 }
 
 // kickRun has run sync what is not yet.
@@ -284,7 +301,7 @@ func (w *wal) syncNow() {
 	w.mu.Unlock()
 
 	start := time.Now()
-	_, err := s.f.WriteAt(buf, at)
+	_, err := writeAt(s.f, buf, at)
 	if cap(buf) <= keptBuffer {
 		w.spare = buf
 	} else {
@@ -427,7 +444,7 @@ func (w *wal) writePending() error {
 	if len(w.pending) == 0 {
 		return nil
 	}
-	_, err := w.seg.f.WriteAt(w.pending, w.pendAt)
+	_, err := writeAt(w.seg.f, w.pending, w.pendAt)
 	w.pending = w.pending[:0]
 	return err
 }

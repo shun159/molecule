@@ -33,7 +33,9 @@
 //
 // Once a write to the log fails, the table fails every write after: the
 // entries in memory may hold writes the log has not. The program closes
-// it and opens it again, as a supervisor would restart a process.
+// it and opens it again, as a supervisor would restart a process. A write
+// finding the disk full fails alone, with ENOSPC, before anything of it
+// is in the log or in memory: the writes after go on once there is space.
 //
 // # Supervision
 //
