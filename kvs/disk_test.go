@@ -40,7 +40,8 @@ type disk struct {
 	files   map[uint64][]byte // by inode, what the file held at its last sync
 	names   map[string]uint64 // the inode of each name, at the last sync of dir
 	dropped map[uint64][]byte // by inode, what the file held as a sync failed
-	err     error             // the first failure to read what was synced
+	pins    map[uint64]*os.File
+	err     error // the first failure to read what was synced
 }
 
 // newDisk models dir, all in it already on disk, while the test runs.
@@ -50,7 +51,7 @@ func newDisk(t *testing.T, dir string) *disk {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := &disk{t: t, dir: dir, dropped: map[uint64][]byte{}}
+	d := &disk{t: t, dir: dir, dropped: map[uint64][]byte{}, pins: map[uint64]*os.File{}}
 	d.scan()
 	origFile, origDir := syncFile, syncDir
 	syncFile = func(f *os.File, dataOnly bool) error {
@@ -80,6 +81,9 @@ func newDisk(t *testing.T, dir string) *disk {
 	}
 	t.Cleanup(func() {
 		syncFile, syncDir = origFile, origDir
+		for _, f := range d.pins {
+			f.Close()
+		}
 		if d.err != nil {
 			t.Errorf("disk model: %v", d.err)
 		}
@@ -171,7 +175,30 @@ func (d *disk) read(f *os.File) (uint64, []byte, bool) {
 		d.fail(err)
 		return 0, nil, false
 	}
+	d.pin(inoOf(fi), fd)
 	return inoOf(fi), b, true
+}
+
+// pin holds the file of ino open, by path, under mu: removed, its inode
+// is not freed, for a file made after to take, as ext4 has it, and what
+// the model notes of the inode stays of that file.
+func (d *disk) pin(ino uint64, path string) {
+	if _, ok := d.pins[ino]; ok {
+		return
+	}
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return // removed meanwhile: noted of nothing after
+	}
+	if err != nil {
+		d.fail(err)
+		return
+	}
+	if fi, err := f.Stat(); err != nil || inoOf(fi) != ino {
+		f.Close() // removed meanwhile, the name of another
+		return
+	}
+	d.pins[ino] = f
 }
 
 // recordDir notes the names of the directory, just synced.
@@ -183,9 +210,10 @@ func (d *disk) recordDir() {
 		d.fail(err)
 		return
 	}
-	for _, ino := range names {
+	for name, ino := range names {
 		if _, ok := d.files[ino]; !ok {
 			d.files[ino] = nil // created, never synced: on disk, empty
+			d.pin(ino, filepath.Join(d.dir, name))
 		}
 	}
 	d.names = names
@@ -209,6 +237,7 @@ func (d *disk) scan() {
 			return
 		}
 		d.files[ino] = b
+		d.pin(ino, filepath.Join(d.dir, name))
 	}
 }
 
