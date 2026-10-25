@@ -86,7 +86,7 @@ func (t *Table[K, V]) removeSnapshotsBut(name string) {
 // its size from the size on disk, if it was there.
 func (t *Table[K, V]) removeFile(name string) {
 	path := filepath.Join(t.dir, name)
-	if fi, err := os.Stat(path); err == nil && os.Remove(path) == nil {
+	if fi, err := os.Stat(path); err == nil && remove(path) == nil {
 		t.log.disk.Add(-fi.Size())
 	}
 }
@@ -101,11 +101,11 @@ func (t *Table[K, V]) removeFile(name string) {
 // durable, and maybe without others before them, in shards walked before.
 func (t *Table[K, V]) writeSnapshot(name string, seq uint64) (int64, error) {
 	path := filepath.Join(t.dir, name)
-	f, err := os.Create(path + ".tmp")
+	f, err := createFile(path + ".tmp")
 	if err != nil {
 		return 0, err
 	}
-	defer os.Remove(path + ".tmp") // if left
+	defer remove(path + ".tmp") // if left
 	w := bufio.NewWriterSize(&fileWriter{f: f}, 1<<20)
 	size, last, werr := t.writeEntries(w, seq)
 	if werr == nil {
@@ -121,7 +121,7 @@ func (t *Table[K, V]) writeSnapshot(name string, seq uint64) (int64, error) {
 		werr = t.log.syncWritten()
 	}
 	if werr == nil {
-		werr = os.Rename(path+".tmp", path)
+		werr = rename(path+".tmp", path)
 	}
 	if werr == nil {
 		werr = syncDir(t.dir)

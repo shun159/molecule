@@ -66,10 +66,6 @@ type segment struct {
 	zeroed int64 // the size of f
 }
 
-// writeAt writes b to f at off. A variable, for a test to fail the
-// writes, as a disk full would.
-var writeAt = func(f *os.File, b []byte, off int64) (int, error) { return f.WriteAt(b, off) }
-
 // startWAL starts the log of dir, its last seq being seq, in a new segment.
 func startWAL(dir string, seq uint64, disk int64, segments int, o Sync, segSize int64) (*wal, error) {
 	w := &wal{
@@ -92,7 +88,7 @@ func startWAL(dir string, seq uint64, disk int64, segments int, o Sync, segSize 
 }
 
 func openSegment(dir string, first uint64, size int64, mapped bool) (*segment, error) {
-	f, err := os.OpenFile(filepath.Join(dir, segName(first)), os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
+	f, err := createFile(filepath.Join(dir, segName(first)))
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +129,7 @@ func (s *segment) close() error {
 	if s.m != nil {
 		err = munmap(s.m)
 	}
-	if terr := s.f.Truncate(s.off); err == nil {
+	if terr := truncateFile(s.f, s.off); err == nil {
 		err = terr
 	}
 	if cerr := s.f.Close(); err == nil {
