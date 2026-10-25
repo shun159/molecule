@@ -3,6 +3,7 @@ package kvs
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -113,19 +114,28 @@ type recovered struct {
 	seq  uint64 // of the last write
 	disk int64  // the bytes of the files kept
 	segs int    // the segments kept
+
+	cuts  []cut    // the segments to cut to their records
+	stale []string // the files of the log not needed
+}
+
+// A cut is a segment of name to cut to n bytes, and sync.
+type cut struct {
+	name string
+	n    int64
 }
 
 // recover reads the latest snapshot and the segments of the log after it
-// into the index. It removes the files of the log it does not need: those
-// left by a compaction cut short, the snapshots before the latest, and
-// the segments it holds.
+// into the index. It cuts the segments to their records, and removes the
+// files of the log it does not need: those left by a compaction cut
+// short, the snapshots before the latest, and the segments it holds. It
+// does so once it read them all: a read failing changes nothing.
 func (t *Table[K, V]) recover() (recovered, error) {
-	t.removeTemp()
 	segs, snaps, err := listLog(t.dir)
 	if err != nil {
 		return recovered{}, err
 	}
-	var r recovered
+	r := recovered{stale: t.tempFiles()}
 	if len(snaps) > 0 {
 		if err := t.loadSnapshot(snaps, &r); err != nil {
 			return r, err
@@ -138,30 +148,46 @@ func (t *Table[K, V]) recover() (recovered, error) {
 		// this one has none.
 		inSnapshot := !isLast && segs[i+1].seq <= base+1
 		if inSnapshot {
-			os.Remove(filepath.Join(t.dir, s.name))
+			r.stale = append(r.stale, s.name)
 			continue
 		}
 		if err := t.loadSegment(s, base, isLast, &r); err != nil {
 			return r, err
 		}
 	}
-	return r, nil
+	return r, t.tidy(r)
 }
 
-// removeTemp removes the files a compaction cut short left, if any.
-func (t *Table[K, V]) removeTemp() {
+// tempFiles returns the files a compaction cut short left, if any.
+func (t *Table[K, V]) tempFiles() []string {
 	ents, err := os.ReadDir(t.dir)
 	if err != nil {
-		return
+		return nil
 	}
+	var names []string
 	for _, e := range ents {
 		if strings.HasSuffix(e.Name(), ".tmp") {
-			os.Remove(filepath.Join(t.dir, e.Name()))
+			names = append(names, e.Name())
 		}
 	}
+	return names
 }
 
-// loadSnapshot loads the latest of snaps, and removes the others. A
+// tidy cuts the segments of r to their records, and removes its files not
+// needed.
+func (t *Table[K, V]) tidy(r recovered) error {
+	for _, c := range r.cuts {
+		if err := truncate(filepath.Join(t.dir, c.name), c.n); err != nil {
+			return err
+		}
+	}
+	for _, name := range r.stale {
+		os.Remove(filepath.Join(t.dir, name))
+	}
+	return nil
+}
+
+// loadSnapshot loads the latest of snaps; the others are stale. A
 // snapshot is written whole before it is in place: one cut short is
 // damage.
 func (t *Table[K, V]) loadSnapshot(snaps []logFile, r *recovered) error {
@@ -175,16 +201,15 @@ func (t *Table[K, V]) loadSnapshot(snaps []logFile, r *recovered) error {
 	}
 	r.seq, r.disk = latest.seq, n
 	for _, old := range snaps[:len(snaps)-1] {
-		os.Remove(filepath.Join(t.dir, old.name))
+		r.stale = append(r.stale, old.name)
 	}
 	return nil
 }
 
 // loadSegment loads the writes of s after base. A write cut short, by a
-// crash, ends the last segment, and is cut off it; in another, it is
-// damage. A segment left without a write after base is removed.
+// crash, ends the last segment, and is to be cut off it; in another, it
+// is damage. A segment left without a write after base is stale.
 func (t *Table[K, V]) loadSegment(s logFile, base uint64, isLast bool, r *recovered) error {
-	path := filepath.Join(t.dir, s.name)
 	n, last, err := t.readFile(s.name, base)
 	torn := err == errTorn
 	if torn && !isLast {
@@ -193,16 +218,14 @@ func (t *Table[K, V]) loadSegment(s logFile, base uint64, isLast bool, r *recove
 	if err != nil && !torn {
 		return err
 	}
-	// Cut what follows the records: zeros, or a write cut short; and make
-	// the records durable, read maybe from the page cache only.
-	if err := truncate(path, n); err != nil {
-		return err
-	}
 	r.seq = max(r.seq, last)
 	if last == 0 { // empty, or all in the snapshot: the last segment too
-		os.Remove(path)
+		r.stale = append(r.stale, s.name)
 		return nil
 	}
+	// Cut what follows the records: zeros, or a write cut short; and make
+	// the records durable, read maybe from the page cache only.
+	r.cuts = append(r.cuts, cut{s.name, n})
 	r.disk += n
 	r.segs++
 	return nil
@@ -212,7 +235,7 @@ func (t *Table[K, V]) loadSegment(s logFile, base uint64, isLast bool, r *recove
 // returns the offset after the last whole one, and the last seq it read,
 // 0 if none.
 func (t *Table[K, V]) readFile(name string, base uint64) (n int64, last uint64, err error) {
-	f, err := os.Open(filepath.Join(t.dir, name))
+	f, err := openRead(filepath.Join(t.dir, name))
 	if err != nil {
 		return 0, 0, err
 	}
@@ -226,6 +249,10 @@ func (t *Table[K, V]) readFile(name string, base uint64) (n int64, last uint64, 
 	})
 	return n, last, err
 }
+
+// openRead opens the file at path for reading. A variable, for a test to
+// fail the reads.
+var openRead = func(path string) (io.ReadCloser, error) { return os.Open(path) }
 
 // loadRecord sets or deletes the entry of a record of the file name.
 func (t *Table[K, V]) loadRecord(name string, seq uint64, op byte, kb, vb []byte, size int64) error {
