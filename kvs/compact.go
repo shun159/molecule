@@ -106,7 +106,7 @@ func (t *Table[K, V]) writeSnapshot(name string, seq uint64) (int64, error) {
 		return 0, err
 	}
 	defer os.Remove(path + ".tmp") // if left
-	w := bufio.NewWriterSize(f, 1<<20)
+	w := bufio.NewWriterSize(&fileWriter{f: f}, 1<<20)
 	size, last, werr := t.writeEntries(w, seq)
 	if werr == nil {
 		werr = w.Flush()
@@ -127,6 +127,18 @@ func (t *Table[K, V]) writeSnapshot(name string, seq uint64) (int64, error) {
 		werr = syncDir(t.dir)
 	}
 	return size, werr
+}
+
+// A fileWriter writes to f through writeAt, from its start.
+type fileWriter struct {
+	f   *os.File
+	off int64
+}
+
+func (w *fileWriter) Write(b []byte) (int, error) {
+	n, err := writeAt(w.f, b, w.off)
+	w.off += int64(n)
+	return n, err
 }
 
 // writeEntries writes a record of each entry to w, as the shards hold them
