@@ -17,7 +17,7 @@ import (
 // after: the log stays failed, though a sync would now succeed. Close
 // tells of it. What a power loss then leaves holds the writes acked.
 func TestSyncError(t *testing.T) {
-	o := Options[string, int]{SegmentSize: 1 << 10, CompactMin: 1 << 10}
+	o := Options[string, int]{SegmentSize: 1 << 10, CompactMin: 1 << 10, CompactRatio: 1.2}
 	for n := 1; ; n++ {
 		failed := true
 		t.Run(strconv.Itoa(n), func(t *testing.T) {
