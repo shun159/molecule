@@ -182,7 +182,7 @@ func (t *Table[K, V]) tidy(r recovered) error {
 		}
 	}
 	for _, name := range r.stale {
-		os.Remove(filepath.Join(t.dir, name))
+		remove(filepath.Join(t.dir, name))
 	}
 	return nil
 }
@@ -287,7 +287,7 @@ func truncate(path string, n int64) error {
 		return err
 	}
 	if fi.Size() != n {
-		if err := f.Truncate(n); err != nil {
+		if err := truncateFile(f, n); err != nil {
 			return err
 		}
 	}
