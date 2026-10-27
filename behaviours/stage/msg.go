@@ -4,7 +4,8 @@ import "github.com/shun159/molecule/proc"
 
 // The messages between a producer and its consumers, like those of
 // GenStage: a consumer subscribes asking for events and asks for more as
-// it handles them; the producer sends no more than asked; either cancels.
+// it handles them; the producer sends no more than asked; either ends the
+// subscription.
 
 // subRef names a subscription: its consumer, and the count of the
 // subscriptions it made before.
@@ -29,8 +30,13 @@ type (
 		Ref    subRef
 		Events any
 	}
-	// cancelMsg ends a subscription, either way.
+	// cancelMsg is a consumer cancelling.
 	cancelMsg struct {
+		Ref    subRef
+		Reason error
+	}
+	// cancelledMsg is a producer cancelling.
+	cancelledMsg struct {
 		Ref    subRef
 		Reason error
 	}
