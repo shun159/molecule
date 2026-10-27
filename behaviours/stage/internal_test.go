@@ -39,31 +39,50 @@ func (d drain) HandleEvents(n int, events []int, tag any) (int, []actor.Effect) 
 	return n, nil
 }
 
-// TestNoMoreThanAsked follows the sends of a subscription: the producer
-// never has sent more events than its consumer asked for.
+// triple emits three of each event.
+type triple struct{ From proc.PID }
+
+func (t triple) Init(proc.PID) (int, []actor.Effect, error) {
+	return 0, actor.Do(Subscribe{To: t.From, Max: 5, Min: 1}), nil
+}
+
+func (triple) HandleEvents(n int, events []int, _ any) (int, []actor.Effect) {
+	var out []int
+	for _, e := range events {
+		out = append(out, e, e, e)
+	}
+	return n + len(events), actor.Do(Emit[int]{Events: out})
+}
+
+// TestNoMoreThanAsked follows the sends of each subscription of a
+// pipeline: no producer ever has sent more events than asked for.
 func TestNoMoreThanAsked(t *testing.T) {
 	for seed := range uint64(50) {
 		s := gensim.New(seed)
 		src, _ := gensim.Spawn(s, Produce(flood{}), nil)
-		dst, _ := gensim.Spawn(s, Consume(drain{From: src, Limit: 200}), nil)
+		mid, _ := gensim.Spawn(s, ProduceConsume(triple{From: src}), nil)
+		dst, _ := gensim.Spawn(s, Consume(drain{From: mid, Limit: 200}), nil)
 		s.RunUntilIdle()
 
-		asked, sent := 0, 0
+		asked, sent := map[subRef]int{}, map[subRef]int{}
 		for _, e := range s.Trace() {
 			if e.Kind != gensim.Sent {
 				continue
 			}
 			switch m := e.Msg.(type) {
 			case subscribeMsg:
-				asked += m.Ask
+				asked[m.Ref] += m.Ask
 			case askMsg:
-				asked += m.N
+				asked[m.Ref] += m.N
 			case eventsMsg:
-				sent += len(m.Events.([]int))
+				sent[m.Ref] += len(m.Events.([]int))
+				if sent[m.Ref] > asked[m.Ref] {
+					t.Fatalf("seed %d: %d events sent %v, %d asked for", seed, sent[m.Ref], m.Ref, asked[m.Ref])
+				}
 			}
-			if sent > asked {
-				t.Fatalf("seed %d: %d events sent, %d asked for", seed, sent, asked)
-			}
+		}
+		if len(sent) != 2 {
+			t.Fatalf("seed %d: events sent on %d subscriptions", seed, len(sent))
 		}
 		if n := stateOf(t, s, dst); n < 200 {
 			t.Fatalf("seed %d: the consumer had %d events", seed, n)
