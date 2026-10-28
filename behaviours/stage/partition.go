@@ -11,6 +11,8 @@ type partitionDispatch struct {
 	hash   any         // the Hash of Partition, a func(T) int
 	parts  []partition // by number
 	queued int         // the events in the queues of all
+	drop   bool        // the events of a partition without a consumer
+	lost   uint64      // events dropped by drop, since the start
 }
 
 // partition is a partition, and its consumer if it has one.
@@ -55,6 +57,9 @@ func (d *partitionDispatch) leave(ref subRef, out []actor.Effect) ([]actor.Effec
 		return out, false
 	}
 	d.parts[k].consumer, d.parts[k].taken = downstream{}, false
+	if d.drop {
+		d.dropQueue(k)
+	}
 	return out, true
 }
 
@@ -68,6 +73,10 @@ func (d *partitionDispatch) route(b batch, out []actor.Effect) ([]actor.Effect, 
 			continue
 		}
 		p := &d.parts[k]
+		if d.drop && !p.taken {
+			d.lost += uint64(pb.len())
+			continue
+		}
 		n := min(p.consumer.demand, pb.len())
 		if n > 0 {
 			out = append(out, d.send(k, pb, n))
@@ -142,6 +151,16 @@ func (d *partitionDispatch) queuedUpTo(level int) int {
 	}
 	return n
 }
+
+// dropQueue drops the queue of partition k.
+func (d *partitionDispatch) dropQueue(k int) {
+	n := lenOf(d.parts[k].queue)
+	d.parts[k].queue = nil
+	d.queued -= n
+	d.lost += uint64(n)
+}
+
+func (d *partitionDispatch) dropped() uint64 { return d.lost }
 
 // find returns the partition of the consumer of ref, or -1.
 func (d *partitionDispatch) find(ref subRef) int {

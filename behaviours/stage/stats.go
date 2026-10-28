@@ -17,7 +17,7 @@ type Stats struct {
 	Demand    int    // events it may emit now, its consumers wanting them
 	Held      int    // events emitted beyond the demand, waiting for it
 	Emitted   uint64 // events it emitted
-	Dropped   uint64 // events it dropped, its Buffer full
+	Dropped   uint64 // events it dropped, its Buffer full, or by Partition.Drop
 
 	// The side subscribing, of a consumer or a producer-consumer.
 	Subscriptions int    // to producers
@@ -58,7 +58,7 @@ func stats(out *emitting, in *subscribing, queued int) Stats {
 	var st Stats
 	if out != nil {
 		st.Consumers, st.Demand, st.Held = out.to.consumerCount(), out.to.capacity(), out.to.held()
-		st.Emitted, st.Dropped = out.emitted, out.dropped
+		st.Emitted, st.Dropped = out.emitted, out.dropped+out.to.dropped()
 	}
 	if in != nil {
 		st.Subscriptions, st.Waiting, st.Received = len(in.subs), len(in.waiting), in.received
