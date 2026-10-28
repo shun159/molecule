@@ -24,6 +24,8 @@
 //
 //	Consumer and ProducerConsumer
 //	HandleCancel(S, tag, error) (S, []actor.Effect)      handle_cancel/3, optional
+//	Window() time.Duration                               optional, with
+//	HandleWindow(S, start) (S, []actor.Effect)           Flow's periodic trigger
 //
 //	All
 //	HandleInfo(S, any) (S, []actor.Effect)               handle_info/2, optional
@@ -67,6 +69,15 @@
 // dispatcher counts them: for Broadcast, those the consumer wanting least
 // wants, for Partition, those of all but as many as wait in partitions
 // wanting none.
+//
+// # Windows
+//
+// A stream has no end for a reduce to wait for: a consumer, or a
+// producer-consumer, [Windowing] cuts time in windows instead, and is
+// told of each as it ends by HandleWindow, to emit what it aggregated in
+// it and start afresh, as the periodic triggers of Flow. The windows are
+// of processing time, on the clock of the process: windows of a minute
+// end at every minute.
 //
 // # Nodes
 //
