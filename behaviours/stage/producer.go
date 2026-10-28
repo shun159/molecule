@@ -75,6 +75,9 @@ func (a producer[S]) Init(self proc.PID, _ any) (ProducerState[S], []actor.Effec
 func (a producer[S]) Handle(p ProducerState[S], msg gen.Msg) (ProducerState[S], []actor.Effect) {
 	p.out.handling()
 	p, out := a.handleMsg(p, msg)
+	if p.out.forward() {
+		p, out = a.demanded(p, p.out.tell(), out)
+	}
 	return p, p.out.stopIfDone(out)
 }
 

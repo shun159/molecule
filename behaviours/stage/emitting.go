@@ -18,6 +18,9 @@ type emitting struct {
 	waiting int   // the events the stage was told of and has not emitted
 	emits   batch // no events, of the type of those emitted, once one is
 	done    bool  // the stage has emitted all, and stops once it is sent
+
+	holding   bool // the demand is held, until a Forward
+	forwarded bool // a Forward has just ended holding it
 }
 
 // errEmitType is an Emit of another type than the events emitted before,
@@ -32,7 +35,9 @@ func newEmitting(b any, self proc.PID) (emitting, error) {
 		d = x.Dispatcher()
 	}
 	to, err := d.newDispatch()
-	return emitting{self: self, to: to, buffer: bufferOf(b)}, err
+	acc, ok := b.(Accumulating)
+	holding := ok && acc.Accumulate()
+	return emitting{self: self, to: to, buffer: bufferOf(b), holding: holding}, err
 }
 
 // handling starts the handling of a message: the dispatch is that of the
@@ -88,15 +93,30 @@ func (e *emitting) gone(ref subRef, out []actor.Effect) (int, []actor.Effect, bo
 	return e.tell(), out, true
 }
 
-// tell returns how much more the stage is to emit than it was told of.
+// tell returns how much more the stage is to emit than it was told of:
+// none while it holds the demand.
 func (e *emitting) tell() int {
+	if e.holding {
+		return 0
+	}
 	n := max(e.to.capacity()-e.waiting, 0)
 	e.waiting += n
 	return n
 }
 
-// wants reports whether events emitted now would be sent.
-func (e *emitting) wants() bool { return e.to.capacity() > 0 }
+// forward ends holding the demand, and reports whether it did now, for
+// the stage to be told of it.
+func (e *emitting) forward() bool {
+	if !e.forwarded {
+		return false
+	}
+	e.forwarded = false
+	return true
+}
+
+// wants reports whether events emitted now would be sent, the demand not
+// held.
+func (e *emitting) wants() bool { return !e.holding && e.to.capacity() > 0 }
 
 // holds reports whether events wait for demand.
 func (e *emitting) holds() bool { return e.to.held() > 0 }

@@ -21,9 +21,12 @@ type relay struct {
 	Every    int
 	Copies   int
 	Dispatch stage.Dispatcher
+	Hold     bool
 }
 
 func (r relay) Dispatcher() stage.Dispatcher { return r.Dispatch }
+
+func (r relay) Accumulate() bool { return r.Hold }
 
 func (r relay) Init(proc.PID) (int, []actor.Effect, error) {
 	return 0, actor.Do(stage.Subscribe{To: r.From, Max: r.Max, Min: r.Min}), nil
@@ -39,6 +42,12 @@ func (r relay) HandleEvents(handled int, events []int, _ any) (int, []actor.Effe
 		}
 	}
 	return handled + len(events), actor.Do(stage.Emit[int]{Events: out})
+}
+
+// HandleInfo returns the effects it is sent.
+func (relay) HandleInfo(handled int, msg any) (int, []actor.Effect) {
+	effs, _ := msg.([]actor.Effect)
+	return handled, effs
 }
 
 func (r relay) keeps(n int) bool { return r.Every == 0 || n%r.Every == 0 }
