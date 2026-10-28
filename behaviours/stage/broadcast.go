@@ -63,6 +63,8 @@ func (d *broadcastDispatch) capacity() int {
 	return least
 }
 
+func (d *broadcastDispatch) consumerCount() int { return len(d.consumers) }
+
 func (d *broadcastDispatch) held() int { return lenOf(d.buffer) }
 
 func (d *broadcastDispatch) trim(size int, newest bool) int {

@@ -21,6 +21,8 @@ type emitting struct {
 
 	holding   bool // the demand is held, until a Forward
 	forwarded bool // a Forward has just ended holding it
+
+	emitted, dropped uint64 // events, since the start, see Stats
 }
 
 // errEmitType is an Emit of another type than the events emitted before,
@@ -142,6 +144,7 @@ func (e *emitting) emitBatch(b batch, out []actor.Effect) ([]actor.Effect, error
 		return out, nil
 	}
 	e.waiting = max(e.waiting-b.len(), 0)
+	e.emitted += uint64(b.len())
 	out, err := e.change().route(b, out)
 	if err != nil {
 		return out, err

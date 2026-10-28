@@ -12,11 +12,12 @@ import (
 )
 
 // seq emits the integers below Limit, Over times as many as asked for,
-// and is then done.
+// and is then done, unless Open.
 type seq struct {
 	Limit    int
 	Over     int
 	Dispatch Dispatcher
+	Open     bool
 }
 
 func (q seq) Dispatcher() Dispatcher { return q.Dispatch }
@@ -30,7 +31,7 @@ func (q seq) HandleDemand(next, n int) (int, []actor.Effect) {
 		events[i] = next + i
 	}
 	out := actor.Do(Emit[int]{Events: events})
-	if next+k == q.Limit {
+	if next+k == q.Limit && !q.Open {
 		out = append(out, Done{})
 	}
 	return next + k, out

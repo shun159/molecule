@@ -61,6 +61,8 @@ func (d *demandDispatch) route(b batch, out []actor.Effect) ([]actor.Effect, err
 
 func (d *demandDispatch) capacity() int { return d.demand }
 
+func (d *demandDispatch) consumerCount() int { return len(d.consumers) }
+
 func (d *demandDispatch) held() int { return lenOf(d.buffer) }
 
 func (d *demandDispatch) trim(size int, newest bool) int {

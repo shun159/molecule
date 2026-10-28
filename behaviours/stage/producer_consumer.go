@@ -128,6 +128,9 @@ func (a producerConsumer[S, In]) handleMsg(p ProducerConsumerState[S, In], msg g
 	case gen.ContinueMsg:
 		return a.handleInfo(p, m.Msg)
 	}
+	if from, ok := isStatsCall(msg); ok {
+		return p, actor.Do(actor.Reply{To: from, Value: p.stats()})
+	}
 	return a.handleInfo(p, msg)
 }
 
@@ -193,9 +196,8 @@ func (a producerConsumer[S, In]) events(p ProducerConsumerState[S, In], m events
 	if !ok {
 		return p, actor.Do(actor.Stop{Reason: &BadEventsError{Events: m.Events}})
 	}
-	p.in.subs = slices.Clone(p.in.subs) // the pending demand changes
+	p.in.receiving(len(events))
 	sub := &p.in.subs[i]
-	sub.wait = 0
 	p.queue = slices.Clip(p.queue)
 	for len(events) > 0 {
 		n := min(len(events), sub.batchSize())
@@ -236,6 +238,21 @@ func (a producerConsumer[S, In]) handle(p *ProducerConsumerState[S, In], q queue
 		return out
 	}
 	return p.in.askMore(q.ref, q.ask, out)
+}
+
+// stats is the Stats of the stage: its queue holds events, and asks not
+// sent yet, which the demand pending is not.
+func (p ProducerConsumerState[S, In]) stats() Stats {
+	queued, asks := 0, 0
+	for _, q := range p.queue {
+		queued += len(q.events)
+		if p.in.find(q.ref) >= 0 {
+			asks += q.ask
+		}
+	}
+	st := stats(&p.out, &p.in, queued)
+	st.Pending -= asks
+	return st
 }
 
 // live reports whether the events of ref are to be handled: all, of
