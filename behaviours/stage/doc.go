@@ -92,7 +92,9 @@
 // consumer, once it has handled all the producer sent. The [Ending] of
 // the subscription says otherwise: Transient goes on after a normal end,
 // Temporary after any, as the consumer of several producers, one done,
-// may. A producer having
+// may. Resubscribe goes on and subscribes again after a while, for a
+// stream that runs on: its producer restarted, or of a node back, under
+// the name it subscribes to. A producer having
 // emitted all returns Done, to stop once it has sent what it holds: a
 // Stop would drop it. A consumer subscribing to a producer once it is
 // gone stops with proc.NoProc; a producer [Accumulating] holds the demand

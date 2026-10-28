@@ -140,6 +140,8 @@ func (a producerConsumer[S, In]) info(p ProducerConsumerState[S, In], msg any) (
 		return a.events(p, m)
 	case cancelledMsg:
 		return a.ended(p, m.Ref, m.Reason, actor.Demonitor{Tag: producerDown{m.Ref}})
+	case resubscribeMsg:
+		return p, p.in.resubscribe(m)
 	case actor.Down:
 		return a.down(p, m)
 	}
@@ -185,6 +187,7 @@ func (a producerConsumer[S, In]) events(p ProducerConsumerState[S, In], m events
 	}
 	p.in.subs = slices.Clone(p.in.subs) // the pending demand changes
 	sub := &p.in.subs[i]
+	sub.wait = 0
 	p.queue = slices.Clip(p.queue)
 	for len(events) > 0 {
 		n := min(len(events), sub.batchSize())
@@ -244,7 +247,7 @@ func (a producerConsumer[S, In]) ended(p ProducerConsumerState[S, In], ref subRe
 	if !ok {
 		return p, nil
 	}
-	out := effs
+	out := append(effs, p.in.retry(sub)...)
 	if h, ok := a.b.(CancelHandler[S]); ok {
 		s, more := h.HandleCancel(p.state, sub.tag, reason)
 		p.state = s

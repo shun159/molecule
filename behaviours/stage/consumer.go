@@ -85,6 +85,8 @@ func (a consumer[S, In]) info(c ConsumerState[S], msg any) (ConsumerState[S], []
 		return a.events(c, m)
 	case cancelledMsg:
 		return a.ended(c, m.Ref, m.Reason, actor.Demonitor{Tag: producerDown{m.Ref}})
+	case resubscribeMsg:
+		return c, c.in.resubscribe(m)
 	case actor.Down:
 		if t, ok := m.Tag.(producerDown); ok {
 			return a.ended(c, t.ref, m.Reason)
@@ -115,6 +117,7 @@ func (a consumer[S, In]) events(c ConsumerState[S], m eventsMsg) (ConsumerState[
 		batch := events[:n:n]
 		events = events[n:]
 		ask := sub.take(n)
+		sub.wait = 0
 
 		s, effs := a.b.HandleEvents(c.state, batch, sub.tag)
 		c.state = s
@@ -135,7 +138,7 @@ func (a consumer[S, In]) ended(c ConsumerState[S], ref subRef, reason error, eff
 	if !ok {
 		return c, nil
 	}
-	out := effs
+	out := append(effs, c.in.retry(sub)...)
 	if h, ok := a.b.(CancelHandler[S]); ok {
 		s, more := h.HandleCancel(c.state, sub.tag, reason)
 		c.state = s
