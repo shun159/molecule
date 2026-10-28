@@ -10,21 +10,21 @@ import (
 )
 
 // Producer is a stage with state S emitting events, with Emit, as its
-// consumer demands them. Its events are of the type of its first Emit.
+// consumers demand them. Its events are of the type of its first Emit.
 //
 // A Producer may also implement InfoHandler and Terminator, and
 // actor.Clocked, to be given the clock of its process.
 type Producer[S any] interface {
 	// Init returns the initial state. self is the PID of the producer.
 	Init(self proc.PID) (S, []actor.Effect, error)
-	// HandleDemand is told that the consumer wants n more events, beyond
+	// HandleDemand is told that the consumers want n more events, beyond
 	// those asked for before. The producer emits them now, or later from
 	// HandleInfo, as they come: from an Async reading a file, say.
 	HandleDemand(state S, n int) (S, []actor.Effect)
 }
 
 // ProducerState is the state of a producer process, as gen and gensim see
-// it: the state of the behaviour, with its consumer and its buffer.
+// it: the state of the behaviour, with its consumers and its buffer.
 type ProducerState[S any] struct {
 	state S
 	out   emitting
@@ -96,12 +96,9 @@ func (a producer[S]) info(p ProducerState[S], msg any) (ProducerState[S], []acto
 	return a.handleInfo(p, msg)
 }
 
-// subscribe takes a consumer, if the producer has none, and its demand.
+// subscribe takes a consumer, and its demand.
 func (a producer[S]) subscribe(p ProducerState[S], m subscribeMsg) (ProducerState[S], []actor.Effect) {
-	out, ok := p.out.accept(m)
-	if !ok {
-		return p, out
-	}
+	out := p.out.accept(m)
 	p, more := a.ask(p, askMsg{Ref: m.Ref, N: m.Ask})
 	return p, append(out, more...)
 }

@@ -41,12 +41,14 @@
 // arrives in HandleInfo. Events emitted beyond the demand wait in the
 // producer, and are sent first as demand comes.
 //
-// A producer-consumer handles events only as its consumer asks for them,
+// A producer-consumer handles events only as its consumers ask for them,
 // and asks its producers for more only once it has handled those: the
 // demand goes up a pipeline from its end.
 //
-// A producer has one consumer at most: another subscribing is cancelled
-// with [ErrHasConsumer].
+// A producer has any number of consumers, and sends each event to one of
+// them, the one wanting most, as GenStage's DemandDispatcher does: the
+// consumers share the work, each as fast as it goes. HandleDemand is told
+// of the demand of all.
 //
 // # Ending
 //
@@ -55,7 +57,7 @@
 // cancelled it with: a producer done stops, normally, and so does its
 // consumer, once it has handled all the producer sent. A producer-consumer
 // ending normally stops once it has handled what it holds of the producer
-// and sent its consumer what it emitted, so that a pipeline ends once all
-// is through. A consumer cancelling, or exiting, frees its producer for
-// another.
+// and sent its consumers what it emitted, so that a pipeline ends once all
+// is through. A consumer cancelling, or exiting, leaves its producer to
+// the others: the events emitted for it go to them.
 package stage

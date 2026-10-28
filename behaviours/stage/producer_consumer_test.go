@@ -82,6 +82,25 @@ func TestPipeline(t *testing.T) {
 	}
 }
 
+// TestPipelineFanOut has a producer-consumer feed two consumers.
+func TestPipelineFanOut(t *testing.T) {
+	for seed := range uint64(20) {
+		s := gensim.New(seed)
+		src := spawn(t, s, stage.Produce(counter{Limit: 200}))
+		r := relay{From: src, Max: 6, Every: 2, Copies: 2}
+		mid := spawn(t, s, stage.ProduceConsume(r))
+		a := spawn(t, s, stage.Consume(sink{From: mid, Max: 3}))
+		b := spawn(t, s, stage.Consume(sink{From: mid, Max: 7}))
+		s.RunUntilIdle()
+
+		all := append(gotOf(t, s, a).events, gotOf(t, s, b).events...)
+		slices.Sort(all)
+		if !slices.Equal(all, r.relayed(200)) {
+			t.Fatalf("seed %d: got %v together", seed, all)
+		}
+	}
+}
+
 // TestPipelineEnds has a pipeline end once all is through it: the
 // producer done, the producer-consumer stops once it has sent all.
 func TestPipelineEnds(t *testing.T) {

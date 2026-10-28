@@ -48,7 +48,7 @@ type Terminator[S any] interface {
 	Terminate(state S, reason error) []actor.Effect
 }
 
-// Emit sends Events to the consumer of a producer, as far as it demands
+// Emit sends Events to the consumers of a producer, as far as they demand
 // them; the rest wait in the producer, sent first as demand comes. The
 // Events are not to be written once emitted.
 type Emit[T any] struct {
@@ -98,11 +98,8 @@ func (x Subscribe) demand() (maxDemand, minDemand int, ok bool) {
 	return maxDemand, minDemand, 0 <= minDemand && minDemand < maxDemand
 }
 
-// Errors stopping a stage.
-var (
-	ErrBadDemand   = errors.New("stage: Subscribe wants 0 <= Min < Max")
-	ErrHasConsumer = errors.New("stage: the producer has a consumer already")
-)
+// ErrBadDemand stops a consumer subscribing with a bad Max or Min.
+var ErrBadDemand = errors.New("stage: Subscribe wants 0 <= Min < Max")
 
 // BadEventsError stops a consumer sent events of another type than it
 // takes.
