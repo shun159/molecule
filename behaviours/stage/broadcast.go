@@ -61,7 +61,18 @@ func (d broadcastDispatch) capacity() int {
 	return least
 }
 
-func (d broadcastDispatch) holds() bool { return d.buffer != nil }
+func (d broadcastDispatch) held() int {
+	if d.buffer == nil {
+		return 0
+	}
+	return d.buffer.len()
+}
+
+func (d broadcastDispatch) trim(size int, newest bool) (dispatch, int) {
+	var dropped int
+	d.buffer, dropped = trimBuffer(d.buffer, size, newest)
+	return d, dropped
+}
 
 // flush sends the buffer to all, as far as they all asked for it. The
 // consumers are copied.

@@ -27,8 +27,8 @@
 //	Terminate(S, error) []actor.Effect                   terminate/2, optional
 //
 // The callbacks are pure, as those of genserver, and return the effects
-// of actor with those of stage: [Emit] for a producer, [Subscribe] and
-// [Cancel] for a consumer, all three for a producer-consumer.
+// of actor with those of stage: [Emit] and [Done] for a producer,
+// [Subscribe] and [Cancel] for a consumer, all for a producer-consumer.
 //
 // # Demand
 //
@@ -39,7 +39,9 @@
 // more events are wanted, and emits them with Emit: at once, or later, as
 // they come, from an actor.Async reading a file, say, whose outcome
 // arrives in HandleInfo. Events emitted beyond the demand wait in the
-// producer, and are sent first as demand comes.
+// producer, and are sent first as demand comes: as many as its [Buffer]
+// holds, DefaultBuffer unless it implements [Buffering], those beyond
+// dropped, or stopping it.
 //
 // A producer-consumer handles events only as its consumers ask for them,
 // and asks its producers for more only once it has handled those: the
@@ -68,7 +70,9 @@
 // Each end of a subscription monitors the other. A consumer stops when a
 // subscription of it ends, with the reason its producer exited with, or
 // cancelled it with: a producer done stops, normally, and so does its
-// consumer, once it has handled all the producer sent. A producer-consumer
+// consumer, once it has handled all the producer sent. A producer having
+// emitted all returns Done, to stop once it has sent what it holds: a
+// Stop would drop it. A producer-consumer
 // ending normally stops once it has handled what it holds of the producer
 // and sent its consumers what it emitted, so that a pipeline ends once all
 // is through. A consumer cancelling, or exiting, leaves its producer to

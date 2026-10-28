@@ -81,8 +81,11 @@ type dispatch interface {
 	// capacity is how many more events the stage may emit with none kept
 	// beyond the demand.
 	capacity() int
-	// holds reports whether events are kept.
-	holds() bool
+	// held is how many events are kept.
+	held() int
+	// trim drops events kept beyond size, the newest if newest, else the
+	// oldest, and returns how many.
+	trim(size int, newest bool) (dispatch, int)
 }
 
 // downstream is a consumer, and its demand: the events it asked for and
@@ -101,6 +104,19 @@ func findConsumer(ds []downstream, ref subRef) int {
 // consumer of ref.
 func sendEvents(ref subRef, b batch, n int) actor.Effect {
 	return actor.Send{To: ref.Consumer, Msg: eventsMsg{Ref: ref, Events: b.head(n)}}
+}
+
+// trimBuffer drops the events of buffer beyond size, the newest if
+// newest, else the oldest, and returns how many.
+func trimBuffer(buffer batch, size int, newest bool) (batch, int) {
+	if buffer == nil || buffer.len() <= size {
+		return buffer, 0
+	}
+	excess := buffer.len() - size
+	if newest {
+		return buffer.first(size), excess
+	}
+	return buffer.tail(excess), excess
 }
 
 // keep returns buffer with b after it, either nil.

@@ -56,6 +56,13 @@ type Emit[T any] struct {
 	Events []T
 }
 
+// Done tells that a producer, or a producer-consumer, has emitted all
+// its events: it stops, normally, once it has sent its consumers those it
+// holds. A Stop does not wait, and those are lost.
+type Done struct {
+	actor.Extension
+}
+
 // Subscribe subscribes a consumer to the producer at To, under Tag, which
 // HandleEvents gets with the events of this subscription, and Cancel
 // takes; subscribing under a Tag in use cancels the subscription it had.
@@ -130,7 +137,7 @@ func (e *BadEffectError) Error() string {
 // never to see.
 func isStageEffect(e actor.Effect) bool {
 	switch e.(type) {
-	case emitter, Subscribe, Cancel:
+	case emitter, Done, Subscribe, Cancel:
 		return true
 	}
 	return false
@@ -166,6 +173,11 @@ func performOne(e actor.Effect, out *emitting, in *subscribing, rest *[]actor.Ef
 			return errEmitType
 		}
 		effs, err = out.emitBatch(x.batch())
+	case Done:
+		if out == nil {
+			return errEmitType
+		}
+		out.done = true
 	case Subscribe:
 		if in == nil {
 			return errEmitType
