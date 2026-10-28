@@ -75,14 +75,50 @@ type Done struct {
 // Partition is the partition to take of a producer with a Partition
 // dispatcher, and is ignored of another.
 //
-// A subscription ending, its producer exiting or cancelling it, stops the
-// consumer with the same reason.
+// Ending is what the consumer does when its producer ends the
+// subscription, exiting or cancelling it: by default, Permanent, it stops
+// with the same reason.
 type Subscribe struct {
 	actor.Extension
 	To        actor.Dest
 	Tag       any
 	Max, Min  int
 	Partition int
+	Ending    Ending
+}
+
+// Ending is what a consumer does when its producer ends a subscription
+// of it, as the cancel option of GenStage. It is told first, by
+// HandleCancel, if it has one.
+type Ending int
+
+const (
+	// Permanent stops the consumer with the same reason.
+	Permanent Ending = iota
+	// Transient stops it if the reason is not normal: a producer done
+	// leaves it to go on, one failing stops it.
+	Transient
+	// Temporary leaves it to go on.
+	Temporary
+)
+
+// stops reports whether a subscription ending with reason stops the
+// consumer.
+func (e Ending) stops(reason error) bool {
+	switch e {
+	case Transient:
+		return !normal(reason)
+	case Temporary:
+		return false
+	}
+	return true
+}
+
+// CancelHandler is a consumer, or a producer-consumer, told that its
+// producer ended the subscription under tag with reason, exiting or
+// cancelling it, before it does as the Ending of the subscription says.
+type CancelHandler[S any] interface {
+	HandleCancel(state S, tag any, reason error) (S, []actor.Effect)
 }
 
 // Cancel cancels the subscription of a consumer under Tag, telling its

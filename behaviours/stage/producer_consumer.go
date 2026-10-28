@@ -20,13 +20,14 @@ import (
 // has handled those. A filter, emitting less than it is given, handles
 // more until its consumers have what they asked for.
 //
-// A subscription of it ending normally, its producer done, it stops once
-// it has handled the events of that producer and sent its consumers those
-// it emitted, so that a pipeline ends once all is through; another reason
-// stops it at once.
+// A subscription of it ending normally, its producer done, and Permanent,
+// it stops once it has handled the events of that producer and sent its
+// consumers those it emitted, so that a pipeline ends once all is
+// through; another reason stops it at once. A subscription it goes on
+// without, its events received are handled all the same.
 //
-// A ProducerConsumer may also implement InfoHandler and Terminator, and
-// actor.Clocked, to be given the clock of its process.
+// A ProducerConsumer may also implement InfoHandler, CancelHandler and
+// Terminator, and actor.Clocked, to be given the clock of its process.
 type ProducerConsumer[S, In any] interface {
 	// Init returns the initial state. self is the PID of the stage.
 	Init(self proc.PID) (S, []actor.Effect, error)
@@ -134,7 +135,7 @@ func (a producerConsumer[S, In]) info(p ProducerConsumerState[S, In], msg any) (
 	case eventsMsg:
 		return a.events(p, m)
 	case cancelledMsg:
-		return p.ended(m.Ref, m.Reason, actor.Demonitor{Tag: producerDown{m.Ref}})
+		return a.ended(p, m.Ref, m.Reason, actor.Demonitor{Tag: producerDown{m.Ref}})
 	case actor.Down:
 		return a.down(p, m)
 	}
@@ -148,7 +149,7 @@ func (a producerConsumer[S, In]) down(p ProducerConsumerState[S, In], d actor.Do
 		_, out, _ := p.out.gone(t.ref)
 		return a.take(p, out)
 	case producerDown:
-		return p.ended(t.ref, d.Reason)
+		return a.ended(p, t.ref, d.Reason)
 	}
 	return a.handleInfo(p, d)
 }
@@ -191,7 +192,8 @@ func (a producerConsumer[S, In]) events(p ProducerConsumerState[S, In], m events
 
 // take handles the batches queued while the consumers want events, asking
 // their producers for more after each, and stops the stage once it has
-// ended. A batch of a subscription cancelled is dropped.
+// ended. A batch of a subscription ended is handled all the same, unless
+// the stage is ending.
 func (a producerConsumer[S, In]) take(p ProducerConsumerState[S, In], out []actor.Effect) (ProducerConsumerState[S, In], []actor.Effect) {
 	for p.out.wants() && len(p.queue) > 0 {
 		q := p.queue[0]
@@ -221,29 +223,39 @@ func (a producerConsumer[S, In]) handle(p *ProducerConsumerState[S, In], q queue
 	return p.in.askMore(q.ref, q.ask, out)
 }
 
-// live reports whether the events of ref are to be handled: those of a
-// subscription on, or once the stage is ending, those of the one ended.
+// live reports whether the events of ref are to be handled: all, of
+// subscriptions on or ended, but once the stage is ending, those of the
+// one ended only.
 func (p ProducerConsumerState[S, In]) live(ref subRef) bool {
-	if p.ending {
-		return ref == p.endRef
-	}
-	return p.in.find(ref) >= 0
+	return !p.ending || ref == p.endRef
 }
 
 // ended ends the subscription of ref its producer ended, exiting or
-// cancelling it. A normal end makes the stage end once drained; another
-// stops it now, with the same reason.
-func (p ProducerConsumerState[S, In]) ended(ref subRef, reason error, effs ...actor.Effect) (ProducerConsumerState[S, In], []actor.Effect) {
-	if !p.in.end(ref) {
+// cancelling it: HandleCancel is told, and as the Ending of the
+// subscription says, the stage goes on, handling the events it holds of
+// it, or stops: with a normal reason, once it has handled them and sent
+// what it emitted, with another, now.
+func (a producerConsumer[S, In]) ended(p ProducerConsumerState[S, In], ref subRef, reason error, effs ...actor.Effect) (ProducerConsumerState[S, In], []actor.Effect) {
+	sub, ok := p.in.end(ref)
+	if !ok {
 		return p, nil
 	}
-	if !normal(reason) {
-		return p, append(effs, actor.Stop{Reason: reason})
+	out := effs
+	if h, ok := a.b.(CancelHandler[S]); ok {
+		s, more := h.HandleCancel(p.state, sub.tag, reason)
+		p.state = s
+		out = append(out, perform(more, &p.out, &p.in)...)
+	}
+	switch {
+	case stops(out) || !sub.ending.stops(reason):
+		return p, out
+	case !normal(reason):
+		return p, append(out, actor.Stop{Reason: reason})
 	}
 	if !p.ending {
 		p.ending, p.endRef, p.reason = true, ref, reason
 	}
-	return p, p.stopIfDrained(effs)
+	return p, p.stopIfDrained(out)
 }
 
 // stopIfDrained stops the stage ending once it has handled the events of

@@ -13,8 +13,8 @@ import (
 // Consumer is a stage with state S handling events of type In from the
 // producers it subscribes to, with Subscribe: in Init, or later.
 //
-// A Consumer may also implement InfoHandler and Terminator, and
-// actor.Clocked, to be given the clock of its process.
+// A Consumer may also implement InfoHandler, CancelHandler and
+// Terminator, and actor.Clocked, to be given the clock of its process.
 type Consumer[S, In any] interface {
 	// Init returns the initial state. self is the PID of the consumer.
 	Init(self proc.PID) (S, []actor.Effect, error)
@@ -84,10 +84,10 @@ func (a consumer[S, In]) info(c ConsumerState[S], msg any) (ConsumerState[S], []
 	case eventsMsg:
 		return a.events(c, m)
 	case cancelledMsg:
-		return c.ended(m.Ref, m.Reason, actor.Demonitor{Tag: producerDown{m.Ref}})
+		return a.ended(c, m.Ref, m.Reason, actor.Demonitor{Tag: producerDown{m.Ref}})
 	case actor.Down:
 		if t, ok := m.Tag.(producerDown); ok {
-			return c.ended(t.ref, m.Reason)
+			return a.ended(c, t.ref, m.Reason)
 		}
 	}
 	return a.handleInfo(c, msg)
@@ -128,12 +128,23 @@ func (a consumer[S, In]) events(c ConsumerState[S], m eventsMsg) (ConsumerState[
 }
 
 // ended ends the subscription of ref its producer ended, exiting or
-// cancelling it, and stops the consumer with the same reason.
-func (c ConsumerState[S]) ended(ref subRef, reason error, effs ...actor.Effect) (ConsumerState[S], []actor.Effect) {
-	if !c.in.end(ref) {
+// cancelling it: HandleCancel is told, and the consumer stops with the
+// same reason, or goes on, as the Ending of the subscription says.
+func (a consumer[S, In]) ended(c ConsumerState[S], ref subRef, reason error, effs ...actor.Effect) (ConsumerState[S], []actor.Effect) {
+	sub, ok := c.in.end(ref)
+	if !ok {
 		return c, nil
 	}
-	return c, append(effs, actor.Stop{Reason: reason})
+	out := effs
+	if h, ok := a.b.(CancelHandler[S]); ok {
+		s, more := h.HandleCancel(c.state, sub.tag, reason)
+		c.state = s
+		out = append(out, perform(more, nil, &c.in)...)
+	}
+	if sub.ending.stops(reason) && !stops(out) {
+		out = append(out, actor.Stop{Reason: reason})
+	}
+	return c, out
 }
 
 func (a consumer[S, In]) handleInfo(c ConsumerState[S], msg any) (ConsumerState[S], []actor.Effect) {

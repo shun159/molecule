@@ -56,20 +56,23 @@ func (counter) HandleInfo(next int, msg any) (int, []actor.Effect) {
 }
 
 // sink keeps the events of its producer, of Partition if it has some,
-// and the size of each batch.
+// the size of each batch, and the reasons of its subscription ending.
 type sink struct {
 	From      actor.Dest
 	Max, Min  int
 	Partition int
+	Ending    stage.Ending
 }
 
 type got struct {
 	events  []int
 	batches []int
+	ends    []error
 }
 
 func (s sink) Init(proc.PID) (got, []actor.Effect, error) {
-	return got{}, actor.Do(stage.Subscribe{To: s.From, Tag: "src", Max: s.Max, Min: s.Min, Partition: s.Partition}), nil
+	sub := stage.Subscribe{To: s.From, Tag: "src", Max: s.Max, Min: s.Min, Partition: s.Partition, Ending: s.Ending}
+	return got{}, actor.Do(sub), nil
 }
 
 func (sink) HandleEvents(g got, events []int, tag any) (got, []actor.Effect) {
@@ -78,6 +81,14 @@ func (sink) HandleEvents(g got, events []int, tag any) (got, []actor.Effect) {
 	}
 	g.events = append(slices.Clip(g.events), events...)
 	g.batches = append(slices.Clip(g.batches), len(events))
+	return g, nil
+}
+
+func (sink) HandleCancel(g got, tag any, reason error) (got, []actor.Effect) {
+	if tag != "src" {
+		panic(fmt.Sprint("tag ", tag))
+	}
+	g.ends = append(slices.Clip(g.ends), reason)
 	return g, nil
 }
 

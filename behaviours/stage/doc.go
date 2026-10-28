@@ -22,6 +22,9 @@
 //	Init(self) (S, []actor.Effect, error)                init/1
 //	HandleEvents(S, []In, tag) (S, []actor.Effect)       handle_events/3
 //
+//	Consumer and ProducerConsumer
+//	HandleCancel(S, tag, error) (S, []actor.Effect)      handle_cancel/3, optional
+//
 //	All
 //	HandleInfo(S, any) (S, []actor.Effect)               handle_info/2, optional
 //	Terminate(S, error) []actor.Effect                   terminate/2, optional
@@ -70,7 +73,10 @@
 // Each end of a subscription monitors the other. A consumer stops when a
 // subscription of it ends, with the reason its producer exited with, or
 // cancelled it with: a producer done stops, normally, and so does its
-// consumer, once it has handled all the producer sent. A producer having
+// consumer, once it has handled all the producer sent. The [Ending] of
+// the subscription says otherwise: Transient goes on after a normal end,
+// Temporary after any, as the consumer of several producers, one done,
+// may. A producer having
 // emitted all returns Done, to stop once it has sent what it holds: a
 // Stop would drop it. A producer-consumer
 // ending normally stops once it has handled what it holds of the producer
