@@ -9,48 +9,50 @@ import (
 // broadcastDispatch sends each event to every consumer, as far as the one
 // wanting least wants them.
 type broadcastDispatch struct {
-	consumers []downstream // copied before changing them
-	buffer    batch        // the events not asked for by all, while one wants none
+	consumers []downstream
+	buffer    batch // the events not asked for by all, while one wants none
 }
 
-func (d broadcastDispatch) subscribe(m subscribeMsg) (dispatch, error) {
-	d.consumers = append(slices.Clip(d.consumers), downstream{ref: m.Ref})
-	return d, nil
+func (d *broadcastDispatch) clone() dispatch {
+	c := *d
+	c.consumers = slices.Clone(d.consumers)
+	return &c
 }
 
-func (d broadcastDispatch) ask(ref subRef, n int) (dispatch, []actor.Effect, bool) {
+func (d *broadcastDispatch) subscribe(m subscribeMsg) error {
+	d.consumers = append(d.consumers, newDownstream(m.Ref))
+	return nil
+}
+
+func (d *broadcastDispatch) ask(ref subRef, n int, out []actor.Effect) ([]actor.Effect, bool) {
 	i := findConsumer(d.consumers, ref)
 	if i < 0 {
-		return d, nil, false
+		return out, false
 	}
-	d.consumers = slices.Clone(d.consumers)
 	d.consumers[i].demand += n
-	out := d.flush()
-	return d, out, true
+	return d.flush(out), true
 }
 
 // leave may let the others have the buffer, the one leaving having wanted
 // least.
-func (d broadcastDispatch) leave(ref subRef) (dispatch, []actor.Effect, bool) {
+func (d *broadcastDispatch) leave(ref subRef, out []actor.Effect) ([]actor.Effect, bool) {
 	i := findConsumer(d.consumers, ref)
 	if i < 0 {
-		return d, nil, false
+		return out, false
 	}
-	d.consumers = slices.Delete(slices.Clone(d.consumers), i, i+1)
-	out := d.flush()
-	return d, out, true
+	d.consumers = slices.Delete(d.consumers, i, i+1)
+	return d.flush(out), true
 }
 
-func (d broadcastDispatch) route(b batch) (dispatch, []actor.Effect, error) {
-	d.consumers = slices.Clone(d.consumers)
+func (d *broadcastDispatch) route(b batch, out []actor.Effect) ([]actor.Effect, error) {
 	n := min(d.capacity(), b.len())
-	out := d.sendAll(b, n)
+	out = d.sendAll(b, n, out)
 	d.buffer = keep(d.buffer, b.tail(n))
-	return d, out, nil
+	return out, nil
 }
 
 // capacity is the demand of the consumer wanting least, 0 without any.
-func (d broadcastDispatch) capacity() int {
+func (d *broadcastDispatch) capacity() int {
 	if len(d.consumers) == 0 {
 		return 0
 	}
@@ -61,41 +63,34 @@ func (d broadcastDispatch) capacity() int {
 	return least
 }
 
-func (d broadcastDispatch) held() int {
-	if d.buffer == nil {
-		return 0
-	}
-	return d.buffer.len()
-}
+func (d *broadcastDispatch) held() int { return lenOf(d.buffer) }
 
-func (d broadcastDispatch) trim(size int, newest bool) (dispatch, int) {
+func (d *broadcastDispatch) trim(size int, newest bool) int {
 	var dropped int
 	d.buffer, dropped = trimBuffer(d.buffer, size, newest)
-	return d, dropped
+	return dropped
 }
 
-// flush sends the buffer to all, as far as they all asked for it. The
-// consumers are copied.
-func (d *broadcastDispatch) flush() []actor.Effect {
+// flush sends the buffer to all, as far as they all asked for it.
+func (d *broadcastDispatch) flush(out []actor.Effect) []actor.Effect {
 	if d.buffer == nil {
-		return nil
+		return out
 	}
 	n := min(d.capacity(), d.buffer.len())
-	out := d.sendAll(d.buffer, n)
+	out = d.sendAll(d.buffer, n, out)
 	d.buffer = d.buffer.tail(n)
 	return out
 }
 
 // sendAll sends the first n events of b to every consumer, taking them
-// from their demand. The consumers are copied.
-func (d *broadcastDispatch) sendAll(b batch, n int) []actor.Effect {
+// from their demand.
+func (d *broadcastDispatch) sendAll(b batch, n int, out []actor.Effect) []actor.Effect {
 	if n == 0 {
-		return nil
+		return out
 	}
-	out := make([]actor.Effect, len(d.consumers))
 	for i := range d.consumers {
 		d.consumers[i].demand -= n
-		out[i] = sendEvents(d.consumers[i].ref, b, n)
+		out = append(out, sendEvents(d.consumers[i], b, n))
 	}
 	return out
 }

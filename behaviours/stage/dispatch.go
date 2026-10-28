@@ -54,30 +54,34 @@ var (
 	ErrNoPartitions   = errors.New("stage: Partition wants Partitions > 0 and a Hash")
 )
 
-func (Demand) newDispatch() (dispatch, error)    { return demandDispatch{}, nil }
-func (Broadcast) newDispatch() (dispatch, error) { return broadcastDispatch{}, nil }
+func (Demand) newDispatch() (dispatch, error)    { return &demandDispatch{}, nil }
+func (Broadcast) newDispatch() (dispatch, error) { return &broadcastDispatch{}, nil }
 
 func (p Partition[T]) newDispatch() (dispatch, error) {
 	if p.Partitions <= 0 || p.Hash == nil {
 		return nil, ErrNoPartitions
 	}
-	return partitionDispatch{hash: p.Hash, parts: make([]partition, p.Partitions)}, nil
+	return &partitionDispatch{hash: p.Hash, parts: make([]partition, p.Partitions)}, nil
 }
 
-// dispatch is the dispatching of the events of a stage to its consumers:
-// a value, each change returning the next.
+// dispatch is the dispatching of the events of a stage to its consumers.
+// It is part of the state of the stage, which a callback must not write:
+// it is changed in a clone, made once in the handling of a message, see
+// emitting.change. The effects of its methods are appended to out.
 type dispatch interface {
+	// clone returns a copy to change.
+	clone() dispatch
 	// subscribe takes the consumer of m, or tells why not.
-	subscribe(m subscribeMsg) (dispatch, error)
+	subscribe(m subscribeMsg) error
 	// ask adds n to the demand of the consumer of ref, sending it what
 	// waits for it, and reports whether there is that consumer.
-	ask(ref subRef, n int) (dispatch, []actor.Effect, bool)
+	ask(ref subRef, n int, out []actor.Effect) ([]actor.Effect, bool)
 	// leave forgets the consumer of ref, sending the others what waited
 	// for it, and reports whether there was that consumer.
-	leave(ref subRef) (dispatch, []actor.Effect, bool)
+	leave(ref subRef, out []actor.Effect) ([]actor.Effect, bool)
 	// route sends the events of b as far as they are asked for, and keeps
 	// the rest.
-	route(b batch) (dispatch, []actor.Effect, error)
+	route(b batch, out []actor.Effect) ([]actor.Effect, error)
 	// capacity is how many more events the stage may emit with none kept
 	// beyond the demand.
 	capacity() int
@@ -85,14 +89,20 @@ type dispatch interface {
 	held() int
 	// trim drops events kept beyond size, the newest if newest, else the
 	// oldest, and returns how many.
-	trim(size int, newest bool) (dispatch, int)
+	trim(size int, newest bool) int
 }
 
 // downstream is a consumer, and its demand: the events it asked for and
 // was not sent.
 type downstream struct {
 	ref    subRef
+	to     actor.Dest // ref.Consumer, made a Dest once, rather than at each send
 	demand int
+}
+
+// newDownstream returns the consumer of ref, wanting nothing yet.
+func newDownstream(ref subRef) downstream {
+	return downstream{ref: ref, to: ref.Consumer}
 }
 
 // findConsumer returns the index of the consumer of ref, or -1.
@@ -101,9 +111,20 @@ func findConsumer(ds []downstream, ref subRef) int {
 }
 
 // sendEvents is the effect sending the first n events of b to the
-// consumer of ref.
-func sendEvents(ref subRef, b batch, n int) actor.Effect {
-	return actor.Send{To: ref.Consumer, Msg: eventsMsg{Ref: ref, Events: b.head(n)}}
+// consumer d: b itself if all.
+func sendEvents(d downstream, b batch, n int) actor.Effect {
+	if n < b.len() {
+		b = b.first(n)
+	}
+	return actor.Send{To: d.to, Msg: eventsMsg{Ref: d.ref, Events: b}}
+}
+
+// lenOf is the length of b, 0 if nil.
+func lenOf(b batch) int {
+	if b == nil {
+		return 0
+	}
+	return b.len()
 }
 
 // trimBuffer drops the events of buffer beyond size, the newest if

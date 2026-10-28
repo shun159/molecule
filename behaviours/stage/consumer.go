@@ -64,7 +64,7 @@ func (a consumer[S, In]) Init(self proc.PID, _ any) (ConsumerState[S], []actor.E
 		return ConsumerState[S]{}, nil, err
 	}
 	c := ConsumerState[S]{state: s, in: subscribing{self: self}}
-	out := perform(effs, nil, &c.in)
+	out := perform(nil, effs, nil, &c.in)
 	return c, out, nil
 }
 
@@ -99,7 +99,7 @@ func (a consumer[S, In]) events(c ConsumerState[S], m eventsMsg) (ConsumerState[
 	if c.in.find(m.Ref) < 0 {
 		return c, nil // of a subscription cancelled
 	}
-	events, ok := m.Events.([]In)
+	events, ok := eventsOf[In](m)
 	if !ok {
 		return c, actor.Do(actor.Stop{Reason: &BadEventsError{Events: m.Events}})
 	}
@@ -118,7 +118,7 @@ func (a consumer[S, In]) events(c ConsumerState[S], m eventsMsg) (ConsumerState[
 
 		s, effs := a.b.HandleEvents(c.state, batch, sub.tag)
 		c.state = s
-		out = append(out, perform(effs, nil, &c.in)...)
+		out = perform(out, effs, nil, &c.in)
 		if stops(out) {
 			break
 		}
@@ -139,7 +139,7 @@ func (a consumer[S, In]) ended(c ConsumerState[S], ref subRef, reason error, eff
 	if h, ok := a.b.(CancelHandler[S]); ok {
 		s, more := h.HandleCancel(c.state, sub.tag, reason)
 		c.state = s
-		out = append(out, perform(more, nil, &c.in)...)
+		out = perform(out, more, nil, &c.in)
 	}
 	if sub.ending.stops(reason) && !stops(out) {
 		out = append(out, actor.Stop{Reason: reason})
@@ -154,7 +154,7 @@ func (a consumer[S, In]) handleInfo(c ConsumerState[S], msg any) (ConsumerState[
 	}
 	s, effs := h.HandleInfo(c.state, msg)
 	c.state = s
-	return c, perform(effs, nil, &c.in)
+	return c, perform(nil, effs, nil, &c.in)
 }
 
 // Label tells what the process is: the consumer and its behaviour.

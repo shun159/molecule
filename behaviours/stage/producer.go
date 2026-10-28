@@ -68,11 +68,12 @@ func (a producer[S]) Init(self proc.PID, _ any) (ProducerState[S], []actor.Effec
 		return ProducerState[S]{}, nil, err
 	}
 	p := ProducerState[S]{state: s, out: to}
-	out := perform(effs, &p.out, nil)
+	out := perform(nil, effs, &p.out, nil)
 	return p, p.out.stopIfDone(out), nil
 }
 
 func (a producer[S]) Handle(p ProducerState[S], msg gen.Msg) (ProducerState[S], []actor.Effect) {
+	p.out.handling()
 	p, out := a.handleMsg(p, msg)
 	return p, p.out.stopIfDone(out)
 }
@@ -96,11 +97,11 @@ func (a producer[S]) info(p ProducerState[S], msg any) (ProducerState[S], []acto
 	case askMsg:
 		return a.ask(p, m)
 	case cancelMsg:
-		n, out := p.out.cancelled(m.Ref)
+		n, out := p.out.cancelled(m.Ref, nil)
 		return a.demanded(p, n, out)
 	case actor.Down:
 		if t, ok := m.Tag.(consumerDown); ok {
-			n, out, _ := p.out.gone(t.ref)
+			n, out, _ := p.out.gone(t.ref, nil)
 			return a.demanded(p, n, out)
 		}
 	}
@@ -109,15 +110,15 @@ func (a producer[S]) info(p ProducerState[S], msg any) (ProducerState[S], []acto
 
 // subscribe takes a consumer, and its demand.
 func (a producer[S]) subscribe(p ProducerState[S], m subscribeMsg) (ProducerState[S], []actor.Effect) {
-	out := p.out.accept(m)
-	p, more := a.ask(p, askMsg{Ref: m.Ref, N: m.Ask})
-	return p, append(out, more...)
+	out := p.out.accept(m, nil)
+	n, out := p.out.ask(askMsg{Ref: m.Ref, N: m.Ask}, out)
+	return a.demanded(p, n, out)
 }
 
 // ask adds to the demand: what waits is sent first, and HandleDemand is
 // told the rest.
 func (a producer[S]) ask(p ProducerState[S], m askMsg) (ProducerState[S], []actor.Effect) {
-	n, out := p.out.ask(m)
+	n, out := p.out.ask(m, nil)
 	return a.demanded(p, n, out)
 }
 
@@ -129,7 +130,7 @@ func (a producer[S]) demanded(p ProducerState[S], n int, out []actor.Effect) (Pr
 	}
 	s, effs := a.b.HandleDemand(p.state, n)
 	p.state = s
-	return p, append(out, perform(effs, &p.out, nil)...)
+	return p, perform(out, effs, &p.out, nil)
 }
 
 func (a producer[S]) handleInfo(p ProducerState[S], msg any) (ProducerState[S], []actor.Effect) {
@@ -139,7 +140,7 @@ func (a producer[S]) handleInfo(p ProducerState[S], msg any) (ProducerState[S], 
 	}
 	s, effs := h.HandleInfo(p.state, msg)
 	p.state = s
-	return p, perform(effs, &p.out, nil)
+	return p, perform(nil, effs, &p.out, nil)
 }
 
 // Label tells what the process is: the producer and its behaviour.

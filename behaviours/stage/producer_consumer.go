@@ -101,11 +101,12 @@ func (a producerConsumer[S, In]) Init(self proc.PID, _ any) (ProducerConsumerSta
 		return ProducerConsumerState[S, In]{}, nil, err
 	}
 	p := ProducerConsumerState[S, In]{state: s, in: subscribing{self: self}, out: to}
-	out := perform(effs, &p.out, &p.in)
+	out := perform(nil, effs, &p.out, &p.in)
 	return p, p.out.stopIfDone(out), nil
 }
 
 func (a producerConsumer[S, In]) Handle(p ProducerConsumerState[S, In], msg gen.Msg) (ProducerConsumerState[S, In], []actor.Effect) {
+	p.out.handling()
 	p, out := a.handleMsg(p, msg)
 	return p, p.out.stopIfDone(out)
 }
@@ -130,7 +131,7 @@ func (a producerConsumer[S, In]) info(p ProducerConsumerState[S, In], msg any) (
 	case askMsg:
 		return a.ask(p, m)
 	case cancelMsg:
-		_, out := p.out.cancelled(m.Ref)
+		_, out := p.out.cancelled(m.Ref, nil)
 		return a.take(p, out)
 	case eventsMsg:
 		return a.events(p, m)
@@ -146,7 +147,7 @@ func (a producerConsumer[S, In]) info(p ProducerConsumerState[S, In], msg any) (
 func (a producerConsumer[S, In]) down(p ProducerConsumerState[S, In], d actor.Down) (ProducerConsumerState[S, In], []actor.Effect) {
 	switch t := d.Tag.(type) {
 	case consumerDown:
-		_, out, _ := p.out.gone(t.ref)
+		_, out, _ := p.out.gone(t.ref, nil)
 		return a.take(p, out)
 	case producerDown:
 		return a.ended(p, t.ref, d.Reason)
@@ -156,15 +157,15 @@ func (a producerConsumer[S, In]) down(p ProducerConsumerState[S, In], d actor.Do
 
 // subscribe takes a consumer, and its demand.
 func (a producerConsumer[S, In]) subscribe(p ProducerConsumerState[S, In], m subscribeMsg) (ProducerConsumerState[S, In], []actor.Effect) {
-	out := p.out.accept(m)
-	p, more := a.ask(p, askMsg{Ref: m.Ref, N: m.Ask})
-	return p, append(out, more...)
+	out := p.out.accept(m, nil)
+	_, out = p.out.ask(askMsg{Ref: m.Ref, N: m.Ask}, out)
+	return a.take(p, out)
 }
 
 // ask adds to the demand of a consumer: the buffer is sent first, and
 // the events queued are handled for the rest.
 func (a producerConsumer[S, In]) ask(p ProducerConsumerState[S, In], m askMsg) (ProducerConsumerState[S, In], []actor.Effect) {
-	_, out := p.out.ask(m)
+	_, out := p.out.ask(m, nil)
 	return a.take(p, out)
 }
 
@@ -175,7 +176,7 @@ func (a producerConsumer[S, In]) events(p ProducerConsumerState[S, In], m events
 	if i < 0 {
 		return p, nil // of a subscription cancelled
 	}
-	events, ok := m.Events.([]In)
+	events, ok := eventsOf[In](m)
 	if !ok {
 		return p, actor.Do(actor.Stop{Reason: &BadEventsError{Events: m.Events}})
 	}
@@ -216,7 +217,7 @@ func (a producerConsumer[S, In]) take(p ProducerConsumerState[S, In], out []acto
 func (a producerConsumer[S, In]) handle(p *ProducerConsumerState[S, In], q queued[In], out []actor.Effect) []actor.Effect {
 	s, effs := a.b.HandleEvents(p.state, q.events, q.tag)
 	p.state = s
-	out = append(out, perform(effs, &p.out, &p.in)...)
+	out = perform(out, effs, &p.out, &p.in)
 	if stops(out) {
 		return out
 	}
@@ -244,7 +245,7 @@ func (a producerConsumer[S, In]) ended(p ProducerConsumerState[S, In], ref subRe
 	if h, ok := a.b.(CancelHandler[S]); ok {
 		s, more := h.HandleCancel(p.state, sub.tag, reason)
 		p.state = s
-		out = append(out, perform(more, &p.out, &p.in)...)
+		out = perform(out, more, &p.out, &p.in)
 	}
 	switch {
 	case stops(out) || !sub.ending.stops(reason):
@@ -277,7 +278,7 @@ func (a producerConsumer[S, In]) handleInfo(p ProducerConsumerState[S, In], msg 
 	}
 	s, effs := h.HandleInfo(p.state, msg)
 	p.state = s
-	return p, perform(effs, &p.out, &p.in)
+	return p, perform(nil, effs, &p.out, &p.in)
 }
 
 // Label tells what the process is: the producer-consumer and its
