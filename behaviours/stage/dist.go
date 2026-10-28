@@ -3,6 +3,7 @@ package stage
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/shun159/molecule/dist"
@@ -11,13 +12,18 @@ import (
 
 // Stages of different nodes exchange their messages through dist. The
 // messages of the protocol encode themselves, as dist's binary types: they
-// are small and many, and carry reasons, which gob does not encode. The
-// events go by gob, of the types registered with Register.
+// are small and many, and carry reasons, which gob does not encode. So do
+// the events, of the types registered with Register, see events_codec.go,
+// or else go by gob.
 
 // Register tells the distribution the type T of events, for stages of
 // different nodes to exchange them, as dist.Register does messages: each
 // node registers the types of the events it sends or receives, at init.
-// Events are sent with their exported fields.
+// Events of the integers, floats, strings, byte slices and bools are sent
+// as themselves; those of a type T with AppendBinary, as
+// encoding.BinaryAppender, and *T with DecodeBinary, as
+// dist.BinaryDecoder, as these encode them; others by gob, with their
+// exported fields.
 func Register[T any]() { dist.Register(events[T](nil)) }
 
 func init() {
@@ -44,6 +50,31 @@ func (m *subscribeMsg) DecodeBinary(b []byte) error {
 	partition, _, err := readInt(b)
 	*m = subscribeMsg{Ref: ref, Ask: ask, Partition: partition}
 	return err
+}
+
+func (m eventsMsg) AppendBinary(b []byte) ([]byte, error) {
+	b, err := m.Ref.appendTo(b)
+	if err != nil {
+		return b, err
+	}
+	return dist.AppendAny(b, m.Events)
+}
+
+func (m *eventsMsg) DecodeBinary(b []byte) error {
+	ref, b, err := readSubRef(b)
+	if err != nil {
+		return err
+	}
+	v, _, err := dist.ReadAny(b)
+	if err != nil {
+		return err
+	}
+	events, ok := v.(batch)
+	if !ok {
+		return fmt.Errorf("stage: events of %T", v)
+	}
+	*m = eventsMsg{Ref: ref, Events: events}
+	return nil
 }
 
 func (m askMsg) AppendBinary(b []byte) ([]byte, error) {
