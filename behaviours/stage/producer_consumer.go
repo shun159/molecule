@@ -91,11 +91,15 @@ func (a producerConsumer[S, In]) WithClock(now func() time.Time) any {
 }
 
 func (a producerConsumer[S, In]) Init(self proc.PID, _ any) (ProducerConsumerState[S, In], []actor.Effect, error) {
+	to, err := newEmitting(a.b)
+	if err != nil {
+		return ProducerConsumerState[S, In]{}, nil, err
+	}
 	s, effs, err := a.b.Init(self)
 	if err != nil {
 		return ProducerConsumerState[S, In]{}, nil, err
 	}
-	p := ProducerConsumerState[S, In]{state: s, in: subscribing{self: self}}
+	p := ProducerConsumerState[S, In]{state: s, in: subscribing{self: self}, out: to}
 	out := perform(effs, &p.out, &p.in)
 	return p, out, nil
 }
@@ -119,7 +123,8 @@ func (a producerConsumer[S, In]) info(p ProducerConsumerState[S, In], msg any) (
 	case askMsg:
 		return a.ask(p, m)
 	case cancelMsg:
-		return p, p.out.cancelled(m.Ref)
+		_, out := p.out.cancelled(m.Ref)
+		return a.take(p, out)
 	case eventsMsg:
 		return a.events(p, m)
 	case cancelledMsg:
@@ -134,8 +139,8 @@ func (a producerConsumer[S, In]) info(p ProducerConsumerState[S, In], msg any) (
 func (a producerConsumer[S, In]) down(p ProducerConsumerState[S, In], d actor.Down) (ProducerConsumerState[S, In], []actor.Effect) {
 	switch t := d.Tag.(type) {
 	case consumerDown:
-		p.out.gone(t.ref)
-		return p, nil
+		_, out, _ := p.out.gone(t.ref)
+		return a.take(p, out)
 	case producerDown:
 		return p.ended(t.ref, d.Reason)
 	}
@@ -182,7 +187,7 @@ func (a producerConsumer[S, In]) events(p ProducerConsumerState[S, In], m events
 // their producers for more after each, and stops the stage once it has
 // ended. A batch of a subscription cancelled is dropped.
 func (a producerConsumer[S, In]) take(p ProducerConsumerState[S, In], out []actor.Effect) (ProducerConsumerState[S, In], []actor.Effect) {
-	for p.out.demand > 0 && len(p.queue) > 0 {
+	for p.out.wants() && len(p.queue) > 0 {
 		q := p.queue[0]
 		p.queue = p.queue[1:]
 		if !p.live(q.ref) {
@@ -238,7 +243,7 @@ func (p ProducerConsumerState[S, In]) ended(ref subRef, reason error, effs ...ac
 // stopIfDrained stops the stage ending once it has handled the events of
 // the subscription ended and sent its buffer.
 func (p ProducerConsumerState[S, In]) stopIfDrained(out []actor.Effect) []actor.Effect {
-	if !p.ending || p.out.buffer != nil {
+	if !p.ending || p.out.holds() {
 		return out
 	}
 	if slices.ContainsFunc(p.queue, func(q queued[In]) bool { return q.ref == p.endRef }) {
