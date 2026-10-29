@@ -112,3 +112,30 @@ func BenchmarkThroughput(b *testing.B) {
 		}
 	})
 }
+
+// BenchmarkPull ranges over b.N integers of a producer, from outside the
+// processes: what an event costs a Pull.
+func BenchmarkPull(b *testing.B) {
+	for _, maxDemand := range []int{100, 1000} {
+		b.Run("max="+strconv.Itoa(maxDemand), func(b *testing.B) {
+			b.ReportAllocs()
+			n := proc.NewNode("")
+			ctx := context.Background()
+			src, err := stage.Start(ctx, n, stage.Produce(numbers{Limit: b.N}))
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ResetTimer()
+			sum := 0
+			for v, err := range stage.Pull[int](ctx, n, stage.Subscribe{To: src, Max: maxDemand}) {
+				if err != nil {
+					b.Fatal(err)
+				}
+				sum += v
+			}
+			if sum != b.N*(b.N-1)/2 {
+				b.Fatalf("sum %d", sum)
+			}
+		})
+	}
+}
