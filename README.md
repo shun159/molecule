@@ -99,6 +99,7 @@ n, effs := Counter{}.HandleCast(2, Add{3}) // 5, no effects
     behaviours/genstatem       gen_statem
     behaviours/supervisor      supervisors, static and dynamic
     behaviours/stage           stages with back pressure, like GenStage
+    flow                       work fused on the events of stages, like Flow
     behaviours/gen             the runtime of behaviours, for those building them
     application                applications: trees started and stopped in order
     net/gentcp                 TCP sockets owned by processes, like gen_tcp
