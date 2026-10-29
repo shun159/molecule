@@ -80,6 +80,10 @@
 //	snap := leases.Snapshot()
 //	for ip, lease := range snap.Range(lo, hi) {
 //
+// A [Ranger] serves a range of a snapshot as a stage, to a client of this
+// node or another, as it asks for it: no more of a range of any size in
+// memory than it asked for.
+//
 // # Order
 //
 // A table is a [Set], by default, or an [OrderedSet], as an ETS table is
