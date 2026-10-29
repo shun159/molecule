@@ -12,8 +12,8 @@
 25.9 kvs readRecords
 10.7 kvs readRecords cyclo
 28.4 kvs readRecords lines
-15.1 kvs wal.append
-24.3 kvs wal.append lines
+17.4 kvs wal.append
+27.1 kvs wal.append lines
 15.6 kvs wal.syncNow
 17.6 kvs wal.syncNow lines
 29.6 net/gentcp decoder.next
