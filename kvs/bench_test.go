@@ -567,3 +567,26 @@ func BenchmarkPutExpiringFew(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkSnapshot takes a snapshot of a table of 100000 entries, in
+// each mode: little, keeping the trees or the tries; a copy of the maps
+// of a Set without ReadConcurrency.
+func BenchmarkSnapshot(b *testing.B) {
+	for _, typ := range []kvs.Type{kvs.Set, kvs.OrderedSet} {
+		for _, m := range modes {
+			b.Run(fmt.Sprintf("%v/%s", typ, m.name), func(b *testing.B) {
+				o := kvs.Options[int, int]{ReadConcurrency: m.read, WriteConcurrency: m.write, Shards: 8, Type: typ, Sync: kvs.SyncNone}
+				tab := open(b, b.TempDir(), o)
+				for k := range 100000 {
+					if err := tab.Put(k, k); err != nil {
+						b.Fatal(err)
+					}
+				}
+				b.ReportAllocs()
+				for b.Loop() {
+					tab.Snapshot()
+				}
+			})
+		}
+	}
+}
