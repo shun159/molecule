@@ -68,6 +68,7 @@ type sink struct {
 	Max, Min  int
 	Partition int
 	Ending    stage.Ending
+	Held      bool
 }
 
 type got struct {
@@ -77,7 +78,7 @@ type got struct {
 }
 
 func (s sink) Init(proc.PID) (got, []actor.Effect, error) {
-	sub := stage.Subscribe{To: s.From, Tag: "src", Max: s.Max, Min: s.Min, Partition: s.Partition, Ending: s.Ending}
+	sub := stage.Subscribe{To: s.From, Tag: "src", Max: s.Max, Min: s.Min, Partition: s.Partition, Ending: s.Ending, Held: s.Held}
 	return got{}, actor.Do(sub), nil
 }
 

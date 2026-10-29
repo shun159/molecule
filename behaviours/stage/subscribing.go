@@ -28,6 +28,7 @@ type subscription struct {
 	pending   int // the events asked for and not received
 	ending    Ending
 	wait      time.Duration // before subscribing again, if Resubscribe; 0 once events came
+	held      bool          // asking for none until released
 }
 
 // take counts n events received, and returns how many to ask for: once
@@ -59,11 +60,31 @@ func (in *subscribing) subscribe(x Subscribe) []actor.Effect {
 	in.next++
 	sub := subscription{ref: ref, to: x.To, tag: x.Tag, max: maxDemand, min: minDemand,
 		partition: x.Partition, pending: maxDemand, ending: x.Ending}
+	if x.Held {
+		sub.pending, sub.held = 0, true
+	}
 	in.subs = append(slices.Clip(in.subs), sub)
 	return append(out,
 		actor.Monitor{Target: x.To, Tag: producerDown{ref}},
-		actor.Send{To: x.To, Msg: subscribeMsg{Ref: ref, Ask: maxDemand, Partition: x.Partition}},
+		actor.Send{To: x.To, Msg: subscribeMsg{Ref: ref, Ask: sub.pending, Partition: x.Partition}},
 	)
+}
+
+// ask is the effect asking the producer of s for n more events.
+func (s *subscription) ask(n int) actor.Effect {
+	return actor.Send{To: s.to, Msg: askMsg{Ref: s.ref, N: n}}
+}
+
+// release has the subscription under x.Tag, held, ask for Max events.
+func (in *subscribing) release(x Release) []actor.Effect {
+	i := slices.IndexFunc(in.subs, func(s subscription) bool { return s.tag == x.Tag })
+	if i < 0 || !in.subs[i].held {
+		return nil
+	}
+	in.subs = slices.Clone(in.subs)
+	sub := &in.subs[i]
+	sub.held, sub.pending = false, sub.max
+	return actor.Do(sub.ask(sub.max))
 }
 
 // cancel cancels the subscription under x.Tag, if any, on or waiting to
