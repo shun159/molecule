@@ -69,7 +69,7 @@ func (a producer[S]) Init(self proc.PID, _ any) (ProducerState[S], []actor.Effec
 	}
 	p := ProducerState[S]{state: s, out: to}
 	out := perform(nil, effs, &p.out, nil)
-	return p, p.out.stopIfDone(out), nil
+	return p, p.out.stopIfDone(out, false), nil
 }
 
 func (a producer[S]) Handle(p ProducerState[S], msg gen.Msg) (ProducerState[S], []actor.Effect) {
@@ -78,7 +78,7 @@ func (a producer[S]) Handle(p ProducerState[S], msg gen.Msg) (ProducerState[S], 
 	if p.out.forward() {
 		p, out = a.demanded(p, p.out.tell(), out)
 	}
-	return p, p.out.stopIfDone(out)
+	return p, p.out.stopIfDone(out, false)
 }
 
 // handleMsg handles msg, but for stopping once done.

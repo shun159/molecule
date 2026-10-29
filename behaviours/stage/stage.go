@@ -58,7 +58,9 @@ type Emit[T any] struct {
 
 // Done tells that a producer, or a producer-consumer, has emitted all
 // its events: it stops, normally, once it has sent its consumers those it
-// holds. A Stop does not wait, and those are lost.
+// holds; a producer-consumer, once it has handled the events it holds of
+// its producers as well, and sent what it emitted of them. A Stop does
+// not wait, and those are lost.
 type Done struct {
 	actor.Extension
 }
