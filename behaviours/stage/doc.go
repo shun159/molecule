@@ -68,6 +68,22 @@
 // wants, for Partition, those of all but as many as wait in partitions
 // wanting none.
 //
+// # Nodes
+//
+// Stages of different nodes subscribe to each other as to those of their
+// own, by PID or by actor.Remote name, once dist connects the nodes. Each
+// node registers the types of the events it sends or receives with
+// [Register], at init, and they travel by gob, with their exported
+// fields; the messages of the protocol encode themselves. The demand
+// bounds what is in flight between the nodes as within one: a consumer
+// asks for more as it handles what it has, and a large Max keeps the
+// connection busy, the batches large, as each costs a round trip.
+//
+// A node lost, its subscriptions end with proc.NoConnection, as monitors
+// do: the consumers stop, or go on, as their Ending says, and the
+// producers forget the consumers gone. Reasons cross nodes as dist sends
+// exit reasons, those of stage kept, for errors.Is to tell them.
+//
 // # Ending
 //
 // Each end of a subscription monitors the other. A consumer stops when a

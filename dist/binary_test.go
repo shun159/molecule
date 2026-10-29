@@ -3,6 +3,7 @@ package dist
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -213,5 +214,26 @@ func BenchmarkCodecBinary(b *testing.B) {
 				b.Fatal(err)
 			}
 		}
+	}
+}
+
+func TestReason(t *testing.T) {
+	wrapped := fmt.Errorf("stopping: %w", proc.Shutdown)
+	for _, err := range []error{nil, proc.Normal, proc.Killed, proc.NoConnection, errors.New("boom"), wrapped} {
+		b := AppendReason([]byte{7}, err)
+		got, rest, rerr := ReadReason(b[1:])
+		if rerr != nil || len(rest) != 0 {
+			t.Fatalf("%v: %v, %d left", err, rerr, len(rest))
+		}
+		want := err
+		if want == nil {
+			want = proc.Normal
+		}
+		if got.Error() != want.Error() || errors.Is(want, proc.Shutdown) != errors.Is(got, proc.Shutdown) {
+			t.Fatalf("%v read as %v", err, got)
+		}
+	}
+	if _, _, err := ReadReason(nil); err == nil {
+		t.Fatal("read a reason of nothing")
 	}
 }

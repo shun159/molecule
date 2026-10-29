@@ -129,6 +129,25 @@ func appendSized(b []byte, appendTo func([]byte) ([]byte, error)) ([]byte, error
 
 var errShort = errors.New("dist: binary value cut short")
 
+// AppendReason appends the reason err, for ReadReason to read, as the
+// frames of exits and monitors carry reasons: one of proc as itself,
+// another as a RemoteError of its text, keeping the reason of proc it
+// wraps. A message carrying a reason appends it so in its AppendBinary:
+// gob encodes no error.
+func AppendReason(b []byte, err error) []byte { return appendReason(b, err) }
+
+// ReadReason reads the reason AppendReason appended at the start of b,
+// and returns it with the rest of b. A nil reason was appended as
+// proc.Normal.
+func ReadReason(b []byte) (reason error, rest []byte, err error) {
+	r := reader{b: b}
+	reason = r.reason()
+	if r.err != nil {
+		return nil, b, r.err
+	}
+	return reason, r.b, nil
+}
+
 // ReadAny reads the value AppendAny appended at the start of b, and
 // returns it with the rest of b.
 //
