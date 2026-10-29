@@ -70,6 +70,16 @@
 // wants, for Partition, those of all but as many as wait in partitions
 // wanting none.
 //
+// # Outside the processes
+//
+// [Pull] has code outside the processes range over the events of a
+// stage, as over a Go iterator, asking for them as the range goes:
+//
+//	for lease, err := range stage.Pull[Lease](ctx, node, stage.Subscribe{To: ranger}) {
+//
+// A producer [Ephemeral], serving a request, stops once the range is
+// broken off, or done.
+//
 // # Windows
 //
 // A stream has no end for a reduce to wait for: a consumer, or a
