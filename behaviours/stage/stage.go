@@ -79,6 +79,15 @@ type Accumulating interface {
 	Accumulate() bool
 }
 
+// Ephemeral is a producer, or a producer-consumer, serving its consumers
+// alone: once it has had one, it stops, normally, as the last is gone,
+// cancelling or exiting, as GenStage.from_enumerable with on_cancel:
+// :stop. A producer of what a client asked for, a range of a table, is
+// one: the client gone, it is of no more use.
+type Ephemeral interface {
+	StopAlone() bool
+}
+
 // Subscribe subscribes a consumer to the producer at To, under Tag, which
 // HandleEvents gets with the events of this subscription, and Cancel
 // takes; subscribing under a Tag in use cancels the subscription it had.
