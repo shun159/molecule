@@ -188,18 +188,73 @@ func TestNoProducer(t *testing.T) {
 	}
 }
 
-func TestOneConsumer(t *testing.T) {
-	s := gensim.New(1)
-	src := spawn(t, s, stage.Produce(counter{Limit: 1000}))
-	first := spawn(t, s, stage.Consume(sink{From: src, Max: 10}))
-	s.RunUntilIdle()
-	second := spawn(t, s, stage.Consume(sink{From: src, Max: 10}))
-	s.RunUntilIdle()
-	if reason, _ := exitOf(s, second); !errors.Is(reason, stage.ErrHasConsumer) {
-		t.Fatalf("the second consumer exited with %v", reason)
+// TestManyConsumers has consumers share the events of a producer: each
+// event goes to one of them, in order for each.
+func TestManyConsumers(t *testing.T) {
+	for _, over := range []int{1, 3} {
+		for seed := range uint64(20) {
+			s := gensim.New(seed)
+			src := spawn(t, s, stage.Produce(counter{Limit: 300, Over: over}))
+			var sinks []proc.PID
+			for _, maxDemand := range []int{10, 4, 25} {
+				sinks = append(sinks, spawn(t, s, stage.Consume(sink{From: src, Max: maxDemand})))
+			}
+			s.RunUntilIdle()
+
+			var all []int
+			for _, pid := range sinks {
+				g := gotOf(t, s, pid)
+				if len(g.events) == 0 || !slices.IsSorted(g.events) {
+					t.Fatalf("over %d seed %d: %v got %v", over, seed, pid, g.events)
+				}
+				all = append(all, g.events...)
+			}
+			slices.Sort(all)
+			if !slices.Equal(all, upTo(300)) {
+				t.Fatalf("over %d seed %d: got %v together", over, seed, all)
+			}
+		}
 	}
-	if !s.Alive(first) {
-		t.Fatal("the first consumer is gone")
+}
+
+// TestConsumerLeaves has the others go on when a consumer leaves.
+func TestConsumerLeaves(t *testing.T) {
+	for seed := range uint64(20) {
+		s := gensim.New(seed)
+		src := spawn(t, s, stage.Produce(counter{Limit: 300, Over: 2}))
+		first := spawn(t, s, stage.Consume(sink{From: src, Max: 10}))
+		other := spawn(t, s, stage.Consume(sink{From: src, Max: 10}))
+		for len(gotOf(t, s, first).events) == 0 {
+			s.Step()
+		}
+		s.Exit(first, proc.Kill)
+		s.RunUntilIdle()
+
+		// What was sent the first and not handled is lost with it.
+		g := gotOf(t, s, other)
+		if !slices.IsSorted(g.events) || g.events[len(g.events)-1] != 299 {
+			t.Fatalf("seed %d: the other got %v", seed, g.events)
+		}
+	}
+}
+
+// TestDemandOfConsumerGone has a consumer leave while owed events: they
+// go to the other, its own demand met first, the rest as it asks.
+func TestDemandOfConsumerGone(t *testing.T) {
+	for seed := range uint64(10) {
+		s := gensim.New(seed)
+		src := spawn(t, s, stage.Produce(counter{})) // emits only what it is sent
+		gone := spawn(t, s, stage.Consume(sink{From: src, Max: 10}))
+		other := spawn(t, s, stage.Consume(sink{From: src, Max: 10}))
+		s.RunUntilIdle()
+		s.Exit(gone, proc.Kill)
+		s.RunUntilIdle()
+		s.Send(src, actor.Do(stage.Emit[int]{Events: upTo(30)}))
+		s.RunUntilIdle()
+
+		if g := gotOf(t, s, other); !slices.Equal(g.events, upTo(30)) {
+			t.Fatalf("seed %d: the other got %v", seed, g.events)
+		}
 	}
 }
 

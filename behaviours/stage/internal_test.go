@@ -55,13 +55,18 @@ func (triple) HandleEvents(n int, events []int, _ any) (int, []actor.Effect) {
 }
 
 // TestNoMoreThanAsked follows the sends of each subscription of a
-// pipeline: no producer ever has sent more events than asked for.
+// pipeline, its stages feeding several consumers: no producer ever has
+// sent a consumer more events than it asked for.
 func TestNoMoreThanAsked(t *testing.T) {
 	for seed := range uint64(50) {
 		s := gensim.New(seed)
 		src, _ := gensim.Spawn(s, Produce(flood{}), nil)
 		mid, _ := gensim.Spawn(s, ProduceConsume(triple{From: src}), nil)
-		dst, _ := gensim.Spawn(s, Consume(drain{From: mid, Limit: 200}), nil)
+		var dsts []proc.PID
+		for _, from := range []proc.PID{src, mid, mid} {
+			dst, _ := gensim.Spawn(s, Consume(drain{From: from, Limit: 200}), nil)
+			dsts = append(dsts, dst)
+		}
 		s.RunUntilIdle()
 
 		asked, sent := map[subRef]int{}, map[subRef]int{}
@@ -81,11 +86,13 @@ func TestNoMoreThanAsked(t *testing.T) {
 				}
 			}
 		}
-		if len(sent) != 2 {
+		if len(sent) != 4 {
 			t.Fatalf("seed %d: events sent on %d subscriptions", seed, len(sent))
 		}
-		if n := stateOf(t, s, dst); n < 200 {
-			t.Fatalf("seed %d: the consumer had %d events", seed, n)
+		for _, dst := range dsts {
+			if n := stateOf(t, s, dst); n < 200 {
+				t.Fatalf("seed %d: %v had %d events", seed, dst, n)
+			}
 		}
 	}
 }

@@ -12,16 +12,16 @@ import (
 
 // ProducerConsumer is a stage with state S handling events of type In
 // from the producers it subscribes to, as a Consumer does, and emitting
-// events to its own consumer, as a Producer does: a step of a pipeline,
+// events to its own consumers, as a Producer does: a step of a pipeline,
 // mapping, filtering or splitting events.
 //
-// It handles events only as its consumer demands them: the events of its
+// It handles events only as its consumers demand them: the events of its
 // producers wait in it meanwhile, and it asks them for more only once it
 // has handled those. A filter, emitting less than it is given, handles
-// more until its consumer has what it asked for.
+// more until its consumers have what they asked for.
 //
 // A subscription of it ending normally, its producer done, it stops once
-// it has handled the events of that producer and sent its consumer those
+// it has handled the events of that producer and sent its consumers those
 // it emitted, so that a pipeline ends once all is through; another reason
 // stops it at once.
 //
@@ -38,7 +38,7 @@ type ProducerConsumer[S, In any] interface {
 
 // ProducerConsumerState is the state of a producer-consumer process, as
 // gen and gensim see it: the state of the behaviour, with its
-// subscriptions, its consumer, and the events waiting either way.
+// subscriptions, its consumers, and the events waiting either way.
 type ProducerConsumerState[S, In any] struct {
 	state S
 	in    subscribing
@@ -110,7 +110,7 @@ func (a producerConsumer[S, In]) Handle(p ProducerConsumerState[S, In], msg gen.
 	return a.handleInfo(p, msg)
 }
 
-// info handles a message of the stages, from its consumer or its
+// info handles a message of the stages, from its consumers or its
 // producers, or else hands it to HandleInfo.
 func (a producerConsumer[S, In]) info(p ProducerConsumerState[S, In], msg any) (ProducerConsumerState[S, In], []actor.Effect) {
 	switch m := msg.(type) {
@@ -130,7 +130,7 @@ func (a producerConsumer[S, In]) info(p ProducerConsumerState[S, In], msg any) (
 	return a.handleInfo(p, msg)
 }
 
-// down handles the end of the consumer or of a producer.
+// down handles the end of a consumer or of a producer.
 func (a producerConsumer[S, In]) down(p ProducerConsumerState[S, In], d actor.Down) (ProducerConsumerState[S, In], []actor.Effect) {
 	switch t := d.Tag.(type) {
 	case consumerDown:
@@ -142,17 +142,14 @@ func (a producerConsumer[S, In]) down(p ProducerConsumerState[S, In], d actor.Do
 	return a.handleInfo(p, d)
 }
 
-// subscribe takes a consumer, if the stage has none, and its demand.
+// subscribe takes a consumer, and its demand.
 func (a producerConsumer[S, In]) subscribe(p ProducerConsumerState[S, In], m subscribeMsg) (ProducerConsumerState[S, In], []actor.Effect) {
-	out, ok := p.out.accept(m)
-	if !ok {
-		return p, out
-	}
+	out := p.out.accept(m)
 	p, more := a.ask(p, askMsg{Ref: m.Ref, N: m.Ask})
 	return p, append(out, more...)
 }
 
-// ask adds to the demand of the consumer: the buffer is sent first, and
+// ask adds to the demand of a consumer: the buffer is sent first, and
 // the events queued are handled for the rest.
 func (a producerConsumer[S, In]) ask(p ProducerConsumerState[S, In], m askMsg) (ProducerConsumerState[S, In], []actor.Effect) {
 	_, out := p.out.ask(m)
@@ -181,7 +178,7 @@ func (a producerConsumer[S, In]) events(p ProducerConsumerState[S, In], m events
 	return a.take(p, nil)
 }
 
-// take handles the batches queued while the consumer wants events, asking
+// take handles the batches queued while the consumers want events, asking
 // their producers for more after each, and stops the stage once it has
 // ended. A batch of a subscription cancelled is dropped.
 func (a producerConsumer[S, In]) take(p ProducerConsumerState[S, In], out []actor.Effect) (ProducerConsumerState[S, In], []actor.Effect) {
