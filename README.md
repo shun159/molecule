@@ -98,6 +98,7 @@ n, effs := Counter{}.HandleCast(2, Add{3}) // 5, no effects
     behaviours/genserver       gen_server
     behaviours/genstatem       gen_statem
     behaviours/supervisor      supervisors, static and dynamic
+    behaviours/stage           stages with back pressure, like GenStage
     behaviours/gen             the runtime of behaviours, for those building them
     application                applications: trees started and stopped in order
     net/gentcp                 TCP sockets owned by processes, like gen_tcp
@@ -118,7 +119,8 @@ directory holds small programs: an echo server, a chat server, a server
 crashing and being restarted, a mailbox under load, the code lock and
 push button of the gen_statem documentation, two nodes pinging each
 other, a standby node taking over when its primary goes away, a table
-of keys and values partitioned over nodes by consistent hashing, and
-topics published on to their subscribers over nodes, by process groups.
+of keys and values partitioned over nodes by consistent hashing,
+topics published on to their subscribers over nodes, by process groups,
+and work all CPU spread on the cores by a pipeline of stages.
 
 molecule requires Go 1.27.
