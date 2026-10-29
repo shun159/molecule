@@ -21,6 +21,8 @@ type emitting struct {
 
 	holding   bool // the demand is held, until a Forward
 	forwarded bool // a Forward has just ended holding it
+	stopAlone bool // the stage stops once its last consumer is gone
+	alone     bool // its last consumer is gone, the stage stopAlone
 
 	emitted, dropped uint64 // events, since the start, see Stats
 }
@@ -39,7 +41,9 @@ func newEmitting(b any, self proc.PID) (emitting, error) {
 	to, err := d.newDispatch()
 	acc, ok := b.(Accumulating)
 	holding := ok && acc.Accumulate()
-	return emitting{self: self, to: to, buffer: bufferOf(b), holding: holding}, err
+	eph, ok := b.(Ephemeral)
+	stopAlone := ok && eph.StopAlone()
+	return emitting{self: self, to: to, buffer: bufferOf(b), holding: holding, stopAlone: stopAlone}, err
 }
 
 // handling starts the handling of a message: the dispatch is that of the
@@ -92,6 +96,7 @@ func (e *emitting) gone(ref subRef, out []actor.Effect) (int, []actor.Effect, bo
 	if !ok {
 		return 0, out, false
 	}
+	e.alone = e.stopAlone && e.to.consumerCount() == 0
 	return e.tell(), out, true
 }
 
@@ -123,9 +128,11 @@ func (e *emitting) wants() bool { return !e.holding && e.to.capacity() > 0 }
 // holds reports whether events wait for demand.
 func (e *emitting) holds() bool { return e.to.held() > 0 }
 
-// stopIfDone stops the stage after out, if it is done and has sent all.
+// stopIfDone stops the stage after out, if it is done and has sent all,
+// or its last consumer is gone and it stops alone.
 func (e *emitting) stopIfDone(out []actor.Effect) []actor.Effect {
-	if !e.done || e.holds() || stops(out) {
+	over := e.done && !e.holds() || e.alone
+	if !over || stops(out) {
 		return out
 	}
 	return append(out, actor.Stop{})
