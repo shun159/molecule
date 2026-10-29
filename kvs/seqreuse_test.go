@@ -48,6 +48,9 @@ func TestRevNotReusedOpening(t *testing.T) {
 				tab.Close()
 				return
 			}
+			if err == nil {
+				crashClose(tab) // killed removing a file not needed, which fails no Open
+			}
 			ops, err := d.unsynced()
 			if err != nil {
 				t.Fatal(err)
