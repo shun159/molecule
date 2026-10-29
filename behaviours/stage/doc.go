@@ -127,7 +127,9 @@
 // emitted all returns Done, to stop once it has sent what it holds: a
 // Stop would drop it. A consumer subscribing to a producer once it is
 // gone stops with proc.NoProc; a producer [Accumulating] holds the demand
-// until it returns [Forward], for all its consumers to subscribe first. A producer-consumer
+// until it returns [Forward], for all its consumers to subscribe first; or
+// the consumers, of a producer not so, subscribe Held, and [Release] once
+// all have. A producer-consumer
 // ending normally stops once it has handled what it holds of the producer
 // and sent its consumers what it emitted, so that a pipeline ends once all
 // is through. A consumer cancelling, or exiting, leaves its producer to

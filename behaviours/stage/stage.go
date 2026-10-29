@@ -105,6 +105,11 @@ type Ephemeral interface {
 // Ending is what the consumer does when its producer ends the
 // subscription, exiting or cancelling it: by default, Permanent, it stops
 // with the same reason.
+//
+// Held subscribes asking for none, until the consumer returns Release:
+// consumers subscribing to a producer together, held, all subscribe
+// before any asks, and none comes late to it done, as GenStage's manual
+// demand has them.
 type Subscribe struct {
 	actor.Extension
 	To        actor.Dest
@@ -112,6 +117,7 @@ type Subscribe struct {
 	Max, Min  int
 	Partition int
 	Ending    Ending
+	Held      bool
 }
 
 // Ending is what a consumer does when its producer ends a subscription
@@ -151,6 +157,14 @@ func (e Ending) stops(reason error) bool {
 // cancelling it, before it does as the Ending of the subscription says.
 type CancelHandler[S any] interface {
 	HandleCancel(state S, tag any, reason error) (S, []actor.Effect)
+}
+
+// Release has a subscription made Held, under Tag, ask for Max events:
+// the producer sends from then on, as to any. None held under Tag, it does
+// nothing.
+type Release struct {
+	actor.Extension
+	Tag any
 }
 
 // Cancel cancels the subscription of a consumer under Tag, telling its
@@ -205,7 +219,7 @@ func (e *BadEffectError) Error() string {
 // never to see.
 func isStageEffect(e actor.Effect) bool {
 	switch e.(type) {
-	case emitter, Done, Forward, Subscribe, Cancel:
+	case emitter, Done, Forward, Subscribe, Cancel, Release:
 		return true
 	}
 	return false
@@ -263,6 +277,11 @@ func performOne(rest []actor.Effect, e actor.Effect, out *emitting, in *subscrib
 			return rest, errEmitType
 		}
 		return append(rest, in.cancel(x)...), nil
+	case Release:
+		if in == nil {
+			return rest, errEmitType
+		}
+		return append(rest, in.release(x)...), nil
 	}
 	return append(rest, e), nil
 }

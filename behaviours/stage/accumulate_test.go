@@ -72,3 +72,30 @@ func TestAccumulateProducerConsumer(t *testing.T) {
 		t.Fatalf("got %v", g.events)
 	}
 }
+
+// TestHeld has consumers subscribe held to a producer of fewer events than
+// they are: it emits nothing until they release; then each ends normally,
+// none coming late to it done.
+func TestHeld(t *testing.T) {
+	for seed := range uint64(20) {
+		s := gensim.New(seed)
+		src := spawn(t, s, stage.Produce(counter{Limit: 2, Done: true}))
+		var sinks []proc.PID
+		for range 4 { // one after the other, the first long started as the last starts
+			sinks = append(sinks, spawn(t, s, stage.Consume(sink{From: src, Max: 1, Held: true})))
+			s.RunUntilIdle()
+		}
+		if p, ok := gensim.State[stage.ProducerState[int]](s, src); !ok || p.State() != 0 {
+			t.Fatalf("seed %d: %d events emitted held, alive %v", seed, p.State(), ok)
+		}
+		for _, pid := range sinks {
+			s.Send(pid, actor.Do(stage.Release{Tag: "src"}))
+		}
+		s.RunUntilIdle()
+		for _, pid := range sinks {
+			if reason, _ := exitOf(s, pid); !errors.Is(reason, proc.Normal) {
+				t.Fatalf("seed %d: %v exited with %v", seed, pid, reason)
+			}
+		}
+	}
+}
