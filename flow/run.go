@@ -1,9 +1,11 @@
 package flow
 
 import (
+	"cmp"
 	"context"
 	"iter"
 	"runtime"
+	"slices"
 
 	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/gen"
@@ -35,23 +37,31 @@ func Run[S, T any](ctx context.Context, n *proc.Node, f Flow[S, T], opts ...Opti
 	for _, opt := range opts {
 		opt(&o)
 	}
+	layers := append(slices.Clip(f.done), layerOf(f, nil))
 	return func(yield func(T, error) bool) {
 		var zero T
-		subs, err := start(ctx, n, f, o)
+		started, err := start(ctx, n, f.from, layers, o)
 		if err != nil {
 			yield(zero, err)
 			return
 		}
-		// The range subscribed to the workers, then the workers to their
-		// sources: none is gone, nor any source, before all have.
+		// The range subscribed to the last workers, and every worker to
+		// those before, or the sources: none is gone, nor any source,
+		// before all have.
+		var subs []stage.Subscribe
+		for _, w := range started[len(started)-1] {
+			subs = append(subs, stage.Subscribe{To: w, Max: o.max})
+		}
 		p, err := stage.StartPull[T](ctx, n, subs...)
 		if err != nil {
-			terminate(n, subs)
+			terminate(n, started)
 			yield(zero, err)
 			return
 		}
-		for _, s := range subs {
-			n.Send(s.To.(proc.PID), release{})
+		for _, ws := range started {
+			for _, w := range ws {
+				n.Send(w, release{})
+			}
 		}
 		for v, err := range p.All() {
 			if !yield(v, err) {
@@ -61,84 +71,47 @@ func Run[S, T any](ctx context.Context, n *proc.Node, f Flow[S, T], opts ...Opti
 	}
 }
 
-// start starts the workers of f, and returns the subscriptions to them;
+// start starts the workers of the layers, each subscribed to those of the
+// layer before, the first to the sources, and returns them, by layer;
 // those started, if one fails, it terminates.
-func start[S, T any](ctx context.Context, n *proc.Node, f Flow[S, T], o options) ([]stage.Subscribe, error) {
-	var subs []stage.Subscribe
-	for range o.workers {
-		w, err := stage.Start(ctx, n, stage.ProduceConsume(worker[S, T]{from: f.from, xf: f.xf, max: o.max}))
-		if err != nil {
-			terminate(n, subs)
-			return nil, err
+func start(ctx context.Context, n *proc.Node, sources []actor.Dest, layers []layer, o options) ([][]proc.PID, error) {
+	var started [][]proc.PID
+	from := sources
+	for i, l := range layers {
+		count := cmp.Or(l.stages, o.workers)
+		ws := make([]proc.PID, 0, count)
+		for k := range count {
+			w := wiring{from: from, max: o.max}
+			if i > 0 && layers[i-1].partitioned {
+				w.partition = k
+			}
+			pid, err := l.start(ctx, n, w)
+			if err != nil {
+				terminate(n, append(started, ws))
+				return nil, err
+			}
+			ws = append(ws, pid)
 		}
-		subs = append(subs, stage.Subscribe{To: w, Max: o.max})
+		started = append(started, ws)
+		from = dests(ws)
 	}
-	return subs, nil
+	return started, nil
 }
 
-// terminate terminates the workers of subs: held, with no consumer, they
-// would wait for ever.
-func terminate(n *proc.Node, subs []stage.Subscribe) {
-	for _, s := range subs {
-		gen.Terminate(context.Background(), n, s.To, proc.Shutdown)
+func dests(pids []proc.PID) []actor.Dest {
+	ds := make([]actor.Dest, len(pids))
+	for i, pid := range pids {
+		ds[i] = pid
 	}
+	return ds
 }
 
-// worker runs the operations of a flow on the events of its sources. It
-// subscribes to all, Transient and held, until Run, having started all
-// the workers, releases them: no worker comes late to a source done
-// before it subscribed. It is done once its sources are; its consumer
-// gone, it stops. Its state is the sources ended.
-type worker[S, T any] struct {
-	from []actor.Dest
-	xf   func(emit func(T)) func(S)
-	max  int
+// terminate terminates the workers: held, with no consumer, they would
+// wait for ever.
+func terminate(n *proc.Node, started [][]proc.PID) {
+	for _, ws := range started {
+		for _, w := range ws {
+			gen.Terminate(context.Background(), n, w, proc.Shutdown)
+		}
+	}
 }
-
-func (w worker[S, T]) Init(proc.PID) (int, []actor.Effect, error) {
-	var out []actor.Effect
-	for i, from := range w.from {
-		out = append(out, stage.Subscribe{To: from, Tag: i, Max: w.max, Ending: stage.Transient, Held: true})
-	}
-	if len(w.from) == 0 {
-		out = append(out, stage.Done{})
-	}
-	return 0, out, nil
-}
-
-// release has a worker ask its sources for events.
-type release struct{}
-
-// HandleInfo releases the subscriptions, once Run has started all the
-// workers.
-func (w worker[S, T]) HandleInfo(ended int, msg any) (int, []actor.Effect) {
-	if _, ok := msg.(release); !ok {
-		return ended, nil
-	}
-	out := make([]actor.Effect, len(w.from))
-	for i := range w.from {
-		out[i] = stage.Release{Tag: i}
-	}
-	return ended, out
-}
-
-// HandleEvents runs the operations on the events, emitting what they give.
-func (w worker[S, T]) HandleEvents(ended int, events []S, _ any) (int, []actor.Effect) {
-	out := make([]T, 0, len(events))
-	push := w.xf(func(t T) { out = append(out, t) })
-	for _, e := range events {
-		push(e)
-	}
-	return ended, actor.Do(stage.Emit[T]{Events: out})
-}
-
-// HandleCancel counts the sources ended, normally: all of them, the worker
-// is done. A source failing stops it, Transient, before.
-func (w worker[S, T]) HandleCancel(ended int, _ any, _ error) (int, []actor.Effect) {
-	if ended++; ended < len(w.from) {
-		return ended, nil
-	}
-	return ended, actor.Do(stage.Done{})
-}
-
-func (worker[S, T]) StopAlone() bool { return true }
