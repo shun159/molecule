@@ -151,11 +151,10 @@ func (w *wal) append(r rec) (uint64, *batch, error) {
 	n := r.size()
 	w.mu.Lock()
 	for w.err == nil && w.seg.off+n > w.seg.size {
-		w.mu.Unlock()
-		w.wmu.Lock()
-		w.rotate(n)
-		w.wmu.Unlock()
-		w.mu.Lock()
+		if err := w.rotateFor(n); err != nil {
+			w.mu.Unlock()
+			return 0, nil, err
+		}
 	}
 	if w.err != nil {
 		err := w.err
@@ -189,6 +188,22 @@ func (w *wal) append(r rec) (uint64, *batch, error) {
 	w.mu.Unlock()
 	w.disk.Add(n)
 	return seq, b, nil
+}
+
+// rotateFor rotates the log for a record of n bytes, under mu, let go
+// meanwhile, and returns ENOSPC if the disk full kept the next segment from
+// being made: the write fails alone, and those after try again. Other
+// failures fail the log.
+func (w *wal) rotateFor(n int64) error {
+	w.mu.Unlock()
+	w.wmu.Lock()
+	_, err := w.rotate(n)
+	w.wmu.Unlock()
+	w.mu.Lock()
+	if errors.Is(err, syscall.ENOSPC) {
+		return err
+	}
+	return nil
 }
 
 // noRoom fails the log after err, of making room for a write, under mu;
@@ -375,27 +390,37 @@ func (w *wal) rotate(n int64) (uint64, error) {
 	if fits || empty {
 		return w.seq, nil
 	}
-	had := w.seg.off > 0
+	// The segment ended holds records, or was ended before a new one could
+	// not be made: the new one is one more. Else it has the name of the
+	// one ended, and replaces it.
+	had := w.seg.off > 0 || w.seg.f == nil
 	if err := w.next(n); err != nil {
 		return 0, err
 	}
 	if had {
 		w.segments.Add(1)
-	} // else the new one has its name, and replaces it
+	}
 	return w.seq, nil
 }
 
-// next ends the segment, and opens the next, of room for n bytes at
-// least, under wmu and mu. Failing, the log fails, left without a segment
-// to append to.
+// next ends the segment, if any, and opens the next, of room for n bytes
+// at least, under wmu and mu. Failing, the log is left without a segment:
+// nothing fits, appends rotate. It fails, but for the disk full making the
+// next: the write that wanted it fails alone, and the next tries again.
 func (w *wal) next(n int64) error {
-	err := w.endSegment()
+	var err error
+	if w.seg.f != nil {
+		err = w.endSegment()
+	}
 	var seg *segment
 	if err == nil {
 		seg, err = openSegment(w.dir, w.seq+1, max(w.segSize, n), w.sync.none)
 	}
 	if err != nil {
-		w.seg = &segment{} // nothing fits: appends rotate, and fail
+		w.seg = &segment{}
+		if errors.Is(err, syscall.ENOSPC) {
+			return err
+		}
 		w.fail(err)
 		return w.err
 	}
