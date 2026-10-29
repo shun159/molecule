@@ -107,3 +107,70 @@ func TestDistPull(t *testing.T) {
 		t.Fatalf("%d events, %v", len(got), err)
 	}
 }
+
+// TestPullAll ranges over the events of several producers, to the end of
+// all.
+func TestPullAll(t *testing.T) {
+	n := proc.NewNode("")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var subs []stage.Subscribe
+	for _, limit := range []int{100, 300, 7} {
+		src, _ := stage.Start(ctx, n, stage.Produce(counter{Limit: limit, Done: true}))
+		subs = append(subs, stage.Subscribe{To: src, Max: 16})
+	}
+	var got []int
+	for v, err := range stage.PullAll[int](ctx, n, subs...) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, v)
+	}
+	slices.Sort(got)
+	want := slices.Concat(upTo(100), upTo(300), upTo(7))
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("%d events", len(got))
+	}
+	for range stage.PullAll[int](ctx, n) {
+		t.Fatal("an event of no producer")
+	}
+}
+
+// TestPullAllEnds has one of the producers fail: the range ends with its
+// reason; or broken off, all the producers, Ephemeral, stop.
+func TestPullAllEnds(t *testing.T) {
+	n := proc.NewNode("")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ok, _ := stage.Start(ctx, n, stage.Produce(counter{Limit: 1 << 20, Alone: true}))
+	bad, _ := stage.Start(ctx, n, stage.Produce(counter{Limit: 5}))
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		n.Send(bad, actor.Do(actor.Stop{Reason: errBoom}))
+	}()
+	var last error
+	for _, err := range stage.PullAll[int](ctx, n, stage.Subscribe{To: ok, Max: 10}, stage.Subscribe{To: bad}) {
+		last = err
+	}
+	if !errors.Is(last, errBoom) {
+		t.Fatalf("ended with %v", last)
+	}
+
+	a, _ := stage.Start(ctx, n, stage.Produce(counter{Limit: 1 << 20, Alone: true}))
+	b, _ := stage.Start(ctx, n, stage.Produce(counter{Limit: 1 << 20, Alone: true}))
+	for _, err := range stage.PullAll[int](ctx, n, stage.Subscribe{To: a, Max: 10}, stage.Subscribe{To: b, Max: 10}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		break
+	}
+	for _, pid := range []proc.PID{a, b} {
+		watch, stop := n.Watch(ctx, pid)
+		<-watch.Done()
+		stop()
+		if reason := context.Cause(watch); !errors.Is(reason, proc.Normal) && !errors.Is(reason, proc.NoProc) {
+			t.Fatalf("%v: %v", pid, reason)
+		}
+	}
+}
