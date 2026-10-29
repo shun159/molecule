@@ -15,7 +15,9 @@ var ErrConflict = errors.New("kvs: conflict")
 // compares the mod revision of a key: it writes only if the entry is still
 // the one read, and does not depend on V being comparable.
 
-// GetRev returns the value under k and its revision.
+// GetRev returns the value under k and its revision. A write is read
+// before it is durable: lost by a crash, its revision is left to no write
+// after, opening going on past it, for a conditional write on it to fail.
 func (t *Table[K, V]) GetRev(k K) (V, uint64, bool) { return t.idx.get(k) }
 
 // PutIf puts v under k if the revision of the entry under k is rev, or,

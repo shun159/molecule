@@ -3,6 +3,7 @@ package kvs
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -65,6 +66,12 @@ type segment struct {
 	off    int64 // the end of the records
 	zeroed int64 // the size of f
 }
+
+// maxLag is the most writes not yet durable: a write past it syncs those
+// before it first. A crash loses no more, of seqs after the last durable;
+// opening goes on past them, for no write after to have the seq of a
+// write lost, read before. A claim of a synced log so always fits.
+const maxLag = math.MaxUint16
 
 // startWAL starts the log of dir, its last seq being seq, in a new segment.
 func startWAL(dir string, seq uint64, disk int64, segments int, o Sync, segSize int64) (*wal, error) {
@@ -150,8 +157,8 @@ func (s *segment) close() error {
 func (w *wal) append(r rec) (uint64, *batch, error) {
 	n := r.size()
 	w.mu.Lock()
-	for w.err == nil && w.seg.off+n > w.seg.size {
-		if err := w.rotateFor(n); err != nil {
+	for w.err == nil && !w.roomFor(n) {
+		if err := w.makeRoom(n); err != nil {
 			w.mu.Unlock()
 			return 0, nil, err
 		}
@@ -204,6 +211,27 @@ func (w *wal) rotateFor(n int64) error {
 	if errors.Is(err, syscall.ENOSPC) {
 		return err
 	}
+	return nil
+}
+
+// roomFor reports whether a record of n bytes fits in the segment, and
+// among the writes not durable, under mu.
+func (w *wal) roomFor(n int64) bool {
+	return w.seg.off+n <= w.seg.size && w.seq-w.durable.Load() < maxLag
+}
+
+// makeRoom makes room for a record of n bytes, under mu, let go
+// meanwhile: a new segment, if it does not fit; else the writes not
+// durable synced, maxLag of them.
+func (w *wal) makeRoom(n int64) error {
+	if w.seg.off+n > w.seg.size {
+		return w.rotateFor(n)
+	}
+	w.mu.Unlock()
+	w.wmu.Lock()
+	w.syncNow()
+	w.wmu.Unlock()
+	w.mu.Lock()
 	return nil
 }
 
