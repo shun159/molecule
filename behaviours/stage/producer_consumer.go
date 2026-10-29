@@ -46,6 +46,7 @@ type ProducerConsumerState[S, In any] struct {
 	out   emitting
 
 	queue []queued[In] // the events received, to handle as demand comes
+	win   window
 
 	// A subscription ended normally: the stage handles its events left and
 	// stops.
@@ -68,18 +69,21 @@ type queued[In any] struct {
 
 // ProduceConsume makes b a stage, to start.
 func ProduceConsume[S, In any](b ProducerConsumer[S, In]) Stage[ProducerConsumerState[S, In]] {
-	return producerConsumer[S, In]{b}
+	return producerConsumer[S, In]{b: b}
 }
 
 // producerConsumer runs a ProducerConsumer as a gen.Behaviour.
 type producerConsumer[S, In any] struct {
-	b ProducerConsumer[S, In]
+	b   ProducerConsumer[S, In]
+	now func() time.Time // the clock of the process
 }
 
 func (producerConsumer[S, In]) stage() {}
 
-// WithClock gives the clock to the behaviour, if it is actor.Clocked.
+// WithClock keeps the clock, for the windows, and gives it to the
+// behaviour, if it is actor.Clocked.
 func (a producerConsumer[S, In]) WithClock(now func() time.Time) any {
+	a.now = now
 	c, ok := a.b.(actor.Clocked)
 	if !ok {
 		return a
@@ -88,7 +92,8 @@ func (a producerConsumer[S, In]) WithClock(now func() time.Time) any {
 	if !ok {
 		return nil // the runtime fails the start
 	}
-	return producerConsumer[S, In]{b}
+	a.b = b
+	return a
 }
 
 func (a producerConsumer[S, In]) Init(self proc.PID, _ any) (ProducerConsumerState[S, In], []actor.Effect, error) {
@@ -102,7 +107,8 @@ func (a producerConsumer[S, In]) Init(self proc.PID, _ any) (ProducerConsumerSta
 	}
 	p := ProducerConsumerState[S, In]{state: s, in: subscribing{self: self}, out: to}
 	out := perform(nil, effs, &p.out, &p.in)
-	return p, p.out.stopIfDone(out), nil
+	p.win, effs = windowOf[S](a.b, clock(a.now)())
+	return p, p.out.stopIfDone(append(out, effs...)), nil
 }
 
 func (a producerConsumer[S, In]) Handle(p ProducerConsumerState[S, In], msg gen.Msg) (ProducerConsumerState[S, In], []actor.Effect) {
@@ -142,6 +148,8 @@ func (a producerConsumer[S, In]) info(p ProducerConsumerState[S, In], msg any) (
 		return a.ended(p, m.Ref, m.Reason, actor.Demonitor{Tag: producerDown{m.Ref}})
 	case resubscribeMsg:
 		return p, p.in.resubscribe(m)
+	case windowEnd:
+		return a.windowEnded(p)
 	case actor.Down:
 		return a.down(p, m)
 	}
@@ -275,6 +283,13 @@ func (p ProducerConsumerState[S, In]) stopIfDrained(out []actor.Effect) []actor.
 		return out
 	}
 	return append(out, actor.Stop{Reason: p.reason})
+}
+
+// windowEnded tells HandleWindow of the window ended.
+func (a producerConsumer[S, In]) windowEnded(p ProducerConsumerState[S, In]) (ProducerConsumerState[S, In], []actor.Effect) {
+	s, effs, w, timer := windowEnded(a.b.(Windowing[S]), p.state, p.win, clock(a.now)())
+	p.state, p.win = s, w
+	return p, append(perform(nil, effs, &p.out, &p.in), timer...)
 }
 
 func (a producerConsumer[S, In]) handleInfo(p ProducerConsumerState[S, In], msg any) (ProducerConsumerState[S, In], []actor.Effect) {

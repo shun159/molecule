@@ -28,6 +28,7 @@ type Consumer[S, In any] interface {
 type ConsumerState[S any] struct {
 	state S
 	in    subscribing
+	win   window
 }
 
 // State returns the state of the behaviour.
@@ -35,18 +36,21 @@ func (c ConsumerState[S]) State() S { return c.state }
 
 // Consume makes b a stage, to start.
 func Consume[S, In any](b Consumer[S, In]) Stage[ConsumerState[S]] {
-	return consumer[S, In]{b}
+	return consumer[S, In]{b: b}
 }
 
 // consumer runs a Consumer as a gen.Behaviour.
 type consumer[S, In any] struct {
-	b Consumer[S, In]
+	b   Consumer[S, In]
+	now func() time.Time // the clock of the process
 }
 
 func (consumer[S, In]) stage() {}
 
-// WithClock gives the clock to the behaviour, if it is actor.Clocked.
+// WithClock keeps the clock, for the windows, and gives it to the
+// behaviour, if it is actor.Clocked.
 func (a consumer[S, In]) WithClock(now func() time.Time) any {
+	a.now = now
 	c, ok := a.b.(actor.Clocked)
 	if !ok {
 		return a
@@ -55,7 +59,8 @@ func (a consumer[S, In]) WithClock(now func() time.Time) any {
 	if !ok {
 		return nil // the runtime fails the start
 	}
-	return consumer[S, In]{b}
+	a.b = b
+	return a
 }
 
 func (a consumer[S, In]) Init(self proc.PID, _ any) (ConsumerState[S], []actor.Effect, error) {
@@ -65,7 +70,8 @@ func (a consumer[S, In]) Init(self proc.PID, _ any) (ConsumerState[S], []actor.E
 	}
 	c := ConsumerState[S]{state: s, in: subscribing{self: self}}
 	out := perform(nil, effs, nil, &c.in)
-	return c, out, nil
+	c.win, effs = windowOf[S](a.b, clock(a.now)())
+	return c, append(out, effs...), nil
 }
 
 func (a consumer[S, In]) Handle(c ConsumerState[S], msg gen.Msg) (ConsumerState[S], []actor.Effect) {
@@ -87,6 +93,8 @@ func (a consumer[S, In]) info(c ConsumerState[S], msg any) (ConsumerState[S], []
 		return a.ended(c, m.Ref, m.Reason, actor.Demonitor{Tag: producerDown{m.Ref}})
 	case resubscribeMsg:
 		return c, c.in.resubscribe(m)
+	case windowEnd:
+		return a.windowEnded(c)
 	case actor.Down:
 		if t, ok := m.Tag.(producerDown); ok {
 			return a.ended(c, t.ref, m.Reason)
@@ -148,6 +156,13 @@ func (a consumer[S, In]) ended(c ConsumerState[S], ref subRef, reason error, eff
 		out = append(out, actor.Stop{Reason: reason})
 	}
 	return c, out
+}
+
+// windowEnded tells HandleWindow of the window ended.
+func (a consumer[S, In]) windowEnded(c ConsumerState[S]) (ConsumerState[S], []actor.Effect) {
+	s, effs, w, timer := windowEnded(a.b.(Windowing[S]), c.state, c.win, clock(a.now)())
+	c.state, c.win = s, w
+	return c, append(perform(nil, effs, nil, &c.in), timer...)
 }
 
 func (a consumer[S, In]) handleInfo(c ConsumerState[S], msg any) (ConsumerState[S], []actor.Effect) {
