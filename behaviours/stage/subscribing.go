@@ -22,6 +22,7 @@ type subscription struct {
 	tag      any
 	max, min int
 	pending  int // the events asked for and not received
+	ending   Ending
 }
 
 // take counts n events received, and returns how many to ask for: once
@@ -49,7 +50,7 @@ func (in *subscribing) subscribe(x Subscribe) []actor.Effect {
 	out := in.cancel(Cancel{Tag: x.Tag})
 	ref := subRef{Consumer: in.self, N: in.next}
 	in.next++
-	sub := subscription{ref: ref, to: x.To, tag: x.Tag, max: maxDemand, min: minDemand, pending: maxDemand}
+	sub := subscription{ref: ref, to: x.To, tag: x.Tag, max: maxDemand, min: minDemand, pending: maxDemand, ending: x.Ending}
 	in.subs = append(slices.Clip(in.subs), sub)
 	return append(out,
 		actor.Monitor{Target: x.To, Tag: producerDown{ref}},
@@ -71,15 +72,16 @@ func (in *subscribing) cancel(x Cancel) []actor.Effect {
 	)
 }
 
-// end forgets the subscription of ref its producer ended, and reports
-// whether there was one.
-func (in *subscribing) end(ref subRef) bool {
+// end forgets the subscription of ref its producer ended, and returns
+// it, if there was one.
+func (in *subscribing) end(ref subRef) (subscription, bool) {
 	i := in.find(ref)
 	if i < 0 {
-		return false
+		return subscription{}, false
 	}
+	sub := in.subs[i]
 	in.subs = slices.Delete(slices.Clone(in.subs), i, i+1)
-	return true
+	return sub, true
 }
 
 // askMore appends to out the ask of the producer of ref for n more
