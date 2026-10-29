@@ -71,6 +71,15 @@
 // moment, and may write to the table; without ReadConcurrency, it copies
 // each shard to do so.
 //
+// A [Snapshot] is the table at one moment, all its shards together, to
+// read as long as needed, the table written meanwhile: of an OrderedSet,
+// or with ReadConcurrency, it costs little to take, whatever the size of
+// the table, keeping the trees, or the tries, of the moment; of a Set
+// without ReadConcurrency, it copies the entries.
+//
+//	snap := leases.Snapshot()
+//	for ip, lease := range snap.Range(lo, hi) {
+//
 // # Order
 //
 // A table is a [Set], by default, or an [OrderedSet], as an ETS table is

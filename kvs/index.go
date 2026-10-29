@@ -28,6 +28,9 @@ type index[K comparable, V any] interface {
 	// range over without lock. With cut, they are those it holds once
 	// locked, for a compaction.
 	byShard(cut bool) iter.Seq[entries[K, V]]
+	// snapshot returns the entries as they are now, in all the shards at
+	// one moment, to read without lock: see Snapshot.
+	snapshot() view[K, V]
 	// load sets or deletes entries on opening, without the log.
 	load(k K, v V, size int64, rev uint64)
 	unload(k K)

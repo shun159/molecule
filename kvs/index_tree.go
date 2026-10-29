@@ -178,10 +178,16 @@ func (x *treeIndex[K, V]) inOrder(root *bnode[K, V]) entries[K, V] {
 
 // ascend yields the entries from lo, if not nil, up to hi, if not nil, in
 // order, merging those of the shards, each frozen as it was at a moment.
+func (x *treeIndex[K, V]) ascend(lo, hi *K, yield func(*leaf[K, V]) bool) {
+	x.ascendRoots(nil, lo, hi, yield)
+}
+
+// ascendRoots is ascend over the trees of roots, one a shard, or, if nil,
+// over those of the shards, frozen.
 //
 //abc:hot BenchmarkOrdered
-func (x *treeIndex[K, V]) ascend(lo, hi *K, yield func(*leaf[K, V]) bool) {
-	cs := x.cursors(lo, hi)
+func (x *treeIndex[K, V]) ascendRoots(roots []*bnode[K, V], lo, hi *K, yield func(*leaf[K, V]) bool) {
+	cs := x.cursors(roots, lo, hi)
 	if len(cs) == 1 {
 		// One shard, or one with entries in range: nothing to merge.
 		for c := cs[0]; c.cur != nil && yield(c.cur); c.next() {
@@ -203,9 +209,10 @@ func (x *treeIndex[K, V]) ascend(lo, hi *K, yield func(*leaf[K, V]) bool) {
 	}
 }
 
-// cursors returns a cursor of each shard frozen, at its first entry from
-// lo, if not nil, stopping before hi, if not nil; but those at no entry.
-func (x *treeIndex[K, V]) cursors(lo, hi *K) []*cursor[K, V] {
+// cursors returns a cursor of each tree of roots, or, if nil, of each
+// shard frozen, at its first entry from lo, if not nil, stopping before
+// hi, if not nil; but those at no entry.
+func (x *treeIndex[K, V]) cursors(roots []*bnode[K, V], lo, hi *K) []*cursor[K, V] {
 	all := make([]cursor[K, V], len(x.shards))
 	stacks := make([]frame[K, V], len(x.shards)*8) // deep enough for most
 	cs := make([]*cursor[K, V], 0, len(x.shards))
@@ -215,11 +222,21 @@ func (x *treeIndex[K, V]) cursors(lo, hi *K) []*cursor[K, V] {
 		if hi != nil {
 			c.hi, c.hasHi = *hi, true
 		}
-		if c.seek(x.frozen(i, false), lo); c.cur != nil {
+		root := x.rootOf(roots, i)
+		if c.seek(root, lo); c.cur != nil {
 			cs = append(cs, c)
 		}
 	}
 	return cs
+}
+
+// rootOf returns the tree of shard i: roots[i], or, if roots is nil, that
+// of the shard, frozen.
+func (x *treeIndex[K, V]) rootOf(roots []*bnode[K, V], i int) *bnode[K, V] {
+	if roots == nil {
+		return x.frozen(i, false)
+	}
+	return roots[i]
 }
 
 // A cursorHeap is a heap of cursors, by the keys at them: the first at the
