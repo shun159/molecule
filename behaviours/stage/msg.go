@@ -27,10 +27,11 @@ type (
 		Ref subRef
 		N   int
 	}
-	// eventsMsg carries events, a slice of the type the producer emits.
+	// eventsMsg carries events, the events[T] of the type the producer
+	// emits.
 	eventsMsg struct {
 		Ref    subRef
-		Events any
+		Events batch
 	}
 	// cancelMsg is a consumer cancelling.
 	cancelMsg struct {

@@ -123,7 +123,7 @@ func subscriptionsSent(t *testing.T, s *gensim.Sim) int {
 		case askMsg:
 			asked[m.Ref] += m.N
 		case eventsMsg:
-			sent[m.Ref] += len(m.Events.([]int))
+			sent[m.Ref] += m.Events.len()
 			if sent[m.Ref] > asked[m.Ref] {
 				t.Fatalf("%d events sent %v, %d asked for", sent[m.Ref], m.Ref, asked[m.Ref])
 			}

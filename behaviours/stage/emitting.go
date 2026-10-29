@@ -9,10 +9,11 @@ import (
 
 // emitting is the side of a stage that emits, a producer or a
 // producer-consumer: the dispatch of its events to its consumers, and the
-// demand it was told of.
+// demand it was told of. Its methods append their effects to out.
 type emitting struct {
 	self    proc.PID
 	to      dispatch
+	mine    bool // to is a clone, made in the handling of this message
 	buffer  Buffer
 	waiting int   // the events the stage was told of and has not emitted
 	emits   batch // no events, of the type of those emitted, once one is
@@ -34,34 +35,44 @@ func newEmitting(b any, self proc.PID) (emitting, error) {
 	return emitting{self: self, to: to, buffer: bufferOf(b)}, err
 }
 
+// handling starts the handling of a message: the dispatch is that of the
+// state given, not to be written.
+func (e *emitting) handling() { e.mine = false }
+
+// change returns the dispatch to change: a clone of that of the state
+// given, the first time in the handling of a message.
+func (e *emitting) change() dispatch {
+	if !e.mine {
+		e.to, e.mine = e.to.clone(), true
+	}
+	return e.to
+}
+
 // accept takes the consumer of m, and monitors it, or cancels it if the
 // dispatch will not have it.
-func (e *emitting) accept(m subscribeMsg) []actor.Effect {
-	to, err := e.to.subscribe(m)
-	if err != nil {
-		return actor.Do(actor.Send{To: m.Ref.Consumer, Msg: cancelledMsg{Ref: m.Ref, Reason: err}})
+func (e *emitting) accept(m subscribeMsg, out []actor.Effect) []actor.Effect {
+	if err := e.change().subscribe(m); err != nil {
+		return append(out, actor.Send{To: m.Ref.Consumer, Msg: cancelledMsg{Ref: m.Ref, Reason: err}})
 	}
-	e.to = to
-	return actor.Do(actor.Monitor{Target: m.Ref.Consumer, Tag: consumerDown{m.Ref}})
+	return append(out, actor.Monitor{Target: m.Ref.Consumer, Tag: consumerDown{m.Ref}})
 }
 
 // ask adds the demand of m, sending what waits first, and returns how
 // much more the stage is to emit.
-func (e *emitting) ask(m askMsg) (int, []actor.Effect) {
-	to, out, ok := e.to.ask(m.Ref, m.N)
+func (e *emitting) ask(m askMsg, out []actor.Effect) (int, []actor.Effect) {
+	out, ok := e.change().ask(m.Ref, m.N, out)
 	if !ok {
-		return 0, nil // from a consumer gone
+		return 0, out // from a consumer gone
 	}
-	e.to = to
 	return e.tell(), out
 }
 
 // cancelled ends the subscription its consumer cancelled, and returns how
 // much more the stage is to emit.
-func (e *emitting) cancelled(ref subRef) (int, []actor.Effect) {
-	n, out, ok := e.gone(ref)
+func (e *emitting) cancelled(ref subRef, out []actor.Effect) (int, []actor.Effect) {
+	n, out, ok := e.gone(ref, out)
 	if !ok {
-		return 0, nil
+		return 0, out
 	}
 	return n, append(out, actor.Demonitor{Tag: consumerDown{ref}})
 }
@@ -69,12 +80,11 @@ func (e *emitting) cancelled(ref subRef) (int, []actor.Effect) {
 // gone forgets the consumer of ref, reports whether it was a consumer,
 // and returns how much more the stage is to emit: the others may want
 // more than it did.
-func (e *emitting) gone(ref subRef) (int, []actor.Effect, bool) {
-	to, out, ok := e.to.leave(ref)
+func (e *emitting) gone(ref subRef, out []actor.Effect) (int, []actor.Effect, bool) {
+	out, ok := e.change().leave(ref, out)
 	if !ok {
-		return 0, nil, false
+		return 0, out, false
 	}
-	e.to = to
 	return e.tell(), out, true
 }
 
@@ -101,21 +111,20 @@ func (e *emitting) stopIfDone(out []actor.Effect) []actor.Effect {
 
 // emitBatch emits b. Its error is errEmitType for b of another type than
 // the events emitted before.
-func (e *emitting) emitBatch(b batch) ([]actor.Effect, error) {
+func (e *emitting) emitBatch(b batch, out []actor.Effect) ([]actor.Effect, error) {
 	if e.emits == nil {
 		e.emits = b.empty()
 	}
 	if !e.emits.sameType(b) {
-		return nil, errEmitType
+		return out, errEmitType
 	}
 	if b.len() == 0 {
-		return nil, nil
+		return out, nil
 	}
 	e.waiting = max(e.waiting-b.len(), 0)
-	to, out, err := e.to.route(b)
+	out, err := e.change().route(b, out)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	e.to = to
-	return append(out, e.bound()...), nil
+	return e.bound(out), nil
 }

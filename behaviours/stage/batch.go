@@ -7,8 +7,6 @@ import "slices"
 // alone, for Produce to infer it.
 type batch interface {
 	len() int
-	// head is the first n events, a slice of their type, to send.
-	head(n int) any
 	// tail is the events after the first n, nil if none.
 	tail(n int) batch
 	// first is the first n events, nil if none.
@@ -28,8 +26,6 @@ type batch interface {
 type events[T any] []T
 
 func (e events[T]) len() int { return len(e) }
-
-func (e events[T]) head(n int) any { return []T(e[:n:n]) }
 
 func (e events[T]) tail(n int) batch {
 	if n == len(e) {
@@ -78,6 +74,12 @@ func (e events[T]) partition(hash any, n int) ([]batch, error) {
 		}
 	}
 	return parts, nil
+}
+
+// eventsOf returns the events of m, if of type In.
+func eventsOf[In any](m eventsMsg) ([]In, bool) {
+	e, ok := m.Events.(events[In])
+	return e, ok
 }
 
 // emitter is an Emit of any type.

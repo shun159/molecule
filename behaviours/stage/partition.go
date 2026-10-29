@@ -9,7 +9,7 @@ import (
 // partitionDispatch sends each event to the consumer of its partition.
 type partitionDispatch struct {
 	hash   any         // the Hash of Partition, a func(T) int
-	parts  []partition // by number, copied before changing them
+	parts  []partition // by number
 	queued int         // the events in the queues of all
 }
 
@@ -20,49 +20,49 @@ type partition struct {
 	queue    batch // the events of the partition not asked for, while its demand is 0
 }
 
-func (d partitionDispatch) subscribe(m subscribeMsg) (dispatch, error) {
+func (d *partitionDispatch) clone() dispatch {
+	c := *d
+	c.parts = slices.Clone(d.parts)
+	return &c
+}
+
+func (d *partitionDispatch) subscribe(m subscribeMsg) error {
 	k := m.Partition
 	if k < 0 || k >= len(d.parts) {
-		return d, ErrBadPartition
+		return ErrBadPartition
 	}
 	if d.parts[k].taken {
-		return d, ErrPartitionTaken
+		return ErrPartitionTaken
 	}
-	d.parts = slices.Clone(d.parts)
-	d.parts[k].consumer, d.parts[k].taken = downstream{ref: m.Ref}, true
-	return d, nil
+	d.parts[k].consumer, d.parts[k].taken = newDownstream(m.Ref), true
+	return nil
 }
 
 // ask sends the consumer the queue of its partition first.
-func (d partitionDispatch) ask(ref subRef, n int) (dispatch, []actor.Effect, bool) {
+func (d *partitionDispatch) ask(ref subRef, n int, out []actor.Effect) ([]actor.Effect, bool) {
 	k := d.find(ref)
 	if k < 0 {
-		return d, nil, false
+		return out, false
 	}
-	d.parts = slices.Clone(d.parts)
 	d.parts[k].consumer.demand += n
-	out := d.flush(k)
-	return d, out, true
+	return d.flush(k, out), true
 }
 
 // leave keeps the queue of the partition for its next consumer.
-func (d partitionDispatch) leave(ref subRef) (dispatch, []actor.Effect, bool) {
+func (d *partitionDispatch) leave(ref subRef, out []actor.Effect) ([]actor.Effect, bool) {
 	k := d.find(ref)
 	if k < 0 {
-		return d, nil, false
+		return out, false
 	}
-	d.parts = slices.Clone(d.parts)
 	d.parts[k].consumer, d.parts[k].taken = downstream{}, false
-	return d, nil, true
+	return out, true
 }
 
-func (d partitionDispatch) route(b batch) (dispatch, []actor.Effect, error) {
+func (d *partitionDispatch) route(b batch, out []actor.Effect) ([]actor.Effect, error) {
 	split, err := b.partition(d.hash, len(d.parts))
 	if err != nil {
-		return d, nil, err
+		return out, err
 	}
-	d.parts = slices.Clone(d.parts)
-	var out []actor.Effect
 	for k, pb := range split {
 		if pb == nil {
 			continue
@@ -77,12 +77,12 @@ func (d partitionDispatch) route(b batch) (dispatch, []actor.Effect, error) {
 			d.queued += rest.len()
 		}
 	}
-	return d, out, nil
+	return out, nil
 }
 
 // capacity is the demand of all, less the events queued: those kept for
 // some partitions count against the demand of the others.
-func (d partitionDispatch) capacity() int {
+func (d *partitionDispatch) capacity() int {
 	demand := 0
 	for _, p := range d.parts {
 		demand += p.consumer.demand
@@ -90,16 +90,15 @@ func (d partitionDispatch) capacity() int {
 	return max(demand-d.queued, 0)
 }
 
-func (d partitionDispatch) held() int { return d.queued }
+func (d *partitionDispatch) held() int { return d.queued }
 
 // trim cuts every queue to a level, the same for all, so that no more
 // than size are queued: the longest lose most.
-func (d partitionDispatch) trim(size int, newest bool) (dispatch, int) {
+func (d *partitionDispatch) trim(size int, newest bool) int {
 	if d.queued <= size {
-		return d, 0
+		return 0
 	}
 	level := d.level(size)
-	d.parts = slices.Clone(d.parts)
 	dropped := 0
 	for k := range d.parts {
 		var cut int
@@ -107,7 +106,7 @@ func (d partitionDispatch) trim(size int, newest bool) (dispatch, int) {
 		dropped += cut
 	}
 	d.queued -= dropped
-	return d, dropped
+	return dropped
 }
 
 // level returns the most events each queue may keep for no more than
@@ -129,9 +128,7 @@ func (d *partitionDispatch) level(size int) int {
 func (d *partitionDispatch) queuedUpTo(level int) int {
 	n := 0
 	for _, p := range d.parts {
-		if p.queue != nil {
-			n += min(p.queue.len(), level)
-		}
+		n += min(lenOf(p.queue), level)
 	}
 	return n
 }
@@ -143,16 +140,13 @@ func (d *partitionDispatch) find(ref subRef) int {
 
 // flush sends the consumer of partition k its queue, as far as it asked
 // for it.
-func (d *partitionDispatch) flush(k int) []actor.Effect {
+func (d *partitionDispatch) flush(k int, out []actor.Effect) []actor.Effect {
 	p := &d.parts[k]
-	if p.queue == nil {
-		return nil
-	}
-	n := min(p.consumer.demand, p.queue.len())
+	n := min(p.consumer.demand, lenOf(p.queue))
 	if n == 0 {
-		return nil
+		return out
 	}
-	out := actor.Do(d.send(k, p.queue, n))
+	out = append(out, d.send(k, p.queue, n))
 	p.queue = p.queue.tail(n)
 	d.queued -= n
 	return out
@@ -163,5 +157,5 @@ func (d *partitionDispatch) flush(k int) []actor.Effect {
 func (d *partitionDispatch) send(k int, b batch, n int) actor.Effect {
 	c := &d.parts[k].consumer
 	c.demand -= n
-	return sendEvents(c.ref, b, n)
+	return sendEvents(*c, b, n)
 }

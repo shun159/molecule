@@ -182,11 +182,12 @@ func isStageEffect(e actor.Effect) bool {
 // perform performs the effects of stage among effs on the sides the
 // stage has, out emitting and in subscribing, nil if it has not: an Emit
 // needs out, a Subscribe or a Cancel in, or they stop the stage with a
-// BadEffectError. It returns the effects for the runtime, in order.
-func perform(effs []actor.Effect, out *emitting, in *subscribing) []actor.Effect {
-	var rest []actor.Effect
+// BadEffectError. It appends the effects for the runtime to rest, in
+// order.
+func perform(rest, effs []actor.Effect, out *emitting, in *subscribing) []actor.Effect {
 	for _, e := range effs {
-		err := performOne(e, out, in, &rest)
+		var err error
+		rest, err = performOne(rest, e, out, in)
 		if errors.Is(err, errEmitType) {
 			err = &BadEffectError{Effect: e}
 		}
@@ -200,35 +201,31 @@ func perform(effs []actor.Effect, out *emitting, in *subscribing) []actor.Effect
 // performOne performs e, if of stage, or else appends it to rest. Its
 // error is errEmitType for an effect the stage may not perform, or why it
 // failed.
-func performOne(e actor.Effect, out *emitting, in *subscribing, rest *[]actor.Effect) error {
-	var effs []actor.Effect
-	var err error
+func performOne(rest []actor.Effect, e actor.Effect, out *emitting, in *subscribing) ([]actor.Effect, error) {
 	switch x := e.(type) {
 	case emitter:
 		if out == nil {
-			return errEmitType
+			return rest, errEmitType
 		}
-		effs, err = out.emitBatch(x.batch())
+		return out.emitBatch(x.batch(), rest)
 	case Done:
 		if out == nil {
-			return errEmitType
+			return rest, errEmitType
 		}
 		out.done = true
+		return rest, nil
 	case Subscribe:
 		if in == nil {
-			return errEmitType
+			return rest, errEmitType
 		}
-		effs = in.subscribe(x)
+		return append(rest, in.subscribe(x)...), nil
 	case Cancel:
 		if in == nil {
-			return errEmitType
+			return rest, errEmitType
 		}
-		effs = in.cancel(x)
-	default:
-		effs = actor.Do(e)
+		return append(rest, in.cancel(x)...), nil
 	}
-	*rest = append(*rest, effs...)
-	return err
+	return append(rest, e), nil
 }
 
 // formatStatus formats the report of a stage terminating with the

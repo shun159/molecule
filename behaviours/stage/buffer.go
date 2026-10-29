@@ -72,16 +72,15 @@ func bufferOf(b any) Buffer {
 
 // bound holds the events of e to its buffer, dropping those beyond or
 // stopping the stage, as the Buffer says.
-func (e *emitting) bound() []actor.Effect {
+func (e *emitting) bound(out []actor.Effect) []actor.Effect {
 	if e.buffer.Size < 0 || e.to.held() <= e.buffer.Size {
-		return nil
+		return out
 	}
 	if e.buffer.Overflow == StopOnFull {
-		return actor.Do(actor.Stop{Reason: ErrBufferFull})
+		return append(out, actor.Stop{Reason: ErrBufferFull})
 	}
-	to, n := e.to.trim(e.buffer.Size, e.buffer.Overflow == DropNewest)
-	e.to = to
-	return actor.Do(
+	n := e.change().trim(e.buffer.Size, e.buffer.Overflow == DropNewest)
+	return append(out,
 		gen.Log{Level: slog.LevelWarn, Msg: "stage: buffer full, events dropped", Attrs: []any{"stage", e.self, "dropped", n}},
 		gen.Emit{Event: Dropped{Stage: e.self, Events: n}},
 	)
