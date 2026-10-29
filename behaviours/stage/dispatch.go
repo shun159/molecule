@@ -41,10 +41,14 @@ type Broadcast struct{}
 // The events of a partition wait for its consumer to want them, and the
 // stage is told of less demand while they do: it holds no more events
 // than its consumers asked for, and a partition without a consumer, or a
-// slow one, holds the others back once they are as many.
+// slow one, holds the others back once they are as many. With Drop, the
+// events of a partition without a consumer are dropped instead, and those
+// it held when its consumer left: a node gone, the others go on, for a
+// stream that may lose some.
 type Partition[T any] struct {
 	Partitions int
 	Hash       func(T) int
+	Drop       bool
 }
 
 // Errors of partitions.
@@ -61,7 +65,7 @@ func (p Partition[T]) newDispatch() (dispatch, error) {
 	if p.Partitions <= 0 || p.Hash == nil {
 		return nil, ErrNoPartitions
 	}
-	return &partitionDispatch{hash: p.Hash, parts: make([]partition, p.Partitions)}, nil
+	return &partitionDispatch{hash: p.Hash, parts: make([]partition, p.Partitions), drop: p.Drop}, nil
 }
 
 // dispatch is the dispatching of the events of a stage to its consumers.
@@ -89,6 +93,8 @@ type dispatch interface {
 	held() int
 	// consumerCount is how many consumers there are.
 	consumerCount() int
+	// dropped is how many events it dropped, of its own, since the start.
+	dropped() uint64
 	// trim drops events kept beyond size, the newest if newest, else the
 	// oldest, and returns how many.
 	trim(size int, newest bool) int

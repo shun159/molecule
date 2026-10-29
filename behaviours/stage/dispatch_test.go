@@ -213,3 +213,42 @@ func TestBroadcastPushed(t *testing.T) {
 		t.Fatalf("got %v", g.events)
 	}
 }
+
+// TestPartitionDrop has a partition without a consumer, Drop: its events
+// are dropped, the other partition not held back.
+func TestPartitionDrop(t *testing.T) {
+	s := gensim.New(1)
+	part := stage.Partition[int]{Partitions: 2, Hash: mod(2), Drop: true}
+	src := spawn(t, s, stage.Produce(counter{Limit: 2000, Dispatch: part}))
+	even := spawn(t, s, stage.Consume(sink{From: src, Max: 10}))
+	s.RunUntilIdle()
+
+	want := slices.DeleteFunc(upTo(2000), func(n int) bool { return n%2 != 0 })
+	if g := gotOf(t, s, even); !slices.Equal(g.events, want) {
+		t.Fatalf("partition 0 got %d events", len(g.events))
+	}
+	if p, _ := gensim.State[stage.ProducerState[int]](s, src); p.State() != 2000 {
+		t.Fatalf("%d events emitted", p.State())
+	}
+}
+
+// TestPartitionDropLeft has the consumer of a partition leave, Drop: what
+// it held is dropped, the other partition not held back.
+func TestPartitionDropLeft(t *testing.T) {
+	for seed := range uint64(10) {
+		s := gensim.New(seed)
+		part := stage.Partition[int]{Partitions: 2, Hash: mod(2), Drop: true}
+		src := spawn(t, s, stage.Produce(counter{Limit: 2000, Over: 3, Dispatch: part}))
+		even := spawn(t, s, stage.Consume(sink{From: src, Max: 10}))
+		odd := spawn(t, s, stage.Consume(sink{From: src, Max: 10, Partition: 1}))
+		for len(gotOf(t, s, odd).events) < 20 {
+			s.Step()
+		}
+		s.Exit(odd, proc.Kill)
+		s.RunUntilIdle()
+
+		if g := gotOf(t, s, even); g.events[len(g.events)-1] != 1998 {
+			t.Fatalf("seed %d: partition 0 got to %d", seed, g.events[len(g.events)-1])
+		}
+	}
+}
