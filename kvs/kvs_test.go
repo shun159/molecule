@@ -94,8 +94,8 @@ func TestPutGetDelete(t *testing.T) {
 			if got := contents(tab); !maps.Equal(got, want) {
 				t.Fatalf("reopened: %v, want %v", got, want)
 			}
-			if got := tab.Info().LastSeq; got != info.LastSeq {
-				t.Fatalf("reopened LastSeq = %d, want %d", got, info.LastSeq)
+			if got := tab.Info().LastSeq; got < info.LastSeq {
+				t.Fatalf("reopened LastSeq = %d, before %d", got, info.LastSeq)
 			}
 		})
 	}

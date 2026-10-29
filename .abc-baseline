@@ -12,7 +12,7 @@
 28.8 kvs readRecords
 10.7 kvs readRecords cyclo
 28.4 kvs readRecords lines
-19.7 kvs wal.append
+20.2 kvs wal.append
 28.2 kvs wal.append lines
 15.6 kvs wal.syncNow
 17.6 kvs wal.syncNow lines

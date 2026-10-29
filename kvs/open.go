@@ -101,9 +101,12 @@ func (t *Table[K, V]) load() error {
 	if err != nil {
 		return err
 	}
-	if t.log, err = startWAL(t.dir, r.seq, r.disk, r.segs, t.opts.Sync, t.opts.SegmentSize); err != nil {
+	if t.log, err = startWAL(t.dir, r.goOnFrom(), r.disk, r.segs, t.opts.Sync, t.opts.SegmentSize); err != nil {
 		return err
 	}
+	// Once the new segment is in the directory, synced, its name telling
+	// the seqs the log goes on from: an empty last segment told it before.
+	t.removeStale(r)
 	if t.opts.Expires != nil {
 		t.exp = newExpiries(t)
 	}
@@ -112,12 +115,25 @@ func (t *Table[K, V]) load() error {
 
 // recovered is what recover found in the log.
 type recovered struct {
-	seq  uint64 // of the last write
-	disk int64  // the bytes of the files kept
-	segs int    // the segments kept
+	seq   uint64 // of the last write
+	named uint64 // the last seq before the last segment
+	found bool   // any segment or snapshot
+	disk  int64  // the bytes of the files kept
+	segs  int    // the segments kept
 
 	cuts  []cut    // the segments to cut to their records
 	stale []string // the files of the log not needed
+}
+
+// goOnFrom returns the seq the log goes on after: past maxLag after the
+// last durable, for a write lost to have had none of those after. The
+// writes of the last segment all lost, it is the last before them, as
+// its name tells. A new log goes on from 0.
+func (r recovered) goOnFrom() uint64 {
+	if !r.found {
+		return 0
+	}
+	return max(r.seq, r.named) + maxLag
 }
 
 // A cut is a segment of name to cut to n bytes, and sync.
@@ -127,23 +143,33 @@ type cut struct {
 }
 
 // recover reads the latest snapshot and the segments of the log after it
-// into the index. It cuts the segments to their records, and removes the
-// files of the log it does not need: those left by a compaction cut
-// short, the snapshots before the latest, and the segments it holds. It
-// does so once it read them all: a read failing changes nothing.
+// into the index. It cuts the segments to their records, once it read them
+// all: a read failing changes nothing. It notes the files of the log not
+// needed, to remove: those left by a compaction cut short, the snapshots
+// before the latest, and the segments it holds.
 func (t *Table[K, V]) recover() (recovered, error) {
 	segs, snaps, err := listLog(t.dir)
 	if err != nil {
 		return recovered{}, err
 	}
-	r := recovered{stale: t.tempFiles()}
+	r := recovered{stale: t.tempFiles(), found: len(segs)+len(snaps) > 0}
 	if len(snaps) > 0 {
 		if err := t.loadSnapshot(snaps, &r); err != nil {
 			return r, err
 		}
 	}
+	if err := t.loadSegments(segs, &r); err != nil {
+		return r, err
+	}
+	return r, t.cutSegments(r)
+}
+
+// loadSegments loads the writes of segs after the snapshot loaded in r,
+// if any.
+func (t *Table[K, V]) loadSegments(segs []logFile, r *recovered) error {
 	base := r.seq // the last write in the snapshot, 0 without
 	for i, s := range segs {
+		r.named = max(r.named, s.seq-1)
 		isLast := i == len(segs)-1
 		// The next segment beginning by the first write after the snapshot,
 		// this one has none.
@@ -152,11 +178,11 @@ func (t *Table[K, V]) recover() (recovered, error) {
 			r.stale = append(r.stale, s.name)
 			continue
 		}
-		if err := t.loadSegment(s, base, isLast, &r); err != nil {
-			return r, err
+		if err := t.loadSegment(s, base, isLast, r); err != nil {
+			return err
 		}
 	}
-	return r, t.tidy(r)
+	return nil
 }
 
 // tempFiles returns the files a compaction cut short left, if any.
@@ -174,18 +200,21 @@ func (t *Table[K, V]) tempFiles() []string {
 	return names
 }
 
-// tidy cuts the segments of r to their records, and removes its files not
-// needed.
-func (t *Table[K, V]) tidy(r recovered) error {
+// cutSegments cuts the segments of r to their records.
+func (t *Table[K, V]) cutSegments(r recovered) error {
 	for _, c := range r.cuts {
 		if err := truncate(filepath.Join(t.dir, c.name), c.n); err != nil {
 			return err
 		}
 	}
+	return nil
+}
+
+// removeStale removes the files of r not needed.
+func (t *Table[K, V]) removeStale(r recovered) {
 	for _, name := range r.stale {
 		remove(filepath.Join(t.dir, name))
 	}
-	return nil
 }
 
 // loadSnapshot loads the latest of snaps; the others are stale. A

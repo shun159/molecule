@@ -74,7 +74,7 @@ var (
 )
 
 // SyncEvery syncs the log every d: a write is durable at the sync after
-// it.
+// it, or, the 65535 writes before it not durable, once it synced them.
 func SyncEvery(d time.Duration) Sync { return Sync{every: d} }
 
 // Table is a table of entries, each a value under a key, in memory and in
@@ -268,7 +268,8 @@ type Info struct {
 	Segments  int
 
 	// LastSeq is the seq of the last write, DurableSeq of the last
-	// durable: the writes between are not yet.
+	// durable: the writes between are not yet. Opening, both go past the
+	// seqs a crash may have lost, unwritten: see Table.GetRev.
 	LastSeq    uint64
 	DurableSeq uint64
 	// Syncs is the number of syncs of the log since Open.
