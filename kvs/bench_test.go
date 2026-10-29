@@ -12,6 +12,7 @@ import (
 
 	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genserver"
+	"github.com/shun159/molecule/behaviours/stage"
 	"github.com/shun159/molecule/kvs"
 	"github.com/shun159/molecule/proc"
 )
@@ -588,5 +589,41 @@ func BenchmarkSnapshot(b *testing.B) {
 				}
 			})
 		}
+	}
+}
+
+// BenchmarkRanger goes over all of a table of 100000 entries with a
+// Ranger and stage.Pull, Max at a time: what an entry costs ranged so.
+func BenchmarkRanger(b *testing.B) {
+	o := kvs.Options[int, int]{Type: kvs.OrderedSet, Sync: kvs.SyncNone}
+	tab := open(b, b.TempDir(), o)
+	for k := range 100000 {
+		if err := tab.Put(k, k); err != nil {
+			b.Fatal(err)
+		}
+	}
+	node := proc.NewNode("")
+	for _, maxDemand := range []int{100, 1000} {
+		b.Run(fmt.Sprintf("max=%d", maxDemand), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				ctx := context.Background()
+				r, err := stage.Start(ctx, node, stage.Produce(kvs.Ranger[int, int]{Snapshot: tab.Snapshot(), Lo: 0, Hi: 100000}))
+				if err != nil {
+					b.Fatal(err)
+				}
+				n := 0
+				for _, err := range stage.Pull[kvs.Entry[int, int]](ctx, node, stage.Subscribe{To: r, Max: maxDemand}) {
+					if err != nil {
+						b.Fatal(err)
+					}
+					n++
+				}
+				if n != 100000 {
+					b.Fatalf("%d entries", n)
+				}
+			}
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N)/100000, "ns/entry")
+		})
 	}
 }
