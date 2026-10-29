@@ -16,9 +16,11 @@ import (
 
 // A disk is a model of what a power loss leaves of the directory of a
 // table: of each file, what it held at its last sync; of the directory,
-// the names it had at its last sync. A file created and not synced since
-// is left empty; a name removed and not synced since is left. It sees the
-// syncs of the package through syncFile and syncDir.
+// the names it had at its last sync, and of the changes to them since,
+// files created, removed or renamed, each kept or lost on its own, as a
+// test picks: see powerLossKeeping. A file created and not synced since is
+// left empty. It sees the syncs of the package through syncFile and
+// syncDir.
 //
 // A sync onSync fails with EIO drops what the file held that was not on
 // disk: as Linux may mark the pages it failed to write clean, a sync
@@ -262,12 +264,37 @@ func (d *disk) list() (map[string]uint64, error) {
 	return names, nil
 }
 
-// powerLoss writes what a power loss now leaves into dst, empty: for a
-// test to open it, many from one run. Into the directory itself, with its
+// powerLoss writes what a power loss now leaves into dst, empty, the
+// changes to the names of the directory not synced all lost: for a test
+// to open it, many from one run. Into the directory itself, with its
 // table closed, it rewinds it, and models it anew.
 func (d *disk) powerLoss(dst string) error {
+	return d.powerLossKeeping(dst, nil, func(int) bool { return false })
+}
+
+// unsynced returns the changes to the names of the directory since its
+// last sync, as they are now.
+func (d *disk) unsynced() ([]dirOp, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	now, err := d.list()
+	if err != nil {
+		return nil, err
+	}
+	return dirOps(d.names, now), nil
+}
+
+// powerLossKeeping is powerLoss, but for the changes of ops, those not
+// synced, that keep reports were kept: a power loss may keep any of
+// them, a later one without one before.
+func (d *disk) powerLossKeeping(dst string, ops []dirOp, keep func(i int) bool) error {
 	d.mu.Lock()
 	names := maps.Clone(d.names)
+	for i, op := range ops {
+		if keep(i) {
+			op.applyTo(names)
+		}
+	}
 	files := make(map[string][]byte, len(names))
 	for name, ino := range names {
 		files[name] = d.files[ino]
