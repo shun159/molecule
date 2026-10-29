@@ -53,7 +53,7 @@ func (in *subscribing) subscribe(x Subscribe) []actor.Effect {
 	in.subs = append(slices.Clip(in.subs), sub)
 	return append(out,
 		actor.Monitor{Target: x.To, Tag: producerDown{ref}},
-		actor.Send{To: x.To, Msg: subscribeMsg{Ref: ref, Ask: maxDemand}},
+		actor.Send{To: x.To, Msg: subscribeMsg{Ref: ref, Ask: maxDemand, Partition: x.Partition}},
 	)
 }
 

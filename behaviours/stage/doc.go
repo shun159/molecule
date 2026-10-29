@@ -45,10 +45,23 @@
 // and asks its producers for more only once it has handled those: the
 // demand goes up a pipeline from its end.
 //
-// A producer has any number of consumers, and sends each event to one of
-// them, the one wanting most, as GenStage's DemandDispatcher does: the
-// consumers share the work, each as fast as it goes. HandleDemand is told
-// of the demand of all.
+// # Dispatchers
+//
+// A producer, or a producer-consumer, has any number of consumers, and
+// sends them its events as its [Dispatcher] says, which it tells by
+// implementing [Dispatching]:
+//
+//	Demand     each event to one consumer, the one wanting most: the
+//	           consumers share the work, each as fast as it goes; the
+//	           default
+//	Broadcast  each event to every consumer, as fast as the slowest
+//	Partition  each event to the consumer of its partition, by a hash of
+//	           it: a consumer takes one with Subscribe
+//
+// HandleDemand is told of the events the consumers want, as the
+// dispatcher counts them: for Broadcast, those the consumer wanting least
+// wants, for Partition, those of all but as many as wait in partitions
+// wanting none.
 //
 // # Ending
 //

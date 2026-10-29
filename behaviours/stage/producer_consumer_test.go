@@ -20,7 +20,10 @@ type relay struct {
 	Max, Min int
 	Every    int
 	Copies   int
+	Dispatch stage.Dispatcher
 }
+
+func (r relay) Dispatcher() stage.Dispatcher { return r.Dispatch }
 
 func (r relay) Init(proc.PID) (int, []actor.Effect, error) {
 	return 0, actor.Do(stage.Subscribe{To: r.From, Max: r.Max, Min: r.Min}), nil

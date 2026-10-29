@@ -1,147 +1,109 @@
 package stage
 
 import (
-	"slices"
+	"errors"
 
 	"github.com/shun159/molecule/actor"
 )
 
 // emitting is the side of a stage that emits, a producer or a
-// producer-consumer: its consumers, the demand of each, and the events
-// waiting for demand.
-//
-// Each event goes to one consumer, the one wanting most, as GenStage's
-// DemandDispatcher sends them.
+// producer-consumer: the dispatch of its events to its consumers, and the
+// demand it was told of.
 type emitting struct {
-	consumers []downstream // copied by ask and emit before changing them
-	demand    int          // the demand of all the consumers
-	buffer    batch        // the events emitted and not asked for, while demand is 0
-	emits     batch        // no events, of the type of those emitted, once one is
+	to      dispatch
+	waiting int   // the events the stage was told of and has not emitted
+	emits   batch // no events, of the type of those emitted, once one is
 }
 
-// downstream is a consumer of a stage.
-type downstream struct {
-	ref    subRef
-	demand int // the events asked for and not sent
+// errEmitType is an Emit of another type than the events emitted before,
+// or than the Hash of a Partition takes.
+var errEmitType = errors.New("stage: an Emit of another type")
+
+// newEmitting returns the emitting side of the stage b, with the
+// Dispatcher it tells, if any.
+func newEmitting(b any) (emitting, error) {
+	var d Dispatcher = Demand{}
+	if x, ok := b.(Dispatching); ok && x.Dispatcher() != nil {
+		d = x.Dispatcher()
+	}
+	to, err := d.newDispatch()
+	return emitting{to: to}, err
 }
 
-// accept takes the consumer of m, and monitors it.
+// accept takes the consumer of m, and monitors it, or cancels it if the
+// dispatch will not have it.
 func (e *emitting) accept(m subscribeMsg) []actor.Effect {
-	e.consumers = append(slices.Clip(e.consumers), downstream{ref: m.Ref})
+	to, err := e.to.subscribe(m)
+	if err != nil {
+		return actor.Do(actor.Send{To: m.Ref.Consumer, Msg: cancelledMsg{Ref: m.Ref, Reason: err}})
+	}
+	e.to = to
 	return actor.Do(actor.Monitor{Target: m.Ref.Consumer, Tag: consumerDown{m.Ref}})
 }
 
-// ask adds the demand of m, sending the buffer first, and returns how
-// much of it is left for events to come.
+// ask adds the demand of m, sending what waits first, and returns how
+// much more the stage is to emit.
 func (e *emitting) ask(m askMsg) (int, []actor.Effect) {
-	i := e.find(m.Ref)
-	if i < 0 {
+	to, out, ok := e.to.ask(m.Ref, m.N)
+	if !ok {
 		return 0, nil // from a consumer gone
 	}
-	e.consumers = slices.Clone(e.consumers)
-	e.consumers[i].demand += m.N
-	e.demand += m.N
-	sent, out := e.flush(i)
-	return max(m.N-sent, 0), out
+	e.to = to
+	return e.tell(), out
 }
 
-// cancelled ends the subscription its consumer cancelled.
-func (e *emitting) cancelled(ref subRef) []actor.Effect {
-	if !e.gone(ref) {
-		return nil
+// cancelled ends the subscription its consumer cancelled, and returns how
+// much more the stage is to emit.
+func (e *emitting) cancelled(ref subRef) (int, []actor.Effect) {
+	n, out, ok := e.gone(ref)
+	if !ok {
+		return 0, nil
 	}
-	return actor.Do(actor.Demonitor{Tag: consumerDown{ref}})
+	return n, append(out, actor.Demonitor{Tag: consumerDown{ref}})
 }
 
-// gone forgets the consumer of ref, and its demand, and reports whether
-// it was a consumer. The events emitted for it go to the others.
-func (e *emitting) gone(ref subRef) bool {
-	i := e.find(ref)
-	if i < 0 {
-		return false
+// gone forgets the consumer of ref, reports whether it was a consumer,
+// and returns how much more the stage is to emit: the others may want
+// more than it did.
+func (e *emitting) gone(ref subRef) (int, []actor.Effect, bool) {
+	to, out, ok := e.to.leave(ref)
+	if !ok {
+		return 0, nil, false
 	}
-	e.demand -= e.consumers[i].demand
-	e.consumers = slices.Delete(slices.Clone(e.consumers), i, i+1)
-	return true
+	e.to = to
+	return e.tell(), out, true
 }
 
-// find returns the index of the consumer of ref, or -1.
-func (e *emitting) find(ref subRef) int {
-	return slices.IndexFunc(e.consumers, func(d downstream) bool { return d.ref == ref })
+// tell returns how much more the stage is to emit than it was told of.
+func (e *emitting) tell() int {
+	n := max(e.to.capacity()-e.waiting, 0)
+	e.waiting += n
+	return n
 }
 
-// emitBatch emits b, and reports whether it is of the type of the events
-// emitted before.
-func (e *emitting) emitBatch(b batch) ([]actor.Effect, bool) {
+// wants reports whether events emitted now would be sent.
+func (e *emitting) wants() bool { return e.to.capacity() > 0 }
+
+// holds reports whether events wait for demand.
+func (e *emitting) holds() bool { return e.to.holds() }
+
+// emitBatch emits b. Its error is errEmitType for b of another type than
+// the events emitted before.
+func (e *emitting) emitBatch(b batch) ([]actor.Effect, error) {
 	if e.emits == nil {
 		e.emits = b.empty()
 	}
 	if !e.emits.sameType(b) {
-		return nil, false
+		return nil, errEmitType
 	}
-	return e.emit(b), true
-}
-
-// emit sends the events of b to the consumers as far as they asked for
-// them, the one wanting most first, and buffers the rest. The buffer is
-// empty while there is demand: events emitted go after it, in order.
-func (e *emitting) emit(b batch) []actor.Effect {
 	if b.len() == 0 {
-		return nil
+		return nil, nil
 	}
-	if e.demand > 0 {
-		e.consumers = slices.Clone(e.consumers)
+	e.waiting = max(e.waiting-b.len(), 0)
+	to, out, err := e.to.route(b)
+	if err != nil {
+		return nil, err
 	}
-	var out []actor.Effect
-	for b != nil && e.demand > 0 {
-		i := e.neediest()
-		n := min(e.consumers[i].demand, b.len())
-		out = append(out, e.send(i, b, n))
-		b = b.tail(n)
-	}
-	if b == nil {
-		return out
-	}
-	if e.buffer == nil {
-		e.buffer = b
-	} else {
-		e.buffer = e.buffer.join(b)
-	}
-	return out
-}
-
-// neediest returns the index of the consumer wanting most, the first of
-// those wanting as much.
-func (e *emitting) neediest() int {
-	best := 0
-	for i, d := range e.consumers {
-		if d.demand > e.consumers[best].demand {
-			best = i
-		}
-	}
-	return best
-}
-
-// flush sends the consumer i the buffer, as far as it asked for it, and
-// returns how many events it sent. The others want none, with a buffer.
-func (e *emitting) flush(i int) (int, []actor.Effect) {
-	if e.buffer == nil {
-		return 0, nil
-	}
-	n := min(e.consumers[i].demand, e.buffer.len())
-	if n == 0 {
-		return 0, nil
-	}
-	out := actor.Do(e.send(i, e.buffer, n))
-	e.buffer = e.buffer.tail(n)
-	return n, out
-}
-
-// send sends the first n events of b to the consumer i, taking them from
-// its demand.
-func (e *emitting) send(i int, b batch, n int) actor.Effect {
-	d := &e.consumers[i]
-	d.demand -= n
-	e.demand -= n
-	return actor.Send{To: d.ref.Consumer, Msg: eventsMsg{Ref: d.ref, Events: b.head(n)}}
+	e.to = to
+	return out, nil
 }

@@ -15,10 +15,12 @@ type subRef struct {
 }
 
 type (
-	// subscribeMsg subscribes, asking for Ask events.
+	// subscribeMsg subscribes, asking for Ask events, to Partition of a
+	// Partition.
 	subscribeMsg struct {
-		Ref subRef
-		Ask int
+		Ref       subRef
+		Ask       int
+		Partition int
 	}
 	// askMsg asks for N more events.
 	askMsg struct {

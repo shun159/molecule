@@ -17,6 +17,9 @@ type batch interface {
 	sameType(b batch) bool
 	// empty is no events, of the same type.
 	empty() batch
+	// partition splits the events by partition, from 0 to n-1, as hash, a
+	// func(T) int of their type T, tells, dropping those of a negative one.
+	partition(hash any, n int) ([]batch, error)
 }
 
 // events are the events of an Emit[T].
@@ -43,6 +46,30 @@ func (e events[T]) sameType(b batch) bool {
 }
 
 func (events[T]) empty() batch { return events[T](nil) }
+
+func (e events[T]) partition(hash any, n int) ([]batch, error) {
+	h, ok := hash.(func(T) int)
+	if !ok {
+		return nil, errEmitType
+	}
+	split := make([]events[T], n)
+	for _, ev := range e {
+		k := h(ev)
+		if k >= n {
+			return nil, ErrBadPartition
+		}
+		if k >= 0 {
+			split[k] = append(split[k], ev)
+		}
+	}
+	parts := make([]batch, n)
+	for k, p := range split {
+		if len(p) > 0 {
+			parts[k] = p
+		}
+	}
+	return parts, nil
+}
 
 // emitter is an Emit of any type.
 type emitter interface {

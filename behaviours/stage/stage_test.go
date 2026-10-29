@@ -16,10 +16,13 @@ import (
 // asked for at once, the rest waiting in its buffer, and stops once done,
 // if Stop. Its state is the next integer.
 type counter struct {
-	Limit int
-	Over  int
-	Stop  bool
+	Limit    int
+	Over     int
+	Stop     bool
+	Dispatch stage.Dispatcher
 }
+
+func (c counter) Dispatcher() stage.Dispatcher { return c.Dispatch }
 
 func (counter) Init(proc.PID) (int, []actor.Effect, error) { return 0, nil, nil }
 
@@ -43,10 +46,12 @@ func (counter) HandleInfo(next int, msg any) (int, []actor.Effect) {
 	return next, effs
 }
 
-// sink keeps the events of its producer, and the size of each batch.
+// sink keeps the events of its producer, of Partition if it has some,
+// and the size of each batch.
 type sink struct {
-	From     actor.Dest
-	Max, Min int
+	From      actor.Dest
+	Max, Min  int
+	Partition int
 }
 
 type got struct {
@@ -55,7 +60,7 @@ type got struct {
 }
 
 func (s sink) Init(proc.PID) (got, []actor.Effect, error) {
-	return got{}, actor.Do(stage.Subscribe{To: s.From, Tag: "src", Max: s.Max, Min: s.Min}), nil
+	return got{}, actor.Do(stage.Subscribe{To: s.From, Tag: "src", Max: s.Max, Min: s.Min, Partition: s.Partition}), nil
 }
 
 func (sink) HandleEvents(g got, events []int, tag any) (got, []actor.Effect) {

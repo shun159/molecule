@@ -65,13 +65,17 @@ type Emit[T any] struct {
 // asks for more once they fall to Min, handling the events Max-Min at
 // most at a time. Max is DefaultMax if zero, Min three quarters of Max.
 //
+// Partition is the partition to take of a producer with a Partition
+// dispatcher, and is ignored of another.
+//
 // A subscription ending, its producer exiting or cancelling it, stops the
 // consumer with the same reason.
 type Subscribe struct {
 	actor.Extension
-	To       actor.Dest
-	Tag      any
-	Max, Min int
+	To        actor.Dest
+	Tag       any
+	Max, Min  int
+	Partition int
 }
 
 // Cancel cancels the subscription of a consumer under Tag, telling its
@@ -139,39 +143,44 @@ func isStageEffect(e actor.Effect) bool {
 func perform(effs []actor.Effect, out *emitting, in *subscribing) []actor.Effect {
 	var rest []actor.Effect
 	for _, e := range effs {
-		if !performOne(e, out, in, &rest) {
-			return append(rest, actor.Stop{Reason: &BadEffectError{Effect: e}})
+		err := performOne(e, out, in, &rest)
+		if errors.Is(err, errEmitType) {
+			err = &BadEffectError{Effect: e}
+		}
+		if err != nil {
+			return append(rest, actor.Stop{Reason: err})
 		}
 	}
 	return rest
 }
 
-// performOne performs e, if of stage, or else appends it to rest, and
-// reports whether the stage may perform it.
-func performOne(e actor.Effect, out *emitting, in *subscribing, rest *[]actor.Effect) bool {
+// performOne performs e, if of stage, or else appends it to rest. Its
+// error is errEmitType for an effect the stage may not perform, or why it
+// failed.
+func performOne(e actor.Effect, out *emitting, in *subscribing, rest *[]actor.Effect) error {
 	var effs []actor.Effect
-	ok := true
+	var err error
 	switch x := e.(type) {
 	case emitter:
 		if out == nil {
-			return false
+			return errEmitType
 		}
-		effs, ok = out.emitBatch(x.batch())
+		effs, err = out.emitBatch(x.batch())
 	case Subscribe:
 		if in == nil {
-			return false
+			return errEmitType
 		}
 		effs = in.subscribe(x)
 	case Cancel:
 		if in == nil {
-			return false
+			return errEmitType
 		}
 		effs = in.cancel(x)
 	default:
 		effs = actor.Do(e)
 	}
 	*rest = append(*rest, effs...)
-	return ok
+	return err
 }
 
 // formatStatus formats the report of a stage terminating with the

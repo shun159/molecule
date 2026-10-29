@@ -59,11 +59,15 @@ func (a producer[S]) WithClock(now func() time.Time) any {
 }
 
 func (a producer[S]) Init(self proc.PID, _ any) (ProducerState[S], []actor.Effect, error) {
+	to, err := newEmitting(a.b)
+	if err != nil {
+		return ProducerState[S]{}, nil, err
+	}
 	s, effs, err := a.b.Init(self)
 	if err != nil {
 		return ProducerState[S]{}, nil, err
 	}
-	p := ProducerState[S]{state: s}
+	p := ProducerState[S]{state: s, out: to}
 	out := perform(effs, &p.out, nil)
 	return p, out, nil
 }
@@ -86,11 +90,12 @@ func (a producer[S]) info(p ProducerState[S], msg any) (ProducerState[S], []acto
 	case askMsg:
 		return a.ask(p, m)
 	case cancelMsg:
-		return p, p.out.cancelled(m.Ref)
+		n, out := p.out.cancelled(m.Ref)
+		return a.demanded(p, n, out)
 	case actor.Down:
 		if t, ok := m.Tag.(consumerDown); ok {
-			p.out.gone(t.ref)
-			return p, nil
+			n, out, _ := p.out.gone(t.ref)
+			return a.demanded(p, n, out)
 		}
 	}
 	return a.handleInfo(p, msg)
@@ -103,10 +108,16 @@ func (a producer[S]) subscribe(p ProducerState[S], m subscribeMsg) (ProducerStat
 	return p, append(out, more...)
 }
 
-// ask adds to the demand: the buffer is sent first, and HandleDemand is
+// ask adds to the demand: what waits is sent first, and HandleDemand is
 // told the rest.
 func (a producer[S]) ask(p ProducerState[S], m askMsg) (ProducerState[S], []actor.Effect) {
 	n, out := p.out.ask(m)
+	return a.demanded(p, n, out)
+}
+
+// demanded tells HandleDemand of n more events wanted, if any, after the
+// effects out.
+func (a producer[S]) demanded(p ProducerState[S], n int, out []actor.Effect) (ProducerState[S], []actor.Effect) {
 	if n == 0 {
 		return p, out
 	}
