@@ -4,30 +4,34 @@ import (
 	"errors"
 
 	"github.com/shun159/molecule/actor"
+	"github.com/shun159/molecule/proc"
 )
 
 // emitting is the side of a stage that emits, a producer or a
 // producer-consumer: the dispatch of its events to its consumers, and the
 // demand it was told of.
 type emitting struct {
+	self    proc.PID
 	to      dispatch
+	buffer  Buffer
 	waiting int   // the events the stage was told of and has not emitted
 	emits   batch // no events, of the type of those emitted, once one is
+	done    bool  // the stage has emitted all, and stops once it is sent
 }
 
 // errEmitType is an Emit of another type than the events emitted before,
 // or than the Hash of a Partition takes.
 var errEmitType = errors.New("stage: an Emit of another type")
 
-// newEmitting returns the emitting side of the stage b, with the
-// Dispatcher it tells, if any.
-func newEmitting(b any) (emitting, error) {
+// newEmitting returns the emitting side of the stage b, self, with the
+// Dispatcher and the Buffer it tells, if any.
+func newEmitting(b any, self proc.PID) (emitting, error) {
 	var d Dispatcher = Demand{}
 	if x, ok := b.(Dispatching); ok && x.Dispatcher() != nil {
 		d = x.Dispatcher()
 	}
 	to, err := d.newDispatch()
-	return emitting{to: to}, err
+	return emitting{self: self, to: to, buffer: bufferOf(b)}, err
 }
 
 // accept takes the consumer of m, and monitors it, or cancels it if the
@@ -85,7 +89,15 @@ func (e *emitting) tell() int {
 func (e *emitting) wants() bool { return e.to.capacity() > 0 }
 
 // holds reports whether events wait for demand.
-func (e *emitting) holds() bool { return e.to.holds() }
+func (e *emitting) holds() bool { return e.to.held() > 0 }
+
+// stopIfDone stops the stage after out, if it is done and has sent all.
+func (e *emitting) stopIfDone(out []actor.Effect) []actor.Effect {
+	if !e.done || e.holds() || stops(out) {
+		return out
+	}
+	return append(out, actor.Stop{})
+}
 
 // emitBatch emits b. Its error is errEmitType for b of another type than
 // the events emitted before.
@@ -105,5 +117,5 @@ func (e *emitting) emitBatch(b batch) ([]actor.Effect, error) {
 		return nil, err
 	}
 	e.to = to
-	return out, nil
+	return append(out, e.bound()...), nil
 }

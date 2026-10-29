@@ -11,6 +11,8 @@ type batch interface {
 	head(n int) any
 	// tail is the events after the first n, nil if none.
 	tail(n int) batch
+	// first is the first n events, nil if none.
+	first(n int) batch
 	// join is the batch with more after it, of the same type.
 	join(more batch) batch
 	// sameType reports whether b holds events of the same type.
@@ -34,6 +36,13 @@ func (e events[T]) tail(n int) batch {
 		return nil
 	}
 	return e[n:]
+}
+
+func (e events[T]) first(n int) batch {
+	if n == 0 {
+		return nil
+	}
+	return e[:n:n]
 }
 
 func (e events[T]) join(more batch) batch {

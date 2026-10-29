@@ -90,7 +90,51 @@ func (d partitionDispatch) capacity() int {
 	return max(demand-d.queued, 0)
 }
 
-func (d partitionDispatch) holds() bool { return d.queued > 0 }
+func (d partitionDispatch) held() int { return d.queued }
+
+// trim cuts every queue to a level, the same for all, so that no more
+// than size are queued: the longest lose most.
+func (d partitionDispatch) trim(size int, newest bool) (dispatch, int) {
+	if d.queued <= size {
+		return d, 0
+	}
+	level := d.level(size)
+	d.parts = slices.Clone(d.parts)
+	dropped := 0
+	for k := range d.parts {
+		var cut int
+		d.parts[k].queue, cut = trimBuffer(d.parts[k].queue, level, newest)
+		dropped += cut
+	}
+	d.queued -= dropped
+	return d, dropped
+}
+
+// level returns the most events each queue may keep for no more than
+// size to be queued in all.
+func (d *partitionDispatch) level(size int) int {
+	lo, hi := 0, size
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if d.queuedUpTo(mid) <= size {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return lo
+}
+
+// queuedUpTo is how many events are queued with no queue beyond level.
+func (d *partitionDispatch) queuedUpTo(level int) int {
+	n := 0
+	for _, p := range d.parts {
+		if p.queue != nil {
+			n += min(p.queue.len(), level)
+		}
+	}
+	return n
+}
 
 // find returns the partition of the consumer of ref, or -1.
 func (d *partitionDispatch) find(ref subRef) int {

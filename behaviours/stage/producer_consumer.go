@@ -91,7 +91,7 @@ func (a producerConsumer[S, In]) WithClock(now func() time.Time) any {
 }
 
 func (a producerConsumer[S, In]) Init(self proc.PID, _ any) (ProducerConsumerState[S, In], []actor.Effect, error) {
-	to, err := newEmitting(a.b)
+	to, err := newEmitting(a.b, self)
 	if err != nil {
 		return ProducerConsumerState[S, In]{}, nil, err
 	}
@@ -101,10 +101,16 @@ func (a producerConsumer[S, In]) Init(self proc.PID, _ any) (ProducerConsumerSta
 	}
 	p := ProducerConsumerState[S, In]{state: s, in: subscribing{self: self}, out: to}
 	out := perform(effs, &p.out, &p.in)
-	return p, out, nil
+	return p, p.out.stopIfDone(out), nil
 }
 
 func (a producerConsumer[S, In]) Handle(p ProducerConsumerState[S, In], msg gen.Msg) (ProducerConsumerState[S, In], []actor.Effect) {
+	p, out := a.handleMsg(p, msg)
+	return p, p.out.stopIfDone(out)
+}
+
+// handleMsg handles msg, but for stopping once done.
+func (a producerConsumer[S, In]) handleMsg(p ProducerConsumerState[S, In], msg gen.Msg) (ProducerConsumerState[S, In], []actor.Effect) {
 	switch m := msg.(type) {
 	case gen.InfoMsg:
 		return a.info(p, m.Msg)

@@ -59,7 +59,7 @@ func (a producer[S]) WithClock(now func() time.Time) any {
 }
 
 func (a producer[S]) Init(self proc.PID, _ any) (ProducerState[S], []actor.Effect, error) {
-	to, err := newEmitting(a.b)
+	to, err := newEmitting(a.b, self)
 	if err != nil {
 		return ProducerState[S]{}, nil, err
 	}
@@ -69,10 +69,16 @@ func (a producer[S]) Init(self proc.PID, _ any) (ProducerState[S], []actor.Effec
 	}
 	p := ProducerState[S]{state: s, out: to}
 	out := perform(effs, &p.out, nil)
-	return p, out, nil
+	return p, p.out.stopIfDone(out), nil
 }
 
 func (a producer[S]) Handle(p ProducerState[S], msg gen.Msg) (ProducerState[S], []actor.Effect) {
+	p, out := a.handleMsg(p, msg)
+	return p, p.out.stopIfDone(out)
+}
+
+// handleMsg handles msg, but for stopping once done.
+func (a producer[S]) handleMsg(p ProducerState[S], msg gen.Msg) (ProducerState[S], []actor.Effect) {
 	switch m := msg.(type) {
 	case gen.InfoMsg:
 		return a.info(p, m.Msg)

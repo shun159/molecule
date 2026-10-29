@@ -13,16 +13,21 @@ import (
 )
 
 // counter emits the integers from 0 to Limit-1, Over times as many as
-// asked for at once, the rest waiting in its buffer, and stops once done,
-// if Stop. Its state is the next integer.
+// asked for at once, the rest waiting in its buffer, and once all are
+// emitted, stops if Stop, or is done if Done. Its state is the next
+// integer.
 type counter struct {
 	Limit    int
 	Over     int
 	Stop     bool
+	Done     bool
 	Dispatch stage.Dispatcher
+	Buf      stage.Buffer
 }
 
 func (c counter) Dispatcher() stage.Dispatcher { return c.Dispatch }
+
+func (c counter) Buffer() stage.Buffer { return c.Buf }
 
 func (counter) Init(proc.PID) (int, []actor.Effect, error) { return 0, nil, nil }
 
@@ -34,8 +39,12 @@ func (c counter) HandleDemand(next, n int) (int, []actor.Effect) {
 	}
 	next += k
 	out := actor.Do(stage.Emit[int]{Events: events})
-	if c.Stop && next == c.Limit {
+	switch {
+	case next < c.Limit:
+	case c.Stop:
 		out = append(out, actor.Stop{})
+	case c.Done:
+		out = append(out, stage.Done{})
 	}
 	return next, out
 }
@@ -153,7 +162,7 @@ func TestDelivery(t *testing.T) {
 func TestProducerDone(t *testing.T) {
 	for seed := range uint64(20) {
 		s := gensim.New(seed)
-		src := spawn(t, s, stage.Produce(counter{Limit: 50, Over: 2, Stop: true}))
+		src := spawn(t, s, stage.Produce(counter{Limit: 50, Stop: true}))
 		dst := spawn(t, s, stage.Consume(sink{From: src, Max: 8}))
 		var g got
 		s.Step()

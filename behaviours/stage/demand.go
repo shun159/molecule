@@ -61,7 +61,18 @@ func (d demandDispatch) route(b batch) (dispatch, []actor.Effect, error) {
 
 func (d demandDispatch) capacity() int { return d.demand }
 
-func (d demandDispatch) holds() bool { return d.buffer != nil }
+func (d demandDispatch) held() int {
+	if d.buffer == nil {
+		return 0
+	}
+	return d.buffer.len()
+}
+
+func (d demandDispatch) trim(size int, newest bool) (dispatch, int) {
+	var dropped int
+	d.buffer, dropped = trimBuffer(d.buffer, size, newest)
+	return d, dropped
+}
 
 // neediest returns the index of the consumer wanting most, the first of
 // those wanting as much.
