@@ -155,3 +155,38 @@ func TestDoneHandlesQueue(t *testing.T) {
 		}
 	}
 }
+
+// countAtEnd counts the events of its producer, as a producer-consumer,
+// and emits, as the subscription ends, how many it had: told after them.
+type countAtEnd struct{ From actor.Dest }
+
+func (c countAtEnd) Init(proc.PID) (int, []actor.Effect, error) {
+	return 0, actor.Do(stage.Subscribe{To: c.From, Max: 10, Ending: stage.Transient}), nil
+}
+
+func (countAtEnd) HandleEvents(n int, events []int, _ any) (int, []actor.Effect) {
+	return n + len(events), nil
+}
+
+func (countAtEnd) HandleCancel(n int, _ any, _ error) (int, []actor.Effect) {
+	return n, actor.Do(stage.Emit[int]{Events: []int{n}}, stage.Done{})
+}
+
+// TestCancelAfterEvents has a producer end, done, while a producer-consumer
+// holds all its events, its consumer wanting none: it is told of the end
+// once it has handled them, not before.
+func TestCancelAfterEvents(t *testing.T) {
+	for seed := range uint64(20) {
+		s := gensim.New(seed)
+		src := spawn(t, s, stage.Produce(counter{Limit: 10, Done: true})) // all it emits asked for at once
+		mid := spawn(t, s, stage.ProduceConsume(countAtEnd{From: src}))
+		dst := spawn(t, s, stage.Consume(sink{From: mid, Held: true, Ending: stage.Temporary}))
+		s.RunUntilIdle()
+		s.Send(dst, actor.Do(stage.Release{Tag: "src"}))
+		s.RunUntilIdle()
+
+		if g := gotOf(t, s, dst); !slices.Equal(g.events, []int{10}) {
+			t.Fatalf("seed %d: told %v", seed, g.events)
+		}
+	}
+}
