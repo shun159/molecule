@@ -22,6 +22,20 @@
 //
 //	byPath := flow.Partition(recs, 4, func(r record) string { return r.Path })
 //
+// # Reducing
+//
+// [Reduce] folds the events of each worker of a layer into an accumulator
+// of its own, and lets it out once the sources are done; [ReduceEvery],
+// at the end of each window of time as well, and starts afresh, for a
+// stream with no end; [ReduceByKey], by key, one [KV] for each key at the
+// end. After a Partition of the same key, a worker has all the events of
+// its keys:
+//
+//	counts := flow.ReduceByKey(byPath, record.path, zero, count)
+//
+// The operations after a Reduce are on what it lets out; a layer reduces
+// once.
+//
 // # Running
 //
 // Run starts its workers, producer-consumers on the node given, those of

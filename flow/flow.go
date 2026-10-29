@@ -3,6 +3,7 @@ package flow
 import (
 	"hash/maphash"
 	"slices"
+	"time"
 
 	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/stage"
@@ -19,8 +20,9 @@ type Flow[S, T any] struct {
 	stages int          // the workers of this layer, Run's Workers if 0
 	// xf is the operations fused: given what takes an event of T, it
 	// returns what takes one of S, giving it what the operations make of
-	// it.
-	xf func(emit func(T)) func(S)
+	// it. It is nil once the layer reduces: see red.
+	xf  func(emit func(T)) func(S)
+	red *reducer[S, T]
 }
 
 // From is the flow of the events of the stages at from, producers or
@@ -33,28 +35,42 @@ func identity[T any](emit func(T)) func(T) { return emit }
 
 // Map is f, each event of it made fn of it.
 func Map[S, T, U any](f Flow[S, T], fn func(T) U) Flow[S, U] {
-	return Flow[S, U]{from: f.from, done: f.done, stages: f.stages, xf: func(emit func(U)) func(S) {
-		return f.xf(func(t T) { emit(fn(t)) })
-	}}
+	return then(f, func(emit func(U)) func(T) {
+		return func(t T) { emit(fn(t)) }
+	})
 }
 
 // Filter is f, but the events keep reports false of.
 func Filter[S, T any](f Flow[S, T], keep func(T) bool) Flow[S, T] {
-	return Flow[S, T]{from: f.from, done: f.done, stages: f.stages, xf: func(emit func(T)) func(S) {
-		return f.xf(func(t T) {
+	return then(f, func(emit func(T)) func(T) {
+		return func(t T) {
 			if keep(t) {
 				emit(t)
 			}
-		})
-	}}
+		}
+	})
 }
 
 // FlatMap is f, each event of it made the events fn gives of it, none or
 // several, through yield.
 func FlatMap[S, T, U any](f Flow[S, T], fn func(t T, yield func(U))) Flow[S, U] {
-	return Flow[S, U]{from: f.from, done: f.done, stages: f.stages, xf: func(emit func(U)) func(S) {
-		return f.xf(func(t T) { fn(t, emit) })
-	}}
+	return then(f, func(emit func(U)) func(T) {
+		return func(t T) { fn(t, emit) }
+	})
+}
+
+// then is f, op fused at its end: after its operations, or, once it
+// reduces, on what the reduce lets out.
+func then[S, T, U any](f Flow[S, T], op func(emit func(U)) func(T)) Flow[S, U] {
+	g := Flow[S, U]{from: f.from, done: f.done, stages: f.stages}
+	if f.red == nil {
+		g.xf = func(emit func(U)) func(S) { return f.xf(op(emit)) }
+		return g
+	}
+	r := f.red
+	g.red = &reducer[S, U]{init: r.init, fold: r.fold, every: r.every,
+		flush: func(acc any, start time.Time, emit func(U)) { r.flush(acc, start, op(emit)) }}
+	return g
 }
 
 // Partition ends the layer of f, and starts a layer of n workers, each
