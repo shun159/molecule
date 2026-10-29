@@ -13,11 +13,23 @@
 // end. Go methods having no type parameters of their own, they are
 // functions, around the flow they change.
 //
+// # Layers
+//
+// [Partition] ends a layer of workers, and starts another, of as many
+// workers as it says, each event going to the worker of its key: the
+// events of a key all to one, for a Reduce to have them together. A flow
+// runs in as many layers as it has partitions, and one.
+//
+//	byPath := flow.Partition(recs, 4, func(r record) string { return r.Path })
+//
 // # Running
 //
-// Run starts its workers, producer-consumers on the node given, each
-// subscribing to every source, which gives each event to one of them, the
-// one wanting most; and ranges over what they all give. The sources done,
+// Run starts its workers, producer-consumers on the node given, those of
+// the first layer subscribing to every source, which gives each event to
+// one of them, the one wanting most, those of each other to every worker
+// of the layer before, for their partition; and ranges over what the last
+// give. The workers subscribe held, and ask once all have subscribed: no
+// worker is late to a source, or to another worker, done before it. The sources done,
 // the workers handle what they hold, and stop; the range ends. Breaking
 // off the range stops the workers, and an Ephemeral source with them.
 //
