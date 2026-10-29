@@ -174,3 +174,26 @@ func TestPullAllEnds(t *testing.T) {
 		}
 	}
 }
+
+// TestStartPull has a Pull started subscribed by the time it returns, and
+// stopped without a range.
+func TestStartPull(t *testing.T) {
+	n := proc.NewNode("")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	src, _ := stage.Start(ctx, n, stage.Produce(counter{Limit: 3, Alone: true}))
+	p, err := stage.StartPull[int](ctx, n, stage.Subscribe{To: src})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, err := stage.StatsOf(ctx, n, src); err != nil || st.Consumers != 1 {
+		t.Fatalf("%+v, %v", st, err)
+	}
+	watch, stop := n.Watch(ctx, src)
+	defer stop()
+	p.Stop()
+	<-watch.Done()
+	if reason := context.Cause(watch); !errors.Is(reason, proc.Normal) {
+		t.Fatalf("the producer exited with %v", reason)
+	}
+}
