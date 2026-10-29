@@ -65,6 +65,14 @@ type queued[In any] struct {
 	tag    any
 	events []In
 	ask    int
+	end    *subEnd // or the end of the subscription, after its events
+}
+
+// subEnd is the end of a subscription, normal, told once the events
+// received before it are handled.
+type subEnd struct {
+	ending Ending
+	reason error
 }
 
 // ProduceConsume makes b a stage, to start.
@@ -218,7 +226,12 @@ func (a producerConsumer[S, In]) take(p ProducerConsumerState[S, In], out []acto
 		if !p.live(q.ref) {
 			continue
 		}
-		if out = a.handle(&p, q, out); stops(out) {
+		if q.end != nil {
+			p, out = a.cancelled(p, q.ref, q.tag, *q.end, out)
+		} else {
+			out = a.handle(&p, q, out)
+		}
+		if stops(out) {
 			return p, out
 		}
 	}
@@ -273,21 +286,40 @@ func (a producerConsumer[S, In]) ended(p ProducerConsumerState[S, In], ref subRe
 		return p, nil
 	}
 	out := append(effs, p.in.retry(sub)...)
+	end := subEnd{ending: sub.ending, reason: reason}
+	if normal(reason) && p.holdsOf(ref) {
+		// Told after the events of the subscription, as it would be had
+		// they been handled as they came.
+		p.queue = append(slices.Clip(p.queue), queued[In]{ref: ref, tag: sub.tag, end: &end})
+		return a.take(p, out)
+	}
+	return a.cancelled(p, ref, sub.tag, end, out)
+}
+
+// cancelled tells HandleCancel of the end of the subscription of ref, and
+// stops the stage, or not, as its Ending says.
+func (a producerConsumer[S, In]) cancelled(p ProducerConsumerState[S, In], ref subRef, tag any, end subEnd, out []actor.Effect) (ProducerConsumerState[S, In], []actor.Effect) {
 	if h, ok := a.b.(CancelHandler[S]); ok {
-		s, more := h.HandleCancel(p.state, sub.tag, reason)
+		s, more := h.HandleCancel(p.state, tag, end.reason)
 		p.state = s
 		out = perform(out, more, &p.out, &p.in)
 	}
 	switch {
-	case stops(out) || !sub.ending.stops(reason):
+	case stops(out) || !end.ending.stops(end.reason):
 		return p, out
-	case !normal(reason):
-		return p, append(out, actor.Stop{Reason: reason})
+	case !normal(end.reason):
+		return p, append(out, actor.Stop{Reason: end.reason})
 	}
 	if !p.ending {
-		p.ending, p.endRef, p.reason = true, ref, reason
+		p.ending, p.endRef, p.reason = true, ref, end.reason
 	}
 	return p, p.stopIfDrained(out)
+}
+
+// holdsOf reports whether the queue holds events of the subscription of
+// ref.
+func (p ProducerConsumerState[S, In]) holdsOf(ref subRef) bool {
+	return slices.ContainsFunc(p.queue, func(q queued[In]) bool { return q.ref == ref })
 }
 
 // stopIfDrained stops the stage ending once it has handled the events of
