@@ -110,3 +110,48 @@ func TestTransientMerge(t *testing.T) {
 		}
 	}
 }
+
+// mergeAll takes the events of its producers, Transient, and is done once
+// they all are: it stops when it has handled what it holds of them.
+type mergeAll struct {
+	From []actor.Dest
+}
+
+func (m mergeAll) Init(proc.PID) (int, []actor.Effect, error) {
+	var out []actor.Effect
+	for i, from := range m.From {
+		out = append(out, stage.Subscribe{To: from, Tag: i, Max: 50, Ending: stage.Transient})
+	}
+	return 0, out, nil
+}
+
+func (mergeAll) HandleEvents(ended int, events []int, _ any) (int, []actor.Effect) {
+	return ended, actor.Do(stage.Emit[int]{Events: events})
+}
+
+func (m mergeAll) HandleCancel(ended int, _ any, _ error) (int, []actor.Effect) {
+	if ended++; ended < len(m.From) {
+		return ended, nil
+	}
+	return ended, actor.Do(stage.Done{})
+}
+
+// TestDoneHandlesQueue has a producer-consumer done with events still
+// queued, its consumer slow: it handles them all before it stops.
+func TestDoneHandlesQueue(t *testing.T) {
+	for seed := range uint64(20) {
+		s := gensim.New(seed)
+		a := spawn(t, s, stage.Produce(counter{Limit: 100, Done: true}))
+		b := spawn(t, s, stage.Produce(counter{Limit: 100, Done: true}))
+		mid := spawn(t, s, stage.ProduceConsume(mergeAll{From: []actor.Dest{a, b}}))
+		dst := spawn(t, s, stage.Consume(sink{From: mid, Max: 2, Ending: stage.Temporary}))
+		s.RunUntilIdle()
+
+		if reason, _ := exitOf(s, mid); !errors.Is(reason, proc.Normal) {
+			t.Fatalf("seed %d: the merge exited with %v", seed, reason)
+		}
+		if g := gotOf(t, s, dst); len(g.events) != 200 {
+			t.Fatalf("seed %d: %d events through", seed, len(g.events))
+		}
+	}
+}

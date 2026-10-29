@@ -128,10 +128,11 @@ func (e *emitting) wants() bool { return !e.holding && e.to.capacity() > 0 }
 // holds reports whether events wait for demand.
 func (e *emitting) holds() bool { return e.to.held() > 0 }
 
-// stopIfDone stops the stage after out, if it is done and has sent all,
-// or its last consumer is gone and it stops alone.
-func (e *emitting) stopIfDone(out []actor.Effect) []actor.Effect {
-	over := e.done && !e.holds() || e.alone
+// stopIfDone stops the stage after out, if it is done, has handled all,
+// pending none, and has sent all; or its last consumer is gone and it
+// stops alone.
+func (e *emitting) stopIfDone(out []actor.Effect, pending bool) []actor.Effect {
+	over := e.done && !pending && !e.holds() || e.alone
 	if !over || stops(out) {
 		return out
 	}

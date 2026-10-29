@@ -108,7 +108,7 @@ func (a producerConsumer[S, In]) Init(self proc.PID, _ any) (ProducerConsumerSta
 	p := ProducerConsumerState[S, In]{state: s, in: subscribing{self: self}, out: to}
 	out := perform(nil, effs, &p.out, &p.in)
 	p.win, effs = windowOf[S](a.b, clock(a.now)())
-	return p, p.out.stopIfDone(append(out, effs...)), nil
+	return p, p.out.stopIfDone(append(out, effs...), false), nil
 }
 
 func (a producerConsumer[S, In]) Handle(p ProducerConsumerState[S, In], msg gen.Msg) (ProducerConsumerState[S, In], []actor.Effect) {
@@ -117,7 +117,7 @@ func (a producerConsumer[S, In]) Handle(p ProducerConsumerState[S, In], msg gen.
 	if p.out.forward() {
 		p, out = a.take(p, out)
 	}
-	return p, p.out.stopIfDone(out)
+	return p, p.out.stopIfDone(out, len(p.queue) > 0)
 }
 
 // handleMsg handles msg, but for stopping once done.
