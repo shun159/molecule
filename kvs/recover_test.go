@@ -69,7 +69,7 @@ func TestZeroTailShorterThanHeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	none := func(uint64, byte, []byte, []byte, int64) error { return nil }
+	none := func(uint64, byte, []byte, []byte, int64, uint64) error { return nil }
 	for k := 1; k < headerLen; k++ {
 		tail := make([]byte, k)
 		n, err := readRecords(bytes.NewReader(append(slices.Clone(recs), tail...)), none)
@@ -126,7 +126,7 @@ func TestReadError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	none := func(uint64, byte, []byte, []byte, int64) error { return nil }
+	none := func(uint64, byte, []byte, []byte, int64, uint64) error { return nil }
 	for at := 0; at <= len(recs); at++ {
 		r := &failingReader{r: bytes.NewReader(recs), at: at, err: syscall.EIO}
 		if _, err := readRecords(r, none); !errors.Is(err, syscall.EIO) {

@@ -41,9 +41,14 @@ import (
 const (
 	opPut byte = 1
 	opDel byte = 2
+	// opPutClaim and opDelClaim are opPut and opDel with a claim before
+	// the seq: of the writes before, those durable as it was written.
+	opPutClaim byte = 3
+	opDelClaim byte = 4
 
 	headerLen = 8
 	seqLen    = 8
+	claimLen  = 2
 	maxRecord = 1 << 30
 
 	zeroChunk = 1 << 20
@@ -74,17 +79,44 @@ type rec struct {
 
 func newRec(body []byte) rec { return rec{body: body, crc: crc32.Checksum(body, castagnoli)} }
 
-func (r rec) size() int64 { return int64(headerLen + len(r.body) + seqLen) }
+func (r rec) size() int64 { return int64(headerLen + len(r.body) + trailerLen(r.body[0])) }
+
+// trailerLen is what follows the body of a record of op: its claim, if it
+// claims, and its seq.
+func trailerLen(op byte) int {
+	if op == opPutClaim || op == opDelClaim {
+		return claimLen + seqLen
+	}
+	return seqLen
+}
+
+// unclaimed returns the op of op without a claim, and reports whether it
+// is known.
+func unclaimed(op byte) (byte, bool) {
+	switch op {
+	case opPut, opPutClaim:
+		return opPut, true
+	case opDel, opDelClaim:
+		return opDel, true
+	}
+	return op, false
+}
 
 // appendRecord appends r with seq to b. Its crc is of the seq as in b: an
 // array of its own would escape, by crc32.Update, and be allocated.
-func appendRecord(b []byte, r rec, seq uint64) []byte {
-	b = binary.LittleEndian.AppendUint32(b, uint32(len(r.body)+seqLen))
+//
+// A record of an op claiming has claim before its seq: see durableClaim.
+func appendRecord(b []byte, r rec, seq uint64, claim uint16) []byte {
+	trailer := trailerLen(r.body[0])
+	b = binary.LittleEndian.AppendUint32(b, uint32(len(r.body)+trailer))
 	at := len(b)
 	b = binary.LittleEndian.AppendUint32(b, 0) // the crc, once the seq is in
 	b = append(b, r.body...)
+	if trailer > seqLen {
+		b = binary.LittleEndian.AppendUint16(b, claim)
+	}
 	b = binary.LittleEndian.AppendUint64(b, seq)
-	binary.LittleEndian.PutUint32(b[at:], crc32.Update(r.crc, castagnoli, b[len(b)-seqLen:]))
+	binary.LittleEndian.PutUint32(b[at:], crc32.Update(r.crc, castagnoli, b[len(b)-trailer:]))
 	return b
 }
 
@@ -156,8 +188,13 @@ var errTorn = errors.New("kvs: torn record")
 // the key, the key, and the value:
 //
 //	len uint32 | crc uint32 | op byte | klen uvarint | key | val | seq uint64
+//
+// or, of an op claiming, with a claim before the seq:
+//
+//	... | val | claim uint16 | seq uint64
 
-// readRecords reads the records of r, handing each to f with its size, and
+// readRecords reads the records of r, handing each to f with its op, not
+// claiming, its size, and the last seq it claims durable, 0 if none; and
 // returns the offset after the last whole one. It stops at the zeros after
 // the records, or at the first that is not whole, with errTorn.
 //
@@ -166,7 +203,7 @@ var errTorn = errors.New("kvs: torn record")
 //
 //abc:disable abc,lines,cyclo the loop over every record of the log, on opening
 //abc:hot BenchmarkOpen
-func readRecords(r io.Reader, f func(seq uint64, op byte, key, val []byte, size int64) error) (int64, error) {
+func readRecords(r io.Reader, f func(seq uint64, op byte, key, val []byte, size int64, durable uint64) error) (int64, error) {
 	br := bufio.NewReaderSize(r, 1<<20)
 	var off int64
 	var hdr [headerLen]byte
@@ -192,16 +229,22 @@ func readRecords(r io.Reader, f func(seq uint64, op byte, key, val []byte, size 
 		if crc32.Checksum(buf, castagnoli) != binary.LittleEndian.Uint32(hdr[4:]) {
 			return off, errTorn
 		}
-		body, seq := buf[:n-seqLen], binary.LittleEndian.Uint64(buf[n-seqLen:])
-		op := body[0]
+		op, knownOp := unclaimed(buf[0])
+		trailer := trailerLen(buf[0])
+		if !knownOp || int(n) < trailer+2 {
+			return off, errTorn
+		}
+		body, seq := buf[:int(n)-trailer], binary.LittleEndian.Uint64(buf[n-seqLen:])
+		var durable uint64
+		if claim := binary.LittleEndian.Uint16(buf[int(n)-trailer:]); trailer > seqLen && claim > 0 {
+			durable = seq - uint64(claim)
+		}
 		klen, m := binary.Uvarint(body[1:])
-		knownOp := op == opPut || op == opDel
-		keyFits := m > 0 && klen <= uint64(len(body)-1-m)
-		if !knownOp || !keyFits {
+		if keyFits := m > 0 && klen <= uint64(len(body)-1-m); !keyFits {
 			return off, errTorn
 		}
 		key := body[1+m : 1+m+int(klen)]
-		if err := f(seq, op, key, body[1+m+int(klen):], int64(headerLen+n)); err != nil {
+		if err := f(seq, op, key, body[1+m+int(klen):], int64(headerLen+n), durable); err != nil {
 			return off, err
 		}
 		off += int64(headerLen + n)

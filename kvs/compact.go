@@ -149,11 +149,13 @@ func (t *Table[K, V]) writeEntries(w io.Writer, since uint64) (size int64, last 
 	var buf, out []byte
 	for shard := range t.idx.byShard(true) {
 		for l := range shard {
-			body, err := t.encode(&buf, opPut, l.Key, l.Val)
+			body, err := t.encode(&buf, opPutClaim, l.Key, l.Val)
 			if err != nil {
 				return size, last, err
 			}
-			out = appendRecord(out[:0], newRec(body), l.Meta.rev)
+			// A snapshot claims nothing, synced whole before it is in place;
+			// its records are as long as those of the log, as LiveBytes counts.
+			out = appendRecord(out[:0], newRec(body), l.Meta.rev, 0)
 			if _, err := w.Write(out); err != nil {
 				return size, last, err
 			}

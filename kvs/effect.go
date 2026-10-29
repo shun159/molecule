@@ -121,9 +121,9 @@ func (t *Table[K, V]) Writes(writes ...Write[K, V]) error {
 func (t *Table[K, V]) writes(writes []Write[K, V]) (*batch, error) {
 	recs := make([]rec, len(writes))
 	for i, w := range writes {
-		op := opPut
+		op := opPutClaim
 		if w.Delete {
-			op = opDel
+			op = opDelClaim
 		}
 		var buf []byte
 		body, err := t.encode(&buf, op, w.Key, w.Val)

@@ -9,11 +9,11 @@
 21.5 dist connection.run
 10.2 dist connection.run cyclo
 11.6 examples/codelock CodeLock.HandleEvent case genstatem.Cast
-25.9 kvs readRecords
+28.8 kvs readRecords
 10.7 kvs readRecords cyclo
 28.4 kvs readRecords lines
-17.4 kvs wal.append
-27.1 kvs wal.append lines
+19.7 kvs wal.append
+28.2 kvs wal.append lines
 15.6 kvs wal.syncNow
 17.6 kvs wal.syncNow lines
 29.6 net/gentcp decoder.next

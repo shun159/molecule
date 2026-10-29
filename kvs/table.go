@@ -135,7 +135,7 @@ func (t *Table[K, V]) Delete(k K) error {
 func (t *Table[K, V]) put(k K, v V, match matcher[V]) (*batch, error) {
 	bp := t.buf()
 	defer t.putBuf(bp)
-	body, err := t.encode(bp, opPut, k, v)
+	body, err := t.encode(bp, opPutClaim, k, v)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +151,7 @@ func (t *Table[K, V]) delete(k K, match matcher[V]) (*batch, error) {
 	bp := t.buf()
 	defer t.putBuf(bp)
 	var zero V
-	body, err := t.encode(bp, opDel, k, zero)
+	body, err := t.encode(bp, opDelClaim, k, zero)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +194,7 @@ func (t *Table[K, V]) encode(bp *[]byte, op byte, k K, v V) ([]byte, error) {
 	start := pre - n - 1
 	b[start] = op
 	copy(b[start+1:pre], l[:n])
-	if op == opPut {
+	if base, _ := unclaimed(op); base == opPut {
 		if b, err = t.vc.Append(b, v); err != nil {
 			return nil, err
 		}
