@@ -240,7 +240,7 @@ func (t *Table[K, V]) readFile(name string, base uint64) (n int64, last uint64, 
 		return 0, 0, err
 	}
 	defer f.Close()
-	n, err = readRecords(f, func(seq uint64, op byte, kb, vb []byte, size int64) error {
+	n, err = readRecords(f, func(seq uint64, op byte, kb, vb []byte, size int64, _ uint64) error {
 		if seq <= base {
 			return nil
 		}

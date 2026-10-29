@@ -169,13 +169,14 @@ func (w *wal) append(r rec) (uint64, *batch, error) {
 	}
 	w.seq++
 	seq := w.seq
+	claim := durableClaim(seq, w.durable.Load(), !w.sync.none)
 	if s.m != nil {
-		appendRecord(s.m[s.off:s.off], r, seq)
+		appendRecord(s.m[s.off:s.off], r, seq, claim)
 	} else {
 		if len(w.pending) == 0 {
 			w.pendAt = s.off
 		}
-		w.pending = appendRecord(w.pending, r, seq)
+		w.pending = appendRecord(w.pending, r, seq, claim)
 	}
 	s.off += n
 	b := w.batch

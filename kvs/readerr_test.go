@@ -132,7 +132,7 @@ func checkUnchanged(t *testing.T, before, after map[string][]byte, name string, 
 // zeros after them.
 func recordsEnd(t *testing.T, b []byte) int {
 	t.Helper()
-	none := func(uint64, byte, []byte, []byte, int64) error { return nil }
+	none := func(uint64, byte, []byte, []byte, int64, uint64) error { return nil }
 	n, err := readRecords(bytes.NewReader(b), none)
 	if err != nil {
 		t.Fatal(err)
