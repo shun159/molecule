@@ -135,9 +135,71 @@ func isStageEffect(e actor.Effect) bool {
 	return false
 }
 
-// stopBad stops a stage with a BadEffectError for e.
-func stopBad(e actor.Effect) actor.Effect {
-	return actor.Stop{Reason: &BadEffectError{Effect: e}}
+// perform performs the effects of stage among effs on the sides the
+// stage has, out emitting and in subscribing, nil if it has not: an Emit
+// needs out, a Subscribe or a Cancel in, or they stop the stage with a
+// BadEffectError. It returns the effects for the runtime, in order.
+func perform(effs []actor.Effect, out *emitting, in *subscribing) []actor.Effect {
+	var rest []actor.Effect
+	for _, e := range effs {
+		if !performOne(e, out, in, &rest) {
+			return append(rest, actor.Stop{Reason: &BadEffectError{Effect: e}})
+		}
+	}
+	return rest
+}
+
+// performOne performs e, if of stage, or else appends it to rest, and
+// reports whether the stage may perform it.
+func performOne(e actor.Effect, out *emitting, in *subscribing, rest *[]actor.Effect) bool {
+	var effs []actor.Effect
+	ok := true
+	switch x := e.(type) {
+	case emitter:
+		if out == nil {
+			return false
+		}
+		effs, ok = out.emitBatch(x.batch())
+	case Subscribe:
+		if in == nil {
+			return false
+		}
+		effs = in.subscribe(x)
+	case Cancel:
+		if in == nil {
+			return false
+		}
+		effs = in.cancel(x)
+	default:
+		effs = actor.Do(e)
+	}
+	*rest = append(*rest, effs...)
+	return ok
+}
+
+// formatStatus formats the report of a stage terminating with the
+// FormatStatus of its behaviour b, if it has one: see
+// actor.StatusFormatter.
+func formatStatus(b any, st actor.Status) actor.Status {
+	if f, ok := b.(actor.StatusFormatter); ok {
+		return f.FormatStatus(st)
+	}
+	return st
+}
+
+// terminate runs the Terminate of b, if it has one, without the effects
+// of stage it returns.
+func terminate[S any](b any, s S, reason error) []actor.Effect {
+	t, ok := b.(Terminator[S])
+	if !ok {
+		return nil
+	}
+	return slices.DeleteFunc(t.Terminate(s, reason), isStageEffect)
+}
+
+// normal reports whether reason is that of an end without failure.
+func normal(reason error) bool {
+	return reason == nil || errors.Is(reason, proc.Normal)
 }
 
 // stops reports whether out stops the stage.

@@ -5,8 +5,6 @@
 7.7 behaviours/genstatem adapter.run cyclo
 25.2 behaviours/genstatem adapter.run lines
 4 behaviours/genstatem adapter.run nesting
-18.6 behaviours/stage consumer.events
-7 behaviours/stage consumer.events cyclo
 17.1 dist AppendAny
 21.5 dist connection.run
 10.2 dist connection.run cyclo
