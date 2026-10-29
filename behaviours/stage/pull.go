@@ -30,15 +30,47 @@ func Pull[T any](ctx context.Context, n *proc.Node, sub Subscribe) iter.Seq2[T, 
 // reason then the last. Each has Max of its own.
 func PullAll[T any](ctx context.Context, n *proc.Node, subs ...Subscribe) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
-		var zero T
-		pid, err := gen.Start(ctx, n, puller[T]{subs: subs}, nil)
+		p, err := StartPull[T](ctx, n, subs...)
 		if err != nil {
+			var zero T
 			yield(zero, err)
 			return
 		}
-		defer actor.SendCast(n, pid, stopPulling{})
+		for v, err := range p.All() {
+			if !yield(v, err) {
+				return
+			}
+		}
+	}
+}
+
+// Puller is a PullAll started: its subscriptions made, its events to
+// range over with All, once only.
+type Puller[T any] struct {
+	ctx context.Context
+	n   *proc.Node
+	pid proc.PID
+}
+
+// StartPull starts PullAll, and returns once it has subscribed: for what
+// is to be done after, such as having the stages it subscribed to start,
+// before any waits for them; then to range over its All.
+func StartPull[T any](ctx context.Context, n *proc.Node, subs ...Subscribe) (*Puller[T], error) {
+	pid, err := gen.Start(ctx, n, puller[T]{subs: subs}, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &Puller[T]{ctx: ctx, n: n, pid: pid}, nil
+}
+
+// All returns the events, as PullAll does. Its range done, or broken off,
+// the subscriptions are cancelled.
+func (p *Puller[T]) All() iter.Seq2[T, error] {
+	return func(yield func(T, error) bool) {
+		var zero T
+		defer p.Stop()
 		for {
-			v, err := actor.Call(ctx, n, pid, takeReq{})
+			v, err := actor.Call(p.ctx, p.n, p.pid, takeReq{})
 			if err != nil {
 				yield(zero, err)
 				return
@@ -58,6 +90,9 @@ func PullAll[T any](ctx context.Context, n *proc.Node, subs ...Subscribe) iter.S
 		}
 	}
 }
+
+// Stop cancels the subscriptions, for a Puller never ranged over.
+func (p *Puller[T]) Stop() { actor.SendCast(p.n, p.pid, stopPulling{}) }
 
 type (
 	// takeReq takes the events received, waiting for some if none.
