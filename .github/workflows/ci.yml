@@ -26,6 +26,8 @@ jobs:
           fi
       - name: vet
         run: go vet ./...
+      - name: vet the real-disk tests
+        run: go vet -tags realdisk ./kvs
       - name: vet kvs/compare
         working-directory: kvs/compare
         run: go vet ./...
