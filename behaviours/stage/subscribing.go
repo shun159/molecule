@@ -2,6 +2,7 @@ package stage
 
 import (
 	"slices"
+	"time"
 
 	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/proc"
@@ -10,19 +11,22 @@ import (
 // subscribing is the side of a stage that subscribes, a consumer or a
 // producer-consumer: its subscriptions to producers.
 type subscribing struct {
-	self proc.PID
-	subs []subscription // copied when changed
-	next uint64         // the N of the next subRef
+	self    proc.PID
+	subs    []subscription // copied when changed
+	waiting []subscription // ended, to subscribe again, see retry
+	next    uint64         // the N of the next subRef
 }
 
 // subscription is a subscription to a producer.
 type subscription struct {
-	ref      subRef
-	to       actor.Dest
-	tag      any
-	max, min int
-	pending  int // the events asked for and not received
-	ending   Ending
+	ref       subRef
+	to        actor.Dest
+	tag       any
+	max, min  int
+	partition int
+	pending   int // the events asked for and not received
+	ending    Ending
+	wait      time.Duration // before subscribing again, if Resubscribe; 0 once events came
 }
 
 // take counts n events received, and returns how many to ask for: once
@@ -50,7 +54,8 @@ func (in *subscribing) subscribe(x Subscribe) []actor.Effect {
 	out := in.cancel(Cancel{Tag: x.Tag})
 	ref := subRef{Consumer: in.self, N: in.next}
 	in.next++
-	sub := subscription{ref: ref, to: x.To, tag: x.Tag, max: maxDemand, min: minDemand, pending: maxDemand, ending: x.Ending}
+	sub := subscription{ref: ref, to: x.To, tag: x.Tag, max: maxDemand, min: minDemand,
+		partition: x.Partition, pending: maxDemand, ending: x.Ending}
 	in.subs = append(slices.Clip(in.subs), sub)
 	return append(out,
 		actor.Monitor{Target: x.To, Tag: producerDown{ref}},
@@ -58,11 +63,12 @@ func (in *subscribing) subscribe(x Subscribe) []actor.Effect {
 	)
 }
 
-// cancel cancels the subscription under x.Tag, if any.
+// cancel cancels the subscription under x.Tag, if any, on or waiting to
+// subscribe again.
 func (in *subscribing) cancel(x Cancel) []actor.Effect {
 	i := slices.IndexFunc(in.subs, func(s subscription) bool { return s.tag == x.Tag })
 	if i < 0 {
-		return nil
+		return in.stopWaiting(x.Tag)
 	}
 	sub := in.subs[i]
 	in.subs = slices.Delete(slices.Clone(in.subs), i, i+1)

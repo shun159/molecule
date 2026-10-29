@@ -116,6 +116,11 @@ const (
 	Transient
 	// Temporary leaves it to go on.
 	Temporary
+	// Resubscribe leaves it to go on, and subscribe again after a while,
+	// to To, by its name: a producer restarted, or of a node back, is
+	// another process, of another PID. It waits 100ms, twice as long each
+	// time it fails again, up to 5s, and 100ms again once events come.
+	Resubscribe
 )
 
 // stops reports whether a subscription ending with reason stops the
@@ -124,7 +129,7 @@ func (e Ending) stops(reason error) bool {
 	switch e {
 	case Transient:
 		return !normal(reason)
-	case Temporary:
+	case Temporary, Resubscribe:
 		return false
 	}
 	return true
