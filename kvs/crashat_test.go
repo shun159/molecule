@@ -12,7 +12,9 @@ import (
 // of a run: opening a directory a crash left in a compaction, writes,
 // compactions, and closing. What it leaves, as the page cache has it, and
 // what a power loss then leaves of it, each hold the first S writes, S
-// from those acked to those made, and take a write after.
+// from those acked to those made, and take a write after: the power loss
+// keeping any of the changes to the names of the directory not synced,
+// as keepings picks them.
 func TestCrashAt(t *testing.T) {
 	o := Options[string, int]{SegmentSize: 1 << 10, CompactRatio: -1}
 	for n := 1; ; n++ {
@@ -36,12 +38,18 @@ func crashAt(t *testing.T, o Options[string, int], n int) bool {
 	if !k.revive() {
 		return false
 	}
-	l := loss{dir: t.TempDir(), acked: acked, issued: len(h)}
-	if err := d.powerLoss(l.dir); err != nil {
+	ops, err := d.unsynced()
+	if err != nil {
 		t.Fatal(err)
 	}
+	for _, keep := range keepings(len(ops)) {
+		l := loss{dir: t.TempDir(), acked: acked, issued: len(h)}
+		if err := d.powerLossKeeping(l.dir, ops, keep); err != nil {
+			t.Fatal(err)
+		}
+		checkLoss(t, l, h, o)
+	}
 	checkLoss(t, loss{dir: dir, acked: acked, issued: len(h)}, h, o)
-	checkLoss(t, l, h, o)
 	return true
 }
 
