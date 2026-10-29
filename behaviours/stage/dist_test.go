@@ -168,3 +168,25 @@ func BenchmarkDistThroughput(b *testing.B) {
 		})
 	}
 }
+
+// TestDistStats reads the Stats of a stage of another node: a producer
+// with no consumer, its buffer full.
+func TestDistStats(t *testing.T) {
+	nodes, _ := cluster(t, "a@stage", "b@stage")
+	a, b := nodes[0], nodes[1]
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	src, err := stage.Start(ctx, a, stage.Produce(counter{Buf: stage.Buffer{Size: 10}}), actor.WithName(actor.Local("src")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Send(src, actor.Do(stage.Emit[int]{Events: upTo(30)}))
+
+	st, err := stage.StatsOf(ctx, b, actor.Remote{Node: "a@stage", Name: "src"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (stage.Stats{Held: 10, Emitted: 30, Dropped: 20}); st != want {
+		t.Fatalf("%+v, want %+v", st, want)
+	}
+}

@@ -95,6 +95,14 @@
 // producers forget the consumers gone. Reasons cross nodes as dist sends
 // exit reasons, those of stage kept, for errors.Is to tell them.
 //
+// # Watching
+//
+// [StatsOf] tells how a stage of this node or another is doing: the
+// demand of its consumers, the events it holds, it queued, it waits for,
+// the events through it since it started. A buffer growing has consumers
+// too slow; demand with nothing emitted, a source too slow; subscriptions
+// waiting, a node gone.
+//
 // # Ending
 //
 // Each end of a subscription monitors the other. A consumer stops when a

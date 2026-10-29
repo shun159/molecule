@@ -92,6 +92,16 @@ func (d *partitionDispatch) capacity() int {
 
 func (d *partitionDispatch) held() int { return d.queued }
 
+func (d *partitionDispatch) consumerCount() int {
+	n := 0
+	for _, p := range d.parts {
+		if p.taken {
+			n++
+		}
+	}
+	return n
+}
+
 // trim cuts every queue to a level, the same for all, so that no more
 // than size are queued: the longest lose most.
 func (d *partitionDispatch) trim(size int, newest bool) int {

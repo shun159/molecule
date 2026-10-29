@@ -87,6 +87,8 @@ type dispatch interface {
 	capacity() int
 	// held is how many events are kept.
 	held() int
+	// consumerCount is how many consumers there are.
+	consumerCount() int
 	// trim drops events kept beyond size, the newest if newest, else the
 	// oldest, and returns how many.
 	trim(size int, newest bool) int

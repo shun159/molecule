@@ -11,10 +11,11 @@ import (
 // subscribing is the side of a stage that subscribes, a consumer or a
 // producer-consumer: its subscriptions to producers.
 type subscribing struct {
-	self    proc.PID
-	subs    []subscription // copied when changed
-	waiting []subscription // ended, to subscribe again, see retry
-	next    uint64         // the N of the next subRef
+	self     proc.PID
+	subs     []subscription // copied when changed
+	waiting  []subscription // ended, to subscribe again, see retry
+	next     uint64         // the N of the next subRef
+	received uint64         // events, since the start, see Stats
 }
 
 // subscription is a subscription to a producer.
@@ -30,9 +31,11 @@ type subscription struct {
 }
 
 // take counts n events received, and returns how many to ask for: once
-// the pending demand falls to min, as many as bring it back to max.
+// the pending demand falls to min, as many as bring it back to max. Events
+// come, a subscription Resubscribe waits the least again, see retry.
 func (s *subscription) take(n int) int {
 	s.pending = max(s.pending-n, 0)
+	s.wait = 0
 	if s.pending > s.min {
 		return 0
 	}
@@ -88,6 +91,13 @@ func (in *subscribing) end(ref subRef) (subscription, bool) {
 	sub := in.subs[i]
 	in.subs = slices.Delete(slices.Clone(in.subs), i, i+1)
 	return sub, true
+}
+
+// receiving readies the subscriptions for n events received: their
+// pending demands change, in a copy.
+func (in *subscribing) receiving(n int) {
+	in.subs = slices.Clone(in.subs)
+	in.received += uint64(n)
 }
 
 // askMore appends to out the ask of the producer of ref for n more

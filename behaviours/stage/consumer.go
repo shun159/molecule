@@ -2,7 +2,6 @@ package stage
 
 import (
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/shun159/molecule/actor"
@@ -81,6 +80,9 @@ func (a consumer[S, In]) Handle(c ConsumerState[S], msg gen.Msg) (ConsumerState[
 	case gen.ContinueMsg:
 		return a.handleInfo(c, m.Msg)
 	}
+	if from, ok := isStatsCall(msg); ok {
+		return c, actor.Do(actor.Reply{To: from, Value: stats(nil, &c.in, 0)})
+	}
 	return a.handleInfo(c, msg)
 }
 
@@ -113,7 +115,7 @@ func (a consumer[S, In]) events(c ConsumerState[S], m eventsMsg) (ConsumerState[
 	if !ok {
 		return c, actor.Do(actor.Stop{Reason: &BadEventsError{Events: m.Events}})
 	}
-	c.in.subs = slices.Clone(c.in.subs) // the pending demands change
+	c.in.receiving(len(events))
 	var out []actor.Effect
 	for len(events) > 0 {
 		i := c.in.find(m.Ref)
@@ -125,7 +127,6 @@ func (a consumer[S, In]) events(c ConsumerState[S], m eventsMsg) (ConsumerState[
 		batch := events[:n:n]
 		events = events[n:]
 		ask := sub.take(n)
-		sub.wait = 0
 
 		s, effs := a.b.HandleEvents(c.state, batch, sub.tag)
 		c.state = s

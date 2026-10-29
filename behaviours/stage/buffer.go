@@ -80,6 +80,7 @@ func (e *emitting) bound(out []actor.Effect) []actor.Effect {
 		return append(out, actor.Stop{Reason: ErrBufferFull})
 	}
 	n := e.change().trim(e.buffer.Size, e.buffer.Overflow == DropNewest)
+	e.dropped += uint64(n)
 	return append(out,
 		gen.Log{Level: slog.LevelWarn, Msg: "stage: buffer full, events dropped", Attrs: []any{"stage", e.self, "dropped", n}},
 		gen.Emit{Event: Dropped{Stage: e.self, Events: n}},
