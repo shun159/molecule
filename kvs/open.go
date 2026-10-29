@@ -15,7 +15,8 @@ import (
 // alone, until Close.
 //
 // A write cut short at the end of the log, by a crash, is dropped; damage
-// elsewhere fails Open with ErrCorrupt.
+// elsewhere fails Open with ErrCorrupt, as does damage at the end to a
+// write a write after it claims durable: see the log in the package doc.
 func Open[K comparable, V any](dir string, opts Options[K, V]) (*Table[K, V], error) {
 	opts, err := opts.resolved()
 	if err != nil {
@@ -208,7 +209,8 @@ func (t *Table[K, V]) loadSnapshot(snaps []logFile, r *recovered) error {
 
 // loadSegment loads the writes of s after base. A write cut short, by a
 // crash, ends the last segment, and is to be cut off it; in another, it
-// is damage. A segment left without a write after base is stale.
+// is damage, as it is in the last if a record after it claims it durable.
+// A segment left without a write after base is stale.
 func (t *Table[K, V]) loadSegment(s logFile, base uint64, isLast bool, r *recovered) error {
 	n, last, err := t.readFile(s.name, base)
 	torn := err == errTorn
@@ -217,6 +219,14 @@ func (t *Table[K, V]) loadSegment(s logFile, base uint64, isLast bool, r *recove
 	}
 	if err != nil && !torn {
 		return err
+	}
+	if torn {
+		// The seq of the record not whole: after the last read, or the
+		// first of the segment, or, if those are in the snapshot, after
+		// it, none of those after the last being in the snapshot.
+		if err := t.checkClaims(s.name, n, max(last, base, s.seq-1)+1); err != nil {
+			return err
+		}
 	}
 	r.seq = max(r.seq, last)
 	if last == 0 { // empty, or all in the snapshot: the last segment too
@@ -228,6 +238,19 @@ func (t *Table[K, V]) loadSegment(s logFile, base uint64, isLast bool, r *recove
 	r.cuts = append(r.cuts, cut{s.name, n})
 	r.disk += n
 	r.segs++
+	return nil
+}
+
+// checkClaims fails with ErrCorrupt if a record of the file name after
+// off, where the record of seq torn is not whole, claims it durable.
+func (t *Table[K, V]) checkClaims(name string, off int64, torn uint64) error {
+	rest, err := readAfter(filepath.Join(t.dir, name), off)
+	if err != nil {
+		return err
+	}
+	if seq, ok := claimant(rest, torn); ok {
+		return fmt.Errorf("%w: segment %s at %d: write %d damaged, durable as write %d claims", ErrCorrupt, name, off, torn, seq)
+	}
 	return nil
 }
 

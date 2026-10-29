@@ -149,6 +149,14 @@
 // a checksum; one cut short at the end of the last segment, by a crash,
 // is dropped on opening.
 //
+// A record not whole there may be damage, too, to a write durable before:
+// opening tells it by the records after it, each claiming the writes
+// durable as it was written. One claimed is damage, and fails Open with
+// ErrCorrupt; one not claimed is taken for a write cut short. Damage to
+// the writes of the last sync, none written after them, or of a table
+// with SyncNone, is taken for a write cut short, and dropped with the
+// writes after it.
+//
 // A compaction writes a snapshot of the entries, and removes the segments
 // it holds. It runs by itself once the log is large enough and mostly
 // writes since overwritten, see Options, or on Compact. Writes go on
