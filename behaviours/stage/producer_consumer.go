@@ -108,6 +108,9 @@ func (a producerConsumer[S, In]) Init(self proc.PID, _ any) (ProducerConsumerSta
 func (a producerConsumer[S, In]) Handle(p ProducerConsumerState[S, In], msg gen.Msg) (ProducerConsumerState[S, In], []actor.Effect) {
 	p.out.handling()
 	p, out := a.handleMsg(p, msg)
+	if p.out.forward() {
+		p, out = a.take(p, out)
+	}
 	return p, p.out.stopIfDone(out)
 }
 

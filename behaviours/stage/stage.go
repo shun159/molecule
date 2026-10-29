@@ -63,6 +63,22 @@ type Done struct {
 	actor.Extension
 }
 
+// Forward ends the holding of the demand of a producer, or a
+// producer-consumer, Accumulating: it is told of the demand held, and of
+// all after, as GenStage.demand(stage, :forward).
+type Forward struct {
+	actor.Extension
+}
+
+// Accumulating is a producer, or a producer-consumer, holding the demand
+// of its consumers from its start until it returns Forward, as GenStage's
+// demand: :accumulate: so that all its consumers subscribe before it
+// emits, none coming late to it done. A producer-consumer handles no
+// events meanwhile.
+type Accumulating interface {
+	Accumulate() bool
+}
+
 // Subscribe subscribes a consumer to the producer at To, under Tag, which
 // HandleEvents gets with the events of this subscription, and Cancel
 // takes; subscribing under a Tag in use cancels the subscription it had.
@@ -173,7 +189,7 @@ func (e *BadEffectError) Error() string {
 // never to see.
 func isStageEffect(e actor.Effect) bool {
 	switch e.(type) {
-	case emitter, Done, Subscribe, Cancel:
+	case emitter, Done, Forward, Subscribe, Cancel:
 		return true
 	}
 	return false
@@ -213,6 +229,13 @@ func performOne(rest []actor.Effect, e actor.Effect, out *emitting, in *subscrib
 			return rest, errEmitType
 		}
 		out.done = true
+		return rest, nil
+	case Forward:
+		if out == nil {
+			return rest, errEmitType
+		}
+		out.forwarded = out.forwarded || out.holding
+		out.holding = false
 		return rest, nil
 	case Subscribe:
 		if in == nil {

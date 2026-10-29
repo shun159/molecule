@@ -23,9 +23,12 @@ type counter struct {
 	Done     bool
 	Dispatch stage.Dispatcher
 	Buf      stage.Buffer
+	Hold     bool
 }
 
 func (c counter) Dispatcher() stage.Dispatcher { return c.Dispatch }
+
+func (c counter) Accumulate() bool { return c.Hold }
 
 func (c counter) Buffer() stage.Buffer { return c.Buf }
 
