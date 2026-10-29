@@ -121,6 +121,7 @@ push button of the gen_statem documentation, two nodes pinging each
 other, a standby node taking over when its primary goes away, a table
 of keys and values partitioned over nodes by consistent hashing,
 topics published on to their subscribers over nodes, by process groups,
-and work all CPU spread on the cores by a pipeline of stages.
+work all CPU spread on the cores by a pipeline of stages, and log files
+tailed and counted by key over nodes, by windows of time.
 
 molecule requires Go 1.27.
