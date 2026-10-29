@@ -32,9 +32,10 @@ var mkfs = map[string][]string{
 
 func TestRealDiskExt4(t *testing.T) { testRealDisk(t, "ext4") }
 
-// testRealDisk runs writes on fs, each made and acked between marks of
-// the log, then opens the device as each flush left it: the writes acked
-// are there, and of the others some first ones; and the table goes on.
+// testRealDisk runs writes and compactions on fs, each write made and
+// acked between marks of the log, then opens the device as a power loss
+// may have left it, at each flush and between: the writes acked are
+// there, and of the others some first ones; and the table goes on.
 func testRealDisk(t *testing.T, fs string) {
 	o := Options[string, int]{SegmentSize: 1 << 10, CompactRatio: -1}
 	r := newRig(t, fs)
@@ -119,7 +120,7 @@ func (r *rig) mark(name string) {
 }
 
 // run makes n writes to a table on the rig, each between a mark issue and
-// a mark ack, and returns them.
+// a mark ack, compacting it every 20, and returns them.
 func (r *rig) run(o Options[string, int], n int) []write {
 	tab, err := Open(filepath.Join(r.mnt, "kvs"), o)
 	if err != nil {
@@ -140,6 +141,11 @@ func (r *rig) run(o Options[string, int], n int) []write {
 			r.t.Fatal(err)
 		}
 		r.mark("ack")
+		if i%20 == 19 {
+			if err := tab.Compact(); err != nil {
+				r.t.Fatal(err)
+			}
+		}
 	}
 	if err := tab.Close(); err != nil {
 		r.t.Fatal(err)
@@ -147,29 +153,89 @@ func (r *rig) run(o Options[string, int], n int) []write {
 	return h
 }
 
-// checkReplays replays the log l, and checks the device as each flush, or
-// write of FUA, after the file system was made left it.
+// checkReplays replays the log l, and checks the device as a power loss
+// after the file system was made may leave it: at each flush, all written
+// before it on the device; between two, any of the writes after the
+// first, as keepings picks them, but those of FUA, on the device once
+// written.
 func checkReplays(t *testing.T, l *logWrites, h []write, fs string, o Options[string, int]) {
-	dev := make([]byte, devSize)
-	made := false
-	var acked, issued, points int
+	r := &replayer{t: t, sectorSize: l.sectorSize, dev: make([]byte, devSize), h: h, fs: fs, o: o}
 	for _, e := range l.entries {
-		e.replay(dev, l.sectorSize)
-		switch e.mark {
-		case "mkfs":
-			made = true
-		case "issue":
-			issued++
-		case "ack":
-			acked++
-		}
-		if !made || !e.durable() {
-			continue
-		}
-		points++
-		checkDevice(t, dev, loss{acked: acked, issued: issued}, h, fs, o)
+		r.entry(e)
 	}
-	t.Logf("%d points of %d entries, %d writes", points, len(l.entries), len(h))
+	t.Logf("%d devices checked, of %d entries, %d writes", r.checked, len(l.entries), len(h))
+}
+
+// A replayer replays a log of dm-log-writes, checking the devices a power
+// loss may leave as it goes.
+type replayer struct {
+	t          *testing.T
+	sectorSize int64
+	dev        []byte    // the device as of the last flush
+	since      []lwEntry // the writes since the last flush
+
+	made          bool // the file system: the marks after it
+	acked, issued int
+	checked       int
+	h             []write
+	fs            string
+	o             Options[string, int]
+}
+
+// entry replays e.
+func (r *replayer) entry(e lwEntry) {
+	switch {
+	case e.flags&lwMark != 0:
+		r.mark(e.mark)
+	case !r.made:
+		e.replay(r.dev, r.sectorSize)
+	case e.flags&lwFlush != 0:
+		r.checkSince()
+		for _, w := range r.since {
+			w.replay(r.dev, r.sectorSize)
+		}
+		r.since = nil
+		e.replay(r.dev, r.sectorSize) // its write, if any, after the flush
+		r.check(r.dev)
+	default:
+		r.since = append(r.since, e)
+	}
+}
+
+// mark counts the mark of name.
+func (r *replayer) mark(name string) {
+	switch name {
+	case "mkfs":
+		r.made = true
+	case "issue":
+		r.issued++
+	case "ack":
+		r.acked++
+	}
+}
+
+// checkSince checks the device with the writes since the last flush kept
+// as keepings picks them, those of FUA all kept.
+func (r *replayer) checkSince() {
+	if len(r.since) == 0 {
+		return
+	}
+	dev := make([]byte, len(r.dev))
+	for _, keep := range keepings(len(r.since)) {
+		copy(dev, r.dev)
+		for i, w := range r.since {
+			if keep(i) || w.flags&lwFUA != 0 {
+				w.replay(dev, r.sectorSize)
+			}
+		}
+		r.check(dev)
+	}
+}
+
+// check checks dev, as of the marks so far.
+func (r *replayer) check(dev []byte) {
+	r.checked++
+	checkDevice(r.t, dev, loss{acked: r.acked, issued: r.issued}, r.h, r.fs, r.o)
 }
 
 // checkDevice mounts a copy of dev, and checks the table on it, as of l.

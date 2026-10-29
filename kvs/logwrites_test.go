@@ -86,10 +86,6 @@ func (l *logWrites) entryAt(b []byte, off int64) (lwEntry, int64, error) {
 	return e, off, nil
 }
 
-// durable reports whether all before e, and e, are on the device once e
-// completed: e a flush, or a write of FUA.
-func (e lwEntry) durable() bool { return e.flags&(lwFlush|lwFUA) != 0 }
-
 // replay writes e to dev, the device replayed: a discard leaves zeros.
 func (e lwEntry) replay(dev []byte, sectorSize int64) {
 	at := e.sector * sectorSize
