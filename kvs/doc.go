@@ -36,6 +36,8 @@
 // it and opens it again, as a supervisor would restart a process. A write
 // finding the disk full fails alone, with ENOSPC, before anything of it
 // is in the log or in memory: the writes after go on once there is space.
+// On a file system copying on write, as btrfs, the disk full may be found
+// only as the records are written out, once in memory: it fails the log.
 //
 // # Supervision
 //
