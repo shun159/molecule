@@ -149,10 +149,11 @@
 // a checksum; one cut short at the end of the last segment, by a crash,
 // is dropped on opening.
 //
-// A record not whole there may be damage, too, to a write durable before:
-// opening tells it by the records after it, each claiming the writes
-// durable as it was written. One claimed is damage, and fails Open with
-// ErrCorrupt; one not claimed is taken for a write cut short. Damage to
+// A record not whole there, or zeros where a record would be, may be
+// damage, too, to a write durable before, or a write lost by a disk that
+// told it done: opening tells it by the records after it, each claiming
+// the writes durable as it was written. One claimed is damage, and fails
+// Open with ErrCorrupt; one not claimed is taken for a write cut short. Damage to
 // the writes of the last sync, none written after them, or of a table
 // with SyncNone, is taken for a write cut short, and dropped with the
 // writes after it.

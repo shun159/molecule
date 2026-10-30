@@ -6,9 +6,9 @@ import (
 	"io"
 )
 
-// A record not whole at the end of the last segment is a write cut short,
-// by a crash, or damage to a write durable before: told apart by the
-// records after it, whole, if any. A write is durable once synced, and
+// A record not whole at the end of the last segment, or zeros where it
+// would be, is a write cut short, by a crash, or damage to a write durable
+// before: told apart by the records after it, whole, if any. A write is durable once synced, and
 // the records written after claim it, see durableClaim; one a record
 // after claims is damage, one none claims is cut short. The writes of a
 // batch synced, with none after them yet, or of a table with SyncNone,
