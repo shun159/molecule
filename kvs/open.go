@@ -17,6 +17,11 @@ import (
 // A write cut short at the end of the log, by a crash, is dropped; damage
 // elsewhere fails Open with ErrCorrupt, as does damage at the end to a
 // write a write after it claims durable: see the log in the package doc.
+//
+// After a write failed with EIO, Linux may keep it in the page cache,
+// though not on the disk. Opened again before the machine restarts, or
+// the file system is mounted again, the table may hold it, and lose it at
+// a power loss after, the writes after it kept.
 func Open[K comparable, V any](dir string, opts Options[K, V]) (*Table[K, V], error) {
 	opts, err := opts.resolved()
 	if err != nil {
