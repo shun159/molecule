@@ -5,7 +5,6 @@ package kvs
 import (
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -80,12 +79,7 @@ func testRealNoSpace(t *testing.T, fs string) {
 // where.
 func mountFresh(t *testing.T, fs string) string {
 	t.Helper()
-	if os.Geteuid() != 0 {
-		t.Skip("needs root: see realdisk_test.go")
-	}
-	if _, err := exec.LookPath(filesystems[fs].mkfs[0]); err != nil {
-		t.Skip(err)
-	}
+	mountable(t, fs)
 	dev := attachImage(t, filepath.Join(t.TempDir(), "fs.img"), filesystems[fs].size, t.Cleanup)
 	sh(t, append(filesystems[fs].mkfs, dev)...)
 	mnt := t.TempDir()
