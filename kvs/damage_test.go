@@ -3,6 +3,7 @@ package kvs
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -55,6 +56,32 @@ func flip(b []byte, i int) []byte {
 // short, the writes before it there.
 func TestDamageClaimed(t *testing.T) {
 	const n = 6
+	log := claimingLog(t, n)
+	ends := recordEnds(t, log)
+	for at := range ends[len(ends)-1] {
+		damaged := fmt.Sprintf("byte %d of record %d damaged", at, recordAt(ends, at))
+		checkDamaged(t, flip(bytes.Clone(log), at), recordAt(ends, at), n, damaged)
+	}
+}
+
+// A record lost whole, zeros, as a disk dropping a write it told done
+// leaves it, is damage as well: the records ending there, those after
+// claim it durable, but for the last.
+func TestDamageZeroed(t *testing.T) {
+	const n = 6
+	log := claimingLog(t, n)
+	ends := recordEnds(t, log)
+	for k := range n {
+		b := bytes.Clone(log)
+		clear(b[ends[k]-recordLen(ends, k) : ends[k]])
+		checkDamaged(t, b, k, n, fmt.Sprintf("record %d zeros", k))
+	}
+}
+
+// claimingLog returns the segment of n puts, each after the last is
+// durable: each record claims the one before.
+func claimingLog(t *testing.T, n int) []byte {
+	t.Helper()
 	dir := t.TempDir()
 	tab, err := Open(dir, Options[string, int]{})
 	if err != nil {
@@ -70,31 +97,42 @@ func TestDamageClaimed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ends := recordEnds(t, log)
-	for at := range ends[len(ends)-1] {
-		k := recordAt(ends, at)
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, segName(1)), flip(bytes.Clone(log), at), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		tab, err := Open(dir, Options[string, int]{})
-		if k < n-1 {
-			if !errors.Is(err, ErrCorrupt) {
-				t.Errorf("byte %d of record %d damaged, claimed: Open: %v, want ErrCorrupt", at, k, err)
-			}
-			if err == nil {
-				tab.Close()
-			}
-			continue
-		}
-		if err != nil {
-			t.Fatalf("byte %d of the last record damaged: Open: %v", at, err)
-		}
-		if tab.Len() != n-1 {
-			t.Errorf("byte %d of the last record damaged: %d entries, want %d", at, tab.Len(), n-1)
-		}
-		tab.Close()
+	return log
+}
+
+// checkDamaged opens the segment log of n puts, its record k damaged: it
+// fails with ErrCorrupt, but for the last, cut off.
+func checkDamaged(t *testing.T, log []byte, k, n int, damaged string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, segName(1)), log, 0o644); err != nil {
+		t.Fatal(err)
 	}
+	tab, err := Open(dir, Options[string, int]{})
+	if k < n-1 {
+		if !errors.Is(err, ErrCorrupt) {
+			t.Errorf("%s, claimed: Open: %v, want ErrCorrupt", damaged, err)
+		}
+		if err == nil {
+			tab.Close()
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("%s, the last: Open: %v", damaged, err)
+	}
+	if tab.Len() != n-1 {
+		t.Errorf("%s, the last: %d entries, want %d", damaged, tab.Len(), n-1)
+	}
+	tab.Close()
+}
+
+// recordLen returns the length of the record k of ends.
+func recordLen(ends []int, k int) int {
+	if k == 0 {
+		return ends[0]
+	}
+	return ends[k] - ends[k-1]
 }
 
 // recordEnds returns the offset after each record of b.

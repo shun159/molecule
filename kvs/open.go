@@ -238,8 +238,10 @@ func (t *Table[K, V]) loadSnapshot(snaps []logFile, r *recovered) error {
 
 // loadSegment loads the writes of s after base. A write cut short, by a
 // crash, ends the last segment, and is to be cut off it; in another, it
-// is damage, as it is in the last if a record after it claims it durable.
-// A segment left without a write after base is stale.
+// is damage. In the last, the records ending at a record not whole or at
+// zeros, the next is damage if a record after claims it durable: lost
+// whole, its sectors left zeros, the records ending there. A segment left
+// without a write after base is stale.
 func (t *Table[K, V]) loadSegment(s logFile, base uint64, isLast bool, r *recovered) error {
 	n, last, err := t.readFile(s.name, base)
 	torn := err == errTorn
@@ -249,10 +251,10 @@ func (t *Table[K, V]) loadSegment(s logFile, base uint64, isLast bool, r *recove
 	if err != nil && !torn {
 		return err
 	}
-	if torn {
-		// The seq of the record not whole: after the last read, or the
-		// first of the segment, or, if those are in the snapshot, after
-		// it, none of those after the last being in the snapshot.
+	if isLast {
+		// The seq of the record after the last read: or the first of the
+		// segment, or, if those are in the snapshot, after it, none of
+		// those after the last being in the snapshot.
 		if err := t.checkClaims(s.name, n, max(last, base, s.seq-1)+1); err != nil {
 			return err
 		}
