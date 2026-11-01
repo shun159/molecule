@@ -24,16 +24,18 @@ import (
 // targets named kvs-test-*, and refuse to run beside another run.
 
 // A filesystem is a file system tested: the least device it is made on,
-// and how.
+// and how; and whether it writes over a file in place, the room a segment
+// makes, in zeros, then the room of its records.
 type filesystem struct {
-	size int64
-	mkfs []string
+	size    int64
+	mkfs    []string
+	inPlace bool
 }
 
 var filesystems = map[string]filesystem{
-	"ext4":  {16 << 20, []string{"mkfs.ext4", "-q", "-E", "nodiscard"}},
-	"xfs":   {300 << 20, []string{"mkfs.xfs", "-q", "-K"}},
-	"btrfs": {128 << 20, []string{"mkfs.btrfs", "-q", "-K"}},
+	"ext4":  {16 << 20, []string{"mkfs.ext4", "-q", "-E", "nodiscard"}, true},
+	"xfs":   {300 << 20, []string{"mkfs.xfs", "-q", "-K"}, true},
+	"btrfs": {128 << 20, []string{"mkfs.btrfs", "-q", "-K"}, false},
 }
 
 // logSize is the room of the log device: all the run writes, mkfs too.
