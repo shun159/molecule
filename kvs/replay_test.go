@@ -13,17 +13,27 @@ import (
 // to it: those kept of a loss, and those of mounting and of the table.
 const cowSize = 1 << 30
 
-// checkReplays replays the log l, and checks the device as a power loss
-// after the file system was made may leave it: at each flush, all written
-// before it on the device; between two, any of the writes after the
-// first, as keepings picks them, but those of FUA, on the device once
-// written.
-func checkReplays(t *testing.T, l *logWrites, h []write, fs string, o Options[string, int]) {
-	r := newReplayer(t, l.sectorSize, h, fs, o)
+// checkReplays replays the log l of fs, and checks the device as a power
+// loss after the file system was made may leave it: at each flush, all
+// written before it on the device; between two, any of the writes after
+// the first, as keepings picks them, but those of FUA, on the device once
+// written. check checks the table on it, in dir, as of the marks before,
+// counted by name.
+func checkReplays(t *testing.T, l *logWrites, fs string, check func(dir string, marks map[string]int)) {
+	r := newReplayer(t, l.sectorSize, fs, check)
 	for _, e := range l.entries {
 		r.entry(e)
 	}
-	t.Logf("%d devices checked, of %d entries, %d writes", r.checked, len(l.entries), len(h))
+	t.Logf("%d devices checked, of %d entries", r.checked, len(l.entries))
+}
+
+// checkLossAt is the check of checkReplays for writes h, each between a
+// mark issue and a mark ack: checkLoss.
+func checkLossAt(t *testing.T, h []write, o Options[string, int]) func(string, map[string]int) {
+	return func(dir string, marks map[string]int) {
+		t.Helper()
+		checkLoss(t, loss{dir: dir, acked: marks["ack"], issued: marks["issue"]}, h, o)
+	}
 }
 
 // A replayer replays a log of dm-log-writes into an image, checking as it
@@ -39,20 +49,18 @@ type replayer struct {
 	snap            string // the name of the snapshot target
 	mnt             string
 
-	made          bool // the file system: the marks after it
-	acked, issued int
-	checked       int
-	h             []write
-	fs            string
-	o             Options[string, int]
+	marks   map[string]int // counted by name, as of the entries replayed
+	checked int
+	fs      string
+	checkFn func(dir string, marks map[string]int)
 }
 
 // newReplayer makes the image to replay into, and the loop devices of it
 // and of the writes to its snapshots.
-func newReplayer(t *testing.T, sectorSize int64, h []write, fs string, o Options[string, int]) *replayer {
+func newReplayer(t *testing.T, sectorSize int64, fs string, check func(string, map[string]int)) *replayer {
 	sh(t, "modprobe", "dm-snapshot")
 	dir := t.TempDir()
-	r := &replayer{t: t, sectorSize: sectorSize, h: h, fs: fs, o: o, snap: targetName("snap"), mnt: t.TempDir()}
+	r := &replayer{t: t, sectorSize: sectorSize, fs: fs, checkFn: check, marks: map[string]int{}, snap: targetName("snap"), mnt: t.TempDir()}
 	base := filepath.Join(dir, "base.img")
 	r.baseDev = attachImage(t, base, filesystems[fs].size, t.Cleanup)
 	r.cowDev = attachImage(t, filepath.Join(dir, "cow.img"), cowSize, t.Cleanup)
@@ -69,8 +77,8 @@ func newReplayer(t *testing.T, sectorSize int64, h []write, fs string, o Options
 func (r *replayer) entry(e lwEntry) {
 	switch {
 	case e.flags&lwMark != 0:
-		r.mark(e.mark)
-	case !r.made:
+		r.marks[e.mark]++
+	case r.marks["mkfs"] == 0:
 		r.replay(r.base, e)
 	case e.flags&lwFlush != 0:
 		r.checkSince()
@@ -82,18 +90,6 @@ func (r *replayer) entry(e lwEntry) {
 		r.check(nil)
 	default:
 		r.since = append(r.since, e)
-	}
-}
-
-// mark counts the mark of name.
-func (r *replayer) mark(name string) {
-	switch name {
-	case "mkfs":
-		r.made = true
-	case "issue":
-		r.issued++
-	case "ack":
-		r.acked++
 	}
 }
 
@@ -115,7 +111,7 @@ func (r *replayer) checkSince() {
 }
 
 // check checks a snapshot of the device, kept written to it, as of the
-// marks so far: mounted, the table on it as checkLoss requires.
+// marks so far: mounted, the table on it as checkFn requires.
 func (r *replayer) check(kept []lwEntry) {
 	r.t.Helper()
 	r.checked++
@@ -126,7 +122,7 @@ func (r *replayer) check(kept []lwEntry) {
 	r.write(dev, kept)
 	sh(r.t, "mount", "-t", r.fs, dev, r.mnt)
 	defer undo(r.t, "umount", r.mnt)
-	checkLoss(r.t, loss{dir: filepath.Join(r.mnt, "kvs"), acked: r.acked, issued: r.issued}, r.h, r.o)
+	r.checkFn(filepath.Join(r.mnt, "kvs"), r.marks)
 }
 
 // write writes the entries ws to the device at path.

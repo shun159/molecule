@@ -51,28 +51,31 @@ func TestRealDiskBtrfs(t *testing.T) { testRealDisk(t, "btrfs") }
 // there, and of the others some first ones; and the table goes on.
 func testRealDisk(t *testing.T, fs string) {
 	o := Options[string, int]{SegmentSize: 1 << 10, CompactRatio: -1}
-	r := newRig(t, fs)
+	r := newRig(t, fs, false)
 	h := r.run(o, 60)
 	r.stop()
 	l, err := readLogWrites(r.logImage)
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkReplays(t, l, h, fs, o)
+	checkReplays(t, l, fs, checkLossAt(t, h, o))
 }
 
-// A rig is a file system on a loop device under dm-log-writes, mounted.
+// A rig is a file system on a loop device under dm-log-writes, mounted;
+// with a dm-flakey between, to fail the writes at will.
 type rig struct {
 	t        *testing.T
-	name     string // of the target
+	name     string // of the target of the log
 	logImage string // the file of the log device
+	flakey   string // the target failing writes, if any
+	size     int64
 	mnt      string
 	undos    []func() // to undo the setup, the last first
 }
 
-// newRig makes the images, their loop devices, the target over them, and
-// fs on it, mounted.
-func newRig(t *testing.T, fs string) *rig {
+// newRig makes the images, their loop devices, the targets over them, and
+// fs on them, mounted.
+func newRig(t *testing.T, fs string, flakey bool) *rig {
 	if os.Geteuid() != 0 {
 		t.Skip("needs root: see realdisk_test.go")
 	}
@@ -84,18 +87,48 @@ func newRig(t *testing.T, fs string) *rig {
 	}
 	sh(t, "modprobe", "dm-log-writes")
 	dir := t.TempDir()
-	r := &rig{t: t, name: targetName("log"), logImage: filepath.Join(dir, "log.img"), mnt: t.TempDir()}
-	t.Cleanup(r.stop)
 	size := filesystems[fs].size
+	r := &rig{t: t, name: targetName("log"), logImage: filepath.Join(dir, "log.img"), size: size, mnt: t.TempDir()}
+	t.Cleanup(r.stop)
 	data := attachImage(t, filepath.Join(dir, "data.img"), size, r.later)
 	log := attachImage(t, r.logImage, logSize, r.later)
 	table := fmt.Sprintf("0 %d log-writes %s %s", size/512, data, log)
 	r.do([]string{"dmsetup", "create", r.name, "--table", table}, []string{"dmsetup", "remove", r.name})
 	dev := "/dev/mapper/" + r.name
+	if flakey {
+		dev = r.addFlakey(dev)
+	}
 	sh(t, append(filesystems[fs].mkfs, dev)...)
 	r.mark("mkfs")
 	r.do([]string{"mount", "-t", fs, dev, r.mnt}, []string{"umount", r.mnt})
 	return r
+}
+
+// addFlakey makes a dm-flakey over dev, writing to it, and returns it.
+func (r *rig) addFlakey(dev string) string {
+	sh(r.t, "modprobe", "dm-flakey")
+	r.flakey = targetName("flakey")
+	r.do([]string{"dmsetup", "create", r.flakey, "--table", r.flakeyTable(dev, false)}, []string{"dmsetup", "remove", r.flakey})
+	return "/dev/mapper/" + r.flakey
+}
+
+// flakeyTable is the table of the dm-flakey over dev: up for an hour, or,
+// failing, its writes failing with EIO for an hour.
+func (r *rig) flakeyTable(dev string, failing bool) string {
+	if failing {
+		return fmt.Sprintf("0 %d flakey %s 0 0 3600 1 error_writes", r.size/512, dev)
+	}
+	return fmt.Sprintf("0 %d flakey %s 0 3600 0", r.size/512, dev)
+}
+
+// failWrites has the writes to the device fail with EIO, or, not failing,
+// go through again; the file system not frozen meanwhile, for nothing to
+// be flushed.
+func (r *rig) failWrites(failing bool) {
+	table := r.flakeyTable("/dev/mapper/"+r.name, failing)
+	sh(r.t, "dmsetup", "suspend", "--nolockfs", r.flakey)
+	sh(r.t, "dmsetup", "load", r.flakey, "--table", table)
+	sh(r.t, "dmsetup", "resume", r.flakey)
 }
 
 // do runs cmd, and has the rig run undoCmd once stopped.
