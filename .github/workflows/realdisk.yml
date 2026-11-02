@@ -1,0 +1,47 @@
+name: kvs real disk
+
+# The real-disk tests of kvs (kvs/realdisk_test.go): kvs on ext4, xfs and
+# btrfs, on loop devices under device-mapper targets, run as root. Daily
+# too, for the flaky to show between changes. The runner's kernel has no
+# dm-dust: the read error tests run only on a machine of ours.
+
+on:
+  push:
+    branches: [master]
+    paths: [kvs/**, .github/workflows/realdisk.yml]
+  pull_request:
+    paths: [kvs/**, .github/workflows/realdisk.yml]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  realdisk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: file systems and targets
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq xfsprogs btrfs-progs
+          for m in dm-log-writes dm-snapshot dm-flakey; do
+            sudo modprobe "$m"
+          done
+      - name: build
+        run: go test -c -tags realdisk -o kvs.test ./kvs
+      - name: test
+        working-directory: kvs
+        shell: bash
+        run: |
+          sudo ../kvs.test -test.run RealDisk -test.skip RealDiskReadError -test.v -test.timeout 25m | tee ../realdisk.out
+          if grep -- '--- SKIP' ../realdisk.out; then
+            echo "a real-disk test skipped"
+            exit 1
+          fi
