@@ -38,6 +38,7 @@ jobs:
         run: go test -c -tags realdisk -o kvs.test ./kvs
       - name: test
         working-directory: kvs
+        shell: bash
         run: |
           sudo ../kvs.test -test.run RealDisk -test.skip RealDiskReadError -test.v -test.timeout 25m | tee ../realdisk.out
           if grep -- '--- SKIP' ../realdisk.out; then

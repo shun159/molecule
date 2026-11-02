@@ -99,7 +99,7 @@ func newRig(t *testing.T, fs string, flakey bool) *rig {
 	data := attachImage(t, filepath.Join(dir, "data.img"), size, r.later)
 	log := attachImage(t, r.logImage, logSize, r.later)
 	table := fmt.Sprintf("0 %d log-writes %s %s", size/512, data, log)
-	r.do([]string{"dmsetup", "create", r.name, "--table", table}, []string{"dmsetup", "remove", r.name})
+	r.do([]string{"dmsetup", "create", r.name, "--table", table}, []string{"dmsetup", "remove", "--retry", r.name})
 	dev := "/dev/mapper/" + r.name
 	if flakey {
 		dev = r.addFlakey(dev)
@@ -114,7 +114,7 @@ func newRig(t *testing.T, fs string, flakey bool) *rig {
 func (r *rig) addFlakey(dev string) string {
 	sh(r.t, "modprobe", "dm-flakey")
 	r.flakey = targetName("flakey")
-	r.do([]string{"dmsetup", "create", r.flakey, "--table", r.flakeyTable(dev, false)}, []string{"dmsetup", "remove", r.flakey})
+	r.do([]string{"dmsetup", "create", r.flakey, "--table", r.flakeyTable(dev, false)}, []string{"dmsetup", "remove", "--retry", r.flakey})
 	return "/dev/mapper/" + r.flakey
 }
 

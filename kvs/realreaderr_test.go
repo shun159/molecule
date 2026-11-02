@@ -81,7 +81,7 @@ func newDusty(t *testing.T, fs string) *dusty {
 	loop := attachImage(t, filepath.Join(t.TempDir(), "fs.img"), size, t.Cleanup)
 	d := &dusty{t: t, fs: fs, name: targetName("dust"), mnt: t.TempDir()}
 	sh(t, "dmsetup", "create", d.name, "--table", fmt.Sprintf("0 %d dust %s 0 512", size/512, loop))
-	t.Cleanup(func() { undo(t, "dmsetup", "remove", d.name) })
+	t.Cleanup(func() { undo(t, "dmsetup", "remove", "--retry", d.name) })
 	d.dev = "/dev/mapper/" + d.name
 	sh(t, append(filesystems[fs].mkfs, d.dev)...)
 	sh(t, "mount", "-t", fs, d.dev, d.mnt)

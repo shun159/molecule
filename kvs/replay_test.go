@@ -117,7 +117,7 @@ func (r *replayer) check(kept []lwEntry) {
 	r.checked++
 	table := fmt.Sprintf("0 %d snapshot %s %s N 8", filesystems[r.fs].size/512, r.baseDev, r.cowDev)
 	sh(r.t, "dmsetup", "create", r.snap, "--table", table)
-	defer undo(r.t, "dmsetup", "remove", r.snap)
+	defer undo(r.t, "dmsetup", "remove", "--retry", r.snap)
 	dev := "/dev/mapper/" + r.snap
 	r.write(dev, kept)
 	sh(r.t, "mount", "-t", r.fs, dev, r.mnt)

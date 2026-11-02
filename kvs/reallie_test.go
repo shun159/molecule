@@ -75,7 +75,7 @@ func newFlakey(t *testing.T, fs string) *flakey {
 	f := &flakey{t: t, fs: fs, name: targetName("flakey"), size: filesystems[fs].size, mnt: t.TempDir()}
 	f.loop = attachImage(t, filepath.Join(t.TempDir(), "fs.img"), f.size, t.Cleanup)
 	sh(t, "dmsetup", "create", f.name, "--table", f.table(false))
-	t.Cleanup(func() { undo(t, "dmsetup", "remove", f.name) })
+	t.Cleanup(func() { undo(t, "dmsetup", "remove", "--retry", f.name) })
 	f.dev = "/dev/mapper/" + f.name
 	sh(t, append(filesystems[fs].mkfs, f.dev)...)
 	sh(t, "mount", "-t", fs, f.dev, f.mnt)
