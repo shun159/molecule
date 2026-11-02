@@ -30,7 +30,8 @@ var (
 // kept: what it then holds is durable, though the writes failed may have
 // left pages in the cache, clean, not on the device (fsyncgate). A power
 // loss at any moment leaves the puts acked, and, once opened again, what
-// it held then.
+// it held then: of the failed writes it held, only if fs makes them
+// durable.
 func testRealEIO(t *testing.T, fs string) {
 	r := newRig(t, fs, true)
 	dir := filepath.Join(r.mnt, "kvs")
@@ -70,7 +71,7 @@ func testRealEIO(t *testing.T, fs string) {
 		t.Fatal(err)
 	}
 	checkReplays(t, l, fs, func(dir string, marks map[string]int) {
-		checkEIOLoss(t, dir, marks, opened)
+		checkEIOLoss(t, fs, dir, marks, opened)
 	})
 }
 
@@ -89,7 +90,7 @@ func (r *rig) puts(tab *Table[string, string], ks []string) {
 // puts before the failure, the acked and some after; then those, and of
 // the failed some first; once opened again, what it held then, and of
 // the puts after, the acked and some after. A put after works.
-func checkEIOLoss(t *testing.T, dir string, marks map[string]int, opened map[string]string) {
+func checkEIOLoss(t *testing.T, fs, dir string, marks map[string]int, opened map[string]string) {
 	t.Helper()
 	tab, err := Open(dir, Options[string, string]{})
 	if err != nil {
@@ -102,8 +103,11 @@ func checkEIOLoss(t *testing.T, dir string, marks map[string]int, opened map[str
 	var ok bool
 	switch {
 	case marks["opened"] > 0:
-		n := len(eioBefore) + len(eioFailed)
-		ok = putsOf(got, opened, eioAfter, acked-len(eioBefore), issued-n)
+		lo, hi := acked-len(eioBefore), issued-len(eioBefore)-len(eioFailed)
+		ok = putsOf(got, opened, eioAfter, lo, hi)
+		if !ok && !filesystems[fs].reopenDurable {
+			ok = putsOf(got, without(opened, eioFailed), eioAfter, lo, hi)
+		}
 	case marks["eio"] > 0:
 		ok = putsOf(got, entriesOf(eioBefore), eioFailed, 0, issued-len(eioBefore))
 	default:
@@ -147,6 +151,15 @@ func entriesOf(ks []string) map[string]string {
 	m := map[string]string{}
 	for _, k := range ks {
 		m[k] = "v"
+	}
+	return m
+}
+
+// without returns m with none of ks.
+func without(m map[string]string, ks []string) map[string]string {
+	m = maps.Clone(m)
+	for _, k := range ks {
+		delete(m, k)
 	}
 	return m
 }
