@@ -84,7 +84,7 @@ func mountFresh(t *testing.T, fs string) string {
 	sh(t, append(filesystems[fs].mkfs, dev)...)
 	mnt := t.TempDir()
 	sh(t, "mount", "-t", fs, dev, mnt)
-	t.Cleanup(func() { undo(t, "umount", mnt) })
+	t.Cleanup(func() { undoMount(t, mnt) })
 	return mnt
 }
 

@@ -106,7 +106,8 @@ func newRig(t *testing.T, fs string, flakey bool) *rig {
 	}
 	sh(t, append(filesystems[fs].mkfs, dev)...)
 	r.mark("mkfs")
-	r.do([]string{"mount", "-t", fs, dev, r.mnt}, []string{"umount", r.mnt})
+	sh(t, "mount", "-t", fs, dev, r.mnt)
+	r.later(func() { undoMount(t, r.mnt) })
 	return r
 }
 
