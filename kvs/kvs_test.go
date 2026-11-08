@@ -27,12 +27,14 @@ var modes = []struct {
 	{"readwrite", true, true},
 }
 
+// open opens the table of dir, closed once the test ends.
 func open[K comparable, V any](t testing.TB, dir string, o kvs.Options[K, V]) *kvs.Table[K, V] {
 	t.Helper()
 	tab, err := kvs.Open(dir, o)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { tab.Close() })
 	return tab
 }
 
