@@ -20,7 +20,7 @@ var (
 		return f.Sync()
 	}
 	syncDir = func(dir string) error {
-		d, err := os.Open(dir)
+		d, err := openFile(dir, os.O_RDONLY, 0)
 		if err != nil {
 			return err
 		}
@@ -47,7 +47,7 @@ func populate(m []byte) { syscall.Madvise(m, madvPopulateWrite) }
 // lockDir takes the lock of dir, a flock of its file LOCK: held by an open
 // file, it goes with the process, if it dies.
 func lockDir(dir string) (*os.File, error) {
-	f, err := os.OpenFile(filepath.Join(dir, "LOCK"), os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := openFile(filepath.Join(dir, "LOCK"), os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err
 	}

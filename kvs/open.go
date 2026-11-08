@@ -311,7 +311,7 @@ func (t *Table[K, V]) readFile(name string, base uint64) (n int64, last uint64, 
 
 // openRead opens the file at path for reading. A variable, for a test to
 // fail the reads.
-var openRead = func(path string) (io.ReadCloser, error) { return os.Open(path) }
+var openRead = func(path string) (io.ReadCloser, error) { return openFile(path, os.O_RDONLY, 0) }
 
 // loadRecord sets or deletes the entry of a record of the file name.
 func (t *Table[K, V]) loadRecord(name string, seq uint64, op byte, kb, vb []byte, size int64) error {
@@ -336,7 +336,7 @@ func (t *Table[K, V]) loadRecord(name string, seq uint64, op byte, kb, vb []byte
 // cache only, where opening reads them, and the writes after are made
 // durable after them.
 func truncate(path string, n int64) error {
-	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	f, err := openFile(path, os.O_WRONLY, 0)
 	if err != nil {
 		return err
 	}
