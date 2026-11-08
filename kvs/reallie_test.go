@@ -79,7 +79,7 @@ func newFlakey(t *testing.T, fs string) *flakey {
 	f.dev = "/dev/mapper/" + f.name
 	sh(t, append(filesystems[fs].mkfs, f.dev)...)
 	sh(t, "mount", "-t", fs, f.dev, f.mnt)
-	t.Cleanup(func() { undo(t, "umount", f.mnt) })
+	t.Cleanup(func() { undoMount(t, f.mnt) })
 	return f
 }
 
@@ -103,6 +103,8 @@ func (f *flakey) dropWrites(dropping bool) {
 // remount mounts the file system again: nothing of it then in the page
 // cache.
 func (f *flakey) remount() {
-	sh(f.t, "umount", f.mnt)
+	if err := unmount(f.mnt); err != nil {
+		f.t.Fatal(err)
+	}
 	sh(f.t, "mount", "-t", f.fs, f.dev, f.mnt)
 }

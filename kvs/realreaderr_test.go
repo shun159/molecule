@@ -85,7 +85,7 @@ func newDusty(t *testing.T, fs string) *dusty {
 	d.dev = "/dev/mapper/" + d.name
 	sh(t, append(filesystems[fs].mkfs, d.dev)...)
 	sh(t, "mount", "-t", fs, d.dev, d.mnt)
-	t.Cleanup(func() { undo(t, "umount", d.mnt) })
+	t.Cleanup(func() { undoMount(t, d.mnt) })
 	return d
 }
 
@@ -97,7 +97,9 @@ func (d *dusty) message(args ...string) {
 // remount unmounts the file system, does f, and mounts it again: nothing
 // of it then in the page cache.
 func (d *dusty) remount(f func()) {
-	sh(d.t, "umount", d.mnt)
+	if err := unmount(d.mnt); err != nil {
+		d.t.Fatal(err)
+	}
 	f()
 	sh(d.t, "mount", "-t", d.fs, d.dev, d.mnt)
 }

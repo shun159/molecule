@@ -121,7 +121,7 @@ func (r *replayer) check(kept []lwEntry) {
 	dev := "/dev/mapper/" + r.snap
 	r.write(dev, kept)
 	sh(r.t, "mount", "-t", r.fs, dev, r.mnt)
-	defer undo(r.t, "umount", r.mnt)
+	defer undoMount(r.t, r.mnt)
 	r.checkFn(filepath.Join(r.mnt, "kvs"), r.marks)
 }
 
