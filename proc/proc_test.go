@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"slices"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -191,26 +192,35 @@ func TestMailboxOrder(t *testing.T) {
 	}
 }
 
-func TestMailboxCompaction(t *testing.T) {
+// The messages keep their order, and their count, across the batch taken
+// and the queue pushed to meanwhile; remove deletes from both.
+func TestMailboxBatches(t *testing.T) {
 	m := newMailbox()
-	for i := range 3 * compactThreshold {
+	for i := range 10 {
 		m.push(i)
 	}
-	for i := range 2 * compactThreshold {
-		if v, _ := m.pop(); v != i {
-			t.Fatalf("pop = %v, want %d", v, i)
+	var got []any
+	for range 3 {
+		v, _ := m.pop() // takes 0-9, pops 0-2
+		got = append(got, v)
+	}
+	for i := 10; i < 20; i++ {
+		m.push(i)
+	}
+	m.remove(func(msg any) bool { return msg.(int)%2 == 0 })
+	if m.len() != 9 {
+		t.Errorf("len = %d, want 9", m.len())
+	}
+	for {
+		v, ok := m.pop()
+		if !ok {
+			break
 		}
+		got = append(got, v)
 	}
-	if m.head >= compactThreshold {
-		t.Errorf("queue not compacted: head = %d", m.head)
-	}
-	for i := 2 * compactThreshold; i < 3*compactThreshold; i++ {
-		if v, _ := m.pop(); v != i {
-			t.Fatalf("pop = %v, want %d", v, i)
-		}
-	}
-	if _, ok := m.pop(); ok || m.len() != 0 {
-		t.Error("mailbox not empty")
+	want := []any{0, 1, 2, 3, 5, 7, 9, 11, 13, 15, 17, 19}
+	if !slices.Equal(got, want) || m.len() != 0 {
+		t.Errorf("popped %v, %d left; want %v", got, m.len(), want)
 	}
 }
 
