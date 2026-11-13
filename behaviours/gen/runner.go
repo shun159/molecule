@@ -239,7 +239,7 @@ func (r *runner[S]) translate(msg any) (Msg, bool) {
 	case responseMsg:
 		return InfoMsg{Msg: m.Response}, true
 	case downMsg:
-		return InfoMsg{Msg: m.Down}, true
+		return r.monitors.notFound(m)
 	case proc.DownMsg:
 		return r.monitors.down(m), true
 	default:

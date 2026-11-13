@@ -438,6 +438,31 @@ func TestMonitorEffect(t *testing.T) {
 	})
 }
 
+// The Down of a Monitor of a process not found is that monitor's: none
+// arrives once it is removed, or replaced under its tag by a monitor of a
+// process running.
+func TestMonitorNotFoundThenGone(t *testing.T) {
+	inWorld(t, func(w *world) {
+		pid := w.start()
+		a := w.spawn(waitForever)
+
+		w.do(pid,
+			actor.Monitor{Target: actor.Local("nobody"), Tag: "removed"},
+			actor.Demonitor{Tag: "removed"},
+			actor.Monitor{Target: actor.Local("nobody"), Tag: "a"},
+			actor.Monitor{Target: a, Tag: "a"},
+		)
+		if got := w.log(pid); len(got) != 0 {
+			t.Errorf("log = %#v, want no Down", got)
+		}
+		kill(w.n, a, errBoom)
+		want := []any{actor.Down{Tag: "a", PID: a, Reason: errBoom}}
+		if got := w.log(pid); !reflect.DeepEqual(got, want) {
+			t.Errorf("log = %#v\nwant %#v", got, want)
+		}
+	})
+}
+
 func TestTimers(t *testing.T) {
 	inWorld(t, func(w *world) {
 		pid := w.start()
