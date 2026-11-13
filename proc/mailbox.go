@@ -1,21 +1,30 @@
 package proc
 
-import "sync"
-
-// compactThreshold is the number of consumed slots after which the queue
-// is shifted down so the backing array does not grow without bound.
-const compactThreshold = 1024
+import (
+	"sync"
+	"sync/atomic"
+)
 
 // mailbox is a FIFO queue, unbounded unless given a limit. Any goroutine
 // may push; only the owning process pops.
+//
+// The owner takes the messages pushed in batches: under the lock once, it
+// swaps the queue pushed to for its own, emptied, then pops from that
+// without the lock until it is empty too.
 type mailbox struct {
-	mu   sync.Mutex
-	q    []any
-	head int
-	max  int // the most messages waiting, if > 0, see Self.SetMaxMessages
+	mu    sync.Mutex
+	q     []any // pushed, not yet taken
+	max   int   // the most messages waiting, if > 0, see Self.SetMaxMessages
+	taken []any // the batch the owner pops from, from head; set under mu
 	// notify has capacity 1 and is signalled on every push, so a receiver
 	// that found the queue empty never misses a wakeup.
 	notify chan struct{}
+
+	// head is the next of taken to pop, of the owner alone, on a cache line
+	// of its own: the others read it only to count the messages waiting.
+	_    [64]byte
+	head atomic.Int64
+	_    [56]byte
 }
 
 func newMailbox() *mailbox {
@@ -26,7 +35,10 @@ func newMailbox() *mailbox {
 func (m *mailbox) push(msg any) (full bool) {
 	m.mu.Lock()
 	m.q = append(m.q, msg)
-	full = m.max > 0 && len(m.q)-m.head > m.max
+	// At most all of taken are left: the owner's head is read only if
+	// that many would be past the limit.
+	mayBeFull := m.max > 0 && len(m.q)+len(m.taken) > m.max
+	full = mayBeFull && m.waitingLocked() > m.max
 	m.mu.Unlock()
 	m.wake()
 	return full
@@ -40,39 +52,55 @@ func (m *mailbox) wake() {
 	}
 }
 
+// pop returns the next message, of the owner.
 func (m *mailbox) pop() (any, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.head == len(m.q) {
-		return nil, false
+	h := int(m.head.Load())
+	if h == len(m.taken) {
+		if !m.take() {
+			return nil, false
+		}
+		h = 0
 	}
-	msg := m.q[m.head]
-	m.q[m.head] = nil
-	m.head++
-	switch {
-	case m.head == len(m.q):
-		m.q, m.head = m.q[:0], 0
-	case m.head >= compactThreshold && m.head*2 >= len(m.q):
-		n := copy(m.q, m.q[m.head:])
-		clear(m.q[n:])
-		m.q, m.head = m.q[:n], 0
-	}
+	msg := m.taken[h]
+	m.taken[h] = nil
+	m.head.Store(int64(h + 1))
 	return msg, true
 }
 
+// take swaps the queue pushed to for taken, emptied, and reports whether
+// it got any message.
+func (m *mailbox) take() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.q) == 0 {
+		return false
+	}
+	m.q, m.taken = m.taken[:0], m.q
+	m.head.Store(0)
+	return true
+}
+
 // remove deletes the queued messages for which match returns true, keeping
-// the order of the others.
+// the order of the others. Of the owner.
 func (m *mailbox) remove(match func(any) bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	kept := m.q[:m.head]
-	for _, msg := range m.q[m.head:] {
+	h := int(m.head.Load())
+	m.taken = m.taken[:h+len(filter(m.taken[h:], match))]
+	m.q = filter(m.q, match)
+}
+
+// filter keeps in place the messages of msgs match returns false for, and
+// returns them.
+func filter(msgs []any, match func(any) bool) []any {
+	kept := msgs[:0]
+	for _, msg := range msgs {
 		if !match(msg) {
 			kept = append(kept, msg)
 		}
 	}
-	clear(m.q[len(kept):])
-	m.q = kept
+	clear(msgs[len(kept):])
+	return kept
 }
 
 // setMax sets the limit, and returns the previous one.
@@ -85,16 +113,22 @@ func (m *mailbox) setMax(n int) int {
 }
 
 // drop empties the queue of a dead process, for its messages to be freed
-// before its goroutine notices the death.
+// before its goroutine notices the death: those not yet taken; the batch
+// taken is the owner's, freed with it.
 func (m *mailbox) drop() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	clear(m.q)
-	m.q, m.head = nil, 0
+	m.q = nil
 }
 
 func (m *mailbox) len() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return len(m.q) - m.head
+	return m.waitingLocked()
+}
+
+// waitingLocked returns the number of messages waiting, under mu.
+func (m *mailbox) waitingLocked() int {
+	return len(m.q) + len(m.taken) - int(m.head.Load())
 }
