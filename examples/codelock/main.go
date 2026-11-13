@@ -17,6 +17,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/shun159/molecule/actor"
 	"github.com/shun159/molecule/behaviours/genstatem"
 	"github.com/shun159/molecule/proc"
 )
@@ -38,7 +39,7 @@ func run(w io.Writer, openTime time.Duration) error {
 	if err != nil {
 		return err
 	}
-	lock := genstatem.NewRef(pid)
+	lock := actor.NewRef[CodeLock](pid)
 	press := func(buttons ...int) {
 		for _, b := range buttons {
 			lock.Cast(n, Button{b})

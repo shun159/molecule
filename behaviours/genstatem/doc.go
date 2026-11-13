@@ -96,13 +96,26 @@
 //
 // # Clients
 //
-// A [Ref] calls and casts a machine, at a PID or a name, like
-// gen_statem:call, gen_statem:cast and gen_statem:send_request:
+// A machine is called with requests embedding actor.Req, through an
+// actor.Ref, like gen_statem:call and gen_statem:cast: the reply is of
+// the type of the request, and the machine replies with the Reply of the
+// request.
 //
-//	lock := genstatem.NewRef(actor.Local("lock"))
+//	type Status struct{ actor.Req[CodeLock, string] }
+//
+//	lock := actor.NewRef[CodeLock](actor.Local("lock"))
 //	lock.Cast(caller, Button{1})
-//	status, err := lock.Call(ctx, caller, Status{})
-//	p := lock.SendRequest(caller, Status{}) // the reply, from p, later
+//	status, err := lock.Call(ctx, caller, Status{}) // a string
+//
+//	// in HandleEvent, for a genstatem.Call e:
+//	if r, ok := e.Req.(Status); ok {
+//		return state, data, actor.Do(r.Reply(e.From, state.String()))
+//	}
+//
+// A [Ref] calls and casts with requests of any type, and calls without
+// waiting, like gen_statem:send_request:
+//
+//	p := genstatem.NewRef(actor.Local("lock")).SendRequest(caller, Status{})
 //
 // A machine implementing actor.StatusFormatter formats what the report of
 // its terminating tells, like format_status/1; its State is the Machine.
