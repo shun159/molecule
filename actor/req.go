@@ -32,7 +32,8 @@ import (
 // A switch on the requests is not checked to have them all: Unknown, in
 // its default, replies to one left out rather than leaving its caller
 // waiting. A reply made otherwise, as with the Reply of genserver.From,
-// is not checked either.
+// is not checked either. Calls all of one reply type are better typed by
+// the types of genserver, which check a reply made later too.
 
 // Req, embedded in a request type, makes it a request to the server Srv,
 // replied a Rep. It is empty: a request with it is encoded as without.
