@@ -7,6 +7,10 @@
 // Each file holds one "module": main.go plays a scenario, code_lock.go is
 // the state machine, display.go the process standing for the door.
 //
+// The states are values, Locked and Open, and HandleEvent hands each
+// event to the function of its state, as locked/3 and open/3.
+// examples/pushbutton writes its states as types instead, to compare.
+//
 //	go run ./examples/codelock
 package main
 
