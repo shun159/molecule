@@ -46,8 +46,8 @@ func run(w io.Writer, openTime time.Duration) error {
 		}
 	}
 	status := func() {
-		v, _ := lock.Call(ctx, n, Status{})
-		show(n, display, fmt.Sprintf("status: %v", v))
+		state, _ := lock.Call(ctx, n, Status{})
+		show(n, display, "status: "+state)
 	}
 
 	press(1, 2, 4) // wrong
