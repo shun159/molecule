@@ -10,7 +10,7 @@ import (
 func monitorCounts(p *process) (monitors, monitoring int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return len(p.monitors), len(p.monitoring)
+	return p.monitors.len(), len(p.monitoring)
 }
 
 func TestMonitorDown(t *testing.T) {

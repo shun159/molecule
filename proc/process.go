@@ -35,16 +35,18 @@ type process struct {
 	// full is set once the mailbox of p is past its limit.
 	full atomic.Bool
 
-	// mu guards links, monitors and the transition to dead, so a link or
+	// mu guards links, monitoring and the transition to dead, so a link or
 	// a monitor is either established with a live process or reported as
 	// NoProc, never lost.
 	mu    sync.Mutex
 	links map[PID]struct{}
-	// monitors are the watchers of p; monitoring are the processes p
-	// watches. A DOWN message is only queued while its Ref is still in
-	// the watcher's monitoring, checked under the watcher's lock.
-	monitors   map[Ref]watcher
+	// monitoring are the processes p watches. A DOWN message is only
+	// queued while its Ref is still in the watcher's monitoring, checked
+	// under the watcher's lock.
 	monitoring map[Ref]PID
+	// monitors are the watchers of p, under locks of their own, taken
+	// after mu.
+	monitors watchers
 
 	// name is the registered name, guarded by node.regMu.
 	name string
@@ -133,8 +135,8 @@ func (p *process) die(reason error) {
 	p.node.procs.del(p.pid.id)
 	close(p.done) // last: once it is closed, the context is cancelled too
 	p.mbox.wake() // a Receive waiting on the mailbox alone
-	links, monitors, monitoring := p.links, p.monitors, p.monitoring
-	p.links, p.monitors, p.monitoring = nil, nil, nil
+	links, monitors, monitoring := p.links, p.monitors.take(), p.monitoring
+	p.links, p.monitoring = nil, nil
 	p.mu.Unlock()
 
 	// The name goes before anyone is told, so a supervisor reacting to the
@@ -146,14 +148,14 @@ func (p *process) die(reason error) {
 	for to := range links {
 		p.node.sendExit(p.pid, to, reason, true)
 	}
-	for ref, w := range monitors {
-		w.notify(p.node, ref, p.pid, reason)
+	for _, shard := range monitors {
+		for ref, w := range shard {
+			w.notify(p.node, ref, p.pid, reason)
+		}
 	}
 	for ref, target := range monitoring {
 		if t := p.node.lookup(target); t != nil {
-			t.mu.Lock()
-			delete(t.monitors, ref)
-			t.mu.Unlock()
+			t.monitors.del(ref)
 		} else {
 			p.node.demonitorRemote(ref, target)
 		}
@@ -247,14 +249,6 @@ func (p *process) link(pid PID) {
 		p.links = make(map[PID]struct{})
 	}
 	p.links[pid] = struct{}{}
-}
-
-// watchedBy records w as a watcher of p.
-func (p *process) watchedBy(ref Ref, w watcher) {
-	if p.monitors == nil {
-		p.monitors = make(map[Ref]watcher)
-	}
-	p.monitors[ref] = w
 }
 
 // watch records that p monitors target.

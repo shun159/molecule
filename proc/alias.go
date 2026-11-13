@@ -104,14 +104,10 @@ func (n *Node) monitorAlias(pid PID, f func(Ref, AliasMsg)) Alias {
 	}
 
 	n.aliases.put(ref.id, s)
-	t.mu.Lock()
-	if t.dead.Load() {
-		t.mu.Unlock()
+	if !t.monitors.add(ref, watcher{alias: true}, &t.dead) {
 		n.aliasDown(ref, NoProc)
 		return a
 	}
-	t.watchedBy(ref, watcher{alias: true})
-	t.mu.Unlock()
 	a.target = t
 	return a
 }
@@ -121,9 +117,7 @@ func (n *Node) monitorAlias(pid PID, f func(Ref, AliasMsg)) Alias {
 func (a Alias) Release() {
 	a.n.aliases.del(a.Ref.id)
 	if t := a.target; t != nil {
-		t.mu.Lock()
-		delete(t.monitors, a.Ref)
-		t.mu.Unlock()
+		t.monitors.del(a.Ref)
 	}
 	if a.remote.node != "" {
 		a.n.demonitorRemote(a.Ref, a.remote)

@@ -122,9 +122,7 @@ func TestNameFreedBeforeDown(t *testing.T) {
 // onDown runs f synchronously, inside the death of p, at the point where
 // its monitors are notified.
 func onDown(p *process, f func(reason error)) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.watchedBy(p.node.MakeRef(), watcher{cancel: f})
+	p.monitors.add(p.node.MakeRef(), watcher{cancel: f}, &p.dead)
 }
 
 // TestNameFreedBeforeNotify checks, at the very moment links and monitors

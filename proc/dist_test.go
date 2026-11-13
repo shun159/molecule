@@ -278,7 +278,7 @@ func TestRemoteMonitor(t *testing.T) {
 	in(a, pa, func(s *Self) { ref = s.Monitor(pb) })
 	a.Send(pb, func(*Self) {}) // the monitor is in place at b after this
 	b.Send(pb, func(*Self) {})
-	eventually(t, func() bool { return len(watchers(b, pb)) == 1 })
+	eventually(t, func() bool { return len(watchersOf(b, pb)) == 1 })
 	b.lookup(pb).die(boom)
 	if m := next(t, ca); m != (DownMsg{Ref: ref, PID: pb, Reason: boom}) {
 		t.Errorf("got %#v", m)
@@ -290,7 +290,7 @@ func TestRemoteMonitor(t *testing.T) {
 		ref := s.Monitor(pb2)
 		s.Demonitor(ref)
 	})
-	eventually(t, func() bool { return len(watchers(b, pb2)) == 0 })
+	eventually(t, func() bool { return len(watchersOf(b, pb2)) == 0 })
 	b.lookup(pb2).die(boom)
 	nothing(t, ca)
 
@@ -305,9 +305,9 @@ func TestRemoteMonitor(t *testing.T) {
 	pb3, _ := inbox(b)
 	watcherProc, _ := inbox(a)
 	in(a, watcherProc, func(s *Self) { s.Monitor(pb3) })
-	eventually(t, func() bool { return len(watchers(b, pb3)) == 1 })
+	eventually(t, func() bool { return len(watchersOf(b, pb3)) == 1 })
 	a.lookup(watcherProc).die(boom)
-	eventually(t, func() bool { return len(watchers(b, pb3)) == 0 })
+	eventually(t, func() bool { return len(watchersOf(b, pb3)) == 0 })
 }
 
 func TestRemoteAlias(t *testing.T) {
@@ -322,12 +322,12 @@ func TestRemoteAlias(t *testing.T) {
 		t.Errorf("got %#v", m)
 	}
 	al.Release()
-	eventually(t, func() bool { return len(watchers(b, pb)) == 0 })
+	eventually(t, func() bool { return len(watchersOf(b, pb)) == 0 })
 
 	// The death of the target comes instead, if first.
 	al = a.MonitorAlias(pb)
 	defer al.Release()
-	eventually(t, func() bool { return len(watchers(b, pb)) == 1 })
+	eventually(t, func() bool { return len(watchersOf(b, pb)) == 1 })
 	boom := errors.New("boom")
 	b.lookup(pb).die(boom)
 	if m := <-al.C; !m.Down || m.Reason != boom {
@@ -341,7 +341,7 @@ func TestRemoteWatch(t *testing.T) {
 	pb, _ := inbox(b)
 	ctx, stop := a.Watch(context.Background(), pb)
 	defer stop()
-	eventually(t, func() bool { return len(watchers(b, pb)) == 1 })
+	eventually(t, func() bool { return len(watchersOf(b, pb)) == 1 })
 	boom := errors.New("boom")
 	b.lookup(pb).die(boom)
 	<-ctx.Done()
@@ -363,7 +363,7 @@ func TestNodeDown(t *testing.T) {
 	ctx, stop := a.Watch(context.Background(), pb)
 	defer stop()
 	in(b, pb, func(s *Self) { s.Monitor(pa) })
-	eventually(t, func() bool { return len(watchers(b, pb)) == 2 && len(watchers(a, pa)) == 1 })
+	eventually(t, func() bool { return len(watchersOf(b, pb)) == 2 && len(watchersOf(a, pa)) == 1 })
 
 	f.disconnect("a", "b")
 	got := map[any]bool{next(t, ca): true, next(t, ca): true}
@@ -386,7 +386,7 @@ func TestNodeDown(t *testing.T) {
 	if !exited || !down {
 		t.Errorf("at b: exit %v, down %v", exited, down)
 	}
-	if w := watchers(a, pa); len(w) != 0 {
+	if w := watchersOf(a, pa); len(w) != 0 {
 		t.Errorf("a keeps monitors of b: %v", w)
 	}
 
@@ -420,18 +420,16 @@ func TestIDMarshal(t *testing.T) {
 	}
 }
 
-// watchers returns the monitors of the local process pid.
-func watchers(n *Node, pid PID) []Ref {
+// watchersOf returns the monitors of the local process pid.
+func watchersOf(n *Node, pid PID) []Ref {
 	p := n.lookup(pid)
 	if p == nil {
 		return nil
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	var refs []Ref
-	for ref := range p.monitors {
+	p.monitors.each(func(_ map[Ref]watcher, ref Ref, _ watcher) {
 		refs = append(refs, ref)
-	}
+	})
 	return refs
 }
 
@@ -459,7 +457,7 @@ func TestRemoteAliasName(t *testing.T) {
 		t.Errorf("got %#v", m)
 	}
 	al.Release()
-	eventually(t, func() bool { return len(watchers(b, pb)) == 0 })
+	eventually(t, func() bool { return len(watchersOf(b, pb)) == 0 })
 
 	// No process has the name.
 	al = a.MonitorAliasName("b", "nobody")
@@ -470,7 +468,7 @@ func TestRemoteAliasName(t *testing.T) {
 
 	// The process with the name dies.
 	al = a.MonitorAliasName("b", "server")
-	eventually(t, func() bool { return len(watchers(b, pb)) == 1 })
+	eventually(t, func() bool { return len(watchersOf(b, pb)) == 1 })
 	boom := errors.New("boom")
 	b.lookup(pb).die(boom)
 	if m := <-al.C; !m.Down || m.Reason != boom {
@@ -483,7 +481,7 @@ func TestRemoteAliasName(t *testing.T) {
 	b.Register("server", pb2)
 	al = a.MonitorAliasName("b", "server")
 	defer al.Release()
-	eventually(t, func() bool { return len(watchers(b, pb2)) == 1 })
+	eventually(t, func() bool { return len(watchersOf(b, pb2)) == 1 })
 	f.disconnect("a", "b")
 	if m := <-al.C; !m.Down || m.Reason != NoConnection {
 		t.Errorf("got %#v", m)
@@ -513,7 +511,7 @@ func TestRemoteMonitorName(t *testing.T) {
 
 	var ref Ref
 	in(a, pa, func(s *Self) { ref = s.MonitorName("b", "server") })
-	eventually(t, func() bool { return len(watchers(b, pb)) == 1 })
+	eventually(t, func() bool { return len(watchersOf(b, pb)) == 1 })
 	b.lookup(pb).die(boom)
 	if m := next(t, ca); m != (DownMsg{Ref: ref, PID: pb, Reason: boom}) {
 		t.Errorf("got %#v", m)
@@ -531,14 +529,14 @@ func TestRemoteMonitorName(t *testing.T) {
 	in(a, pa, func(s *Self) { s.Demonitor(s.MonitorName("b", "server")) })
 	watcher, _ := inbox(a)
 	in(a, watcher, func(s *Self) { s.MonitorName("b", "server") })
-	eventually(t, func() bool { return len(watchers(b, pb2)) == 1 })
+	eventually(t, func() bool { return len(watchersOf(b, pb2)) == 1 })
 	a.lookup(watcher).die(boom)
-	eventually(t, func() bool { return len(watchers(b, pb2)) == 0 })
+	eventually(t, func() bool { return len(watchersOf(b, pb2)) == 0 })
 	nothing(t, ca)
 
 	// The node lost.
 	in(a, pa, func(s *Self) { ref = s.MonitorName("b", "server") })
-	eventually(t, func() bool { return len(watchers(b, pb2)) == 1 })
+	eventually(t, func() bool { return len(watchersOf(b, pb2)) == 1 })
 	f.disconnect("a", "b")
 	if m := next(t, ca).(DownMsg); m.Ref != ref || m.Reason != NoConnection {
 		t.Errorf("got %#v", m)
