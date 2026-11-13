@@ -121,6 +121,28 @@ func TestOptionalCallbacks(t *testing.T) {
 	})
 }
 
+// An info a server without HandleInfo drops is logged, as OTP does; a
+// CallAbandoned, which any server may get, is not.
+func TestInfoDroppedWarns(t *testing.T) {
+	rec, logger := testlog.New()
+	n := proc.NewNode("", proc.WithLogger(logger))
+	ctx := context.Background()
+	c, err := genserver.Start(ctx, n, Counter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer kill(n, c.Dest().(proc.PID))
+	n.Send(c.Dest().(proc.PID), "info")
+	n.Send(c.Dest().(proc.PID), actor.CallAbandoned{})
+	if _, err := c.Call(ctx, n, Get{}); err != nil { // both handled by now
+		t.Fatal(err)
+	}
+	warned := rec.Records("genserver: info dropped, the behaviour has no HandleInfo")
+	if len(warned) != 1 || warned[0].Attrs["msg"] != "info" {
+		t.Errorf("warnings %+v, want one of the info", warned)
+	}
+}
+
 func TestBadMessage(t *testing.T) {
 	n := proc.NewNode("")
 	ctx := context.Background()
