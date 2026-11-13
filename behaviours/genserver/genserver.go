@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/shun159/molecule/actor"
@@ -53,7 +54,8 @@ func (Default[S]) HandleCall(s S, _ None, _ From[None]) (S, []actor.Effect) { re
 func (Default[S]) HandleCast(s S, _ None) (S, []actor.Effect) { return s, nil }
 
 // InfoHandler handles the messages that are neither calls nor casts, see
-// gen.InfoMsg. Without it, they are dropped.
+// gen.InfoMsg. Without it, they are dropped with a warning logged, as OTP
+// does; but a CallAbandoned, which a server may get unasked.
 type InfoHandler[S any] interface {
 	HandleInfo(state S, msg any) (S, []actor.Effect)
 }
@@ -222,6 +224,7 @@ func (a adapter[S, Req, Rep, Cast]) Handle(s S, msg gen.Msg) (S, []actor.Effect)
 		if h, ok := a.b.(InfoHandler[S]); ok {
 			return h.HandleInfo(s, m.Msg)
 		}
+		return s, a.dropped(m.Msg)
 	case gen.ContinueMsg:
 		if h, ok := a.b.(ContinueHandler[S]); ok {
 			return h.HandleContinue(s, m.Msg)
@@ -229,6 +232,19 @@ func (a adapter[S, Req, Rep, Cast]) Handle(s S, msg gen.Msg) (S, []actor.Effect)
 		return s, actor.Do(actor.Stop{Reason: ErrNoHandleContinue})
 	}
 	return s, nil
+}
+
+// dropped warns of the info msg dropped, the behaviour without
+// InfoHandler: but of a CallAbandoned.
+func (a adapter[S, Req, Rep, Cast]) dropped(msg any) []actor.Effect {
+	if _, ok := msg.(actor.CallAbandoned); ok {
+		return nil
+	}
+	return actor.Do(gen.Log{
+		Level: slog.LevelWarn,
+		Msg:   "genserver: info dropped, the behaviour has no HandleInfo",
+		Attrs: []any{"behaviour", fmt.Sprintf("%T", a.b), "msg", msg},
+	})
 }
 
 // Label tells what the process is: the genserver and its behaviour.
