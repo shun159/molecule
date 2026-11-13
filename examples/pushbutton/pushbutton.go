@@ -6,7 +6,8 @@ package main
 //
 // In Go, a state is a type: off and on each have a handleEvent method,
 // like the off/3 and on/3 functions, and the machine's HandleEvent hands
-// each event to the method of the current state.
+// each event to the method of the current state. examples/codelock writes
+// its states as values instead, with a function each, to compare.
 
 import (
 	"context"

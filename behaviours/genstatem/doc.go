@@ -34,7 +34,12 @@
 //		return s.handleEvent(ev, data)
 //	}
 //
-// See examples/pushbutton.
+// See examples/pushbutton. States of plain values, as an int, have
+// HandleEvent switch on the state to a function each instead, as
+// examples/codelock does: what comes in any state handled first, the rest
+// by the function of the state. The two compare: types add a state
+// without touching HandleEvent; values are printed and compared as they
+// are.
 //
 // # Events
 //

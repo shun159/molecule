@@ -61,52 +61,77 @@ func (CodeLock) Init(proc.PID) (State, Data, []actor.Effect, error) {
 // unlocks the door.
 func (CodeLock) StateEnter() bool { return true }
 
+// HandleEvent handles what comes in any state, then hands the rest to the
+// function of the state, as state_functions has locked/3 and open/3.
 func (l CodeLock) HandleEvent(state State, data Data, ev genstatem.Event) (State, Data, []actor.Effect) {
 	switch e := ev.(type) {
 	case genstatem.Enter[State]:
-		if state == Locked {
-			return state, Data{}, actor.Do(l.show("door locked"))
-		}
-		return state, data, actor.Do(l.show("door open"),
-			genstatem.StartStateTimeout{After: l.OpenTime, Msg: lock{}})
-
-	case genstatem.Call: // Status, in any state
-		if r, ok := e.Req.(Status); ok {
-			return state, data, actor.Do(r.Reply(e.From, state.String()))
-		}
-		return state, data, actor.Do(actor.Unknown(e.From, e.Req))
-
-	case genstatem.StateTimeout: // lock, in Open
-		return Locked, data, nil
+		return l.entered(state, data)
+	case genstatem.Call:
+		return state, data, status(state, e)
 	}
-
 	if state == Open {
-		if _, ok := ev.(genstatem.Cast); ok {
-			// A button while open waits for the door to lock again.
-			return state, data, actor.Do(genstatem.Postpone{})
-		}
-		return state, data, nil
+		return l.open(data, ev)
 	}
+	return l.locked(data, ev)
+}
 
+// entered locks or unlocks the door: locked, the buttons pressed are
+// forgotten; open, it locks again after OpenTime.
+func (l CodeLock) entered(state State, data Data) (State, Data, []actor.Effect) {
+	if state == Locked {
+		return state, Data{}, actor.Do(l.show("door locked"))
+	}
+	return state, data, actor.Do(l.show("door open"),
+		genstatem.StartStateTimeout{After: l.OpenTime, Msg: lock{}})
+}
+
+// status replies to a Status call with the state, in any state.
+func status(state State, c genstatem.Call) []actor.Effect {
+	if r, ok := c.Req.(Status); ok {
+		return actor.Do(r.Reply(c.From, state.String()))
+	}
+	return actor.Do(actor.Unknown(c.From, c.Req))
+}
+
+// locked takes the buttons pressed, and forgets them after clearTime
+// without a press.
+func (l CodeLock) locked(data Data, ev genstatem.Event) (State, Data, []actor.Effect) {
 	switch e := ev.(type) {
 	case genstatem.Cast:
-		b, ok := e.Msg.(Button)
-		if !ok {
-			break
+		if b, ok := e.Msg.(Button); ok {
+			return l.pressed(data, b.N)
 		}
-		buttons := append(slices.Clip(data.Buttons), b.N)
-		switch {
-		case slices.Equal(buttons, l.Code):
-			return Open, Data{}, actor.Do(l.show("correct code"))
-		case len(buttons) == len(l.Code):
-			return state, Data{}, actor.Do(l.show("wrong code"))
-		}
-		return state, Data{Buttons: buttons},
-			actor.Do(genstatem.StartEventTimeout{After: clearTime, Msg: clear{}})
-	case genstatem.EventTimeout: // clear: no press for a while
-		return state, Data{}, actor.Do(l.show("code cleared"))
+	case genstatem.EventTimeout: // clear
+		return Locked, Data{}, actor.Do(l.show("code cleared"))
 	}
-	return state, data, nil
+	return Locked, data, nil
+}
+
+// pressed adds the button n to those pressed: the code opens the door, and
+// a wrong code, once as long, starts again.
+func (l CodeLock) pressed(data Data, n int) (State, Data, []actor.Effect) {
+	buttons := append(slices.Clip(data.Buttons), n)
+	switch {
+	case slices.Equal(buttons, l.Code):
+		return Open, Data{}, actor.Do(l.show("correct code"))
+	case len(buttons) == len(l.Code):
+		return Locked, Data{}, actor.Do(l.show("wrong code"))
+	}
+	return Locked, Data{Buttons: buttons},
+		actor.Do(genstatem.StartEventTimeout{After: clearTime, Msg: clear{}})
+}
+
+// open has the buttons wait until the door locks again, at the state
+// timeout.
+func (l CodeLock) open(data Data, ev genstatem.Event) (State, Data, []actor.Effect) {
+	switch ev.(type) {
+	case genstatem.Cast:
+		return Open, data, actor.Do(genstatem.Postpone{})
+	case genstatem.StateTimeout: // lock
+		return Locked, data, nil
+	}
+	return Open, data, nil
 }
 
 func (l CodeLock) show(text string) actor.Effect {
