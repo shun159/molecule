@@ -287,3 +287,16 @@ func TestStop(t *testing.T) {
 		}
 	})
 }
+
+// A call a supervisor does not know is answered, not left waiting.
+func TestUnknownCall(t *testing.T) {
+	inWorld(t, func(w *world) {
+		sup := w.startDynamic(supervisor.DynamicSpec{})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		v, err := actor.Call(ctx, w.n, sup, "bogus")
+		if _, ok := v.(*actor.UnknownRequestError); !ok || err != nil {
+			t.Errorf("Call = %v, %v; want an UnknownRequestError", v, err)
+		}
+	})
+}

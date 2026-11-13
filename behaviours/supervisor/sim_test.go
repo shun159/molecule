@@ -121,7 +121,7 @@ func TestSimDynamic(t *testing.T) {
 	}})
 	pool := tr.children(tr.top)["pool"]
 	start := func() startResult {
-		v, err := tr.s.Call(pool, startChild{ChildSpec{Start: genserver.Child(crasher{})}})
+		v, err := tr.s.Call(pool, startChild{spec: ChildSpec{Start: genserver.Child(crasher{})}})
 		if err != nil {
 			t.Fatal(err)
 		}

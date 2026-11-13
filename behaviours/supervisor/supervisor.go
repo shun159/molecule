@@ -173,10 +173,14 @@ func nameOption(name actor.Name) []actor.Option {
 	return []actor.Option{actor.WithName(name)}
 }
 
+// The requests of any supervisor, each with the type of its reply.
 type (
-	whichChildren struct{}
-	stopReq       struct{}
+	whichChildren struct{ actor.Req[sup, []ChildInfo] }
+	stopReq       struct{ actor.Req[sup, struct{}] }
 )
+
+// refTo is the supervisor at dest, to call with its requests.
+func refTo(dest actor.Dest) actor.Ref[sup] { return actor.NewRef[sup](dest) }
 
 // Stop stops the supervisor at sup, static or dynamic, as its parent
 // exiting would: its children are stopped, then it exits with
@@ -189,7 +193,7 @@ func Stop(ctx context.Context, caller actor.Caller, sup actor.Dest) error {
 	}
 	down, release := n.Watch(ctx, pid)
 	defer release()
-	if _, err := actor.Call(ctx, caller, pid, stopReq{}); err != nil {
+	if _, err := refTo(pid).Call(ctx, caller, stopReq{}); err != nil {
 		return err
 	}
 	<-down.Done()
@@ -199,11 +203,7 @@ func Stop(ctx context.Context, caller actor.Caller, sup actor.Dest) error {
 // WhichChildren returns the children of the supervisor at sup, in start
 // order.
 func WhichChildren(ctx context.Context, caller actor.Caller, sup actor.Dest) ([]ChildInfo, error) {
-	v, err := actor.Call(ctx, caller, sup, whichChildren{})
-	if err != nil {
-		return nil, err
-	}
-	return v.([]ChildInfo), nil
+	return refTo(sup).Call(ctx, caller, whichChildren{})
 }
 
 func validate(spec Spec) error {
