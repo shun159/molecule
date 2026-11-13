@@ -70,12 +70,11 @@ func (p *Puller[T]) All() iter.Seq2[T, error] {
 		var zero T
 		defer p.Stop()
 		for {
-			v, err := actor.Call(p.ctx, p.n, p.pid, takeReq{})
+			r, err := actor.NewRef[puller[T]](p.pid).Call(p.ctx, p.n, takeReq[T]{})
 			if err != nil {
 				yield(zero, err)
 				return
 			}
-			r := v.(taken[T])
 			for _, e := range r.events {
 				if !yield(e, nil) {
 					return
@@ -96,7 +95,7 @@ func (p *Puller[T]) Stop() { actor.SendCast(p.n, p.pid, stopPulling{}) }
 
 type (
 	// takeReq takes the events received, waiting for some if none.
-	takeReq struct{}
+	takeReq[T any] struct{ actor.Req[puller[T], taken[T]] }
 	// taken is what a takeReq took: events, or the end of the
 	// subscription, with its reason.
 	taken[T any] struct {
@@ -153,7 +152,7 @@ func (p puller[T]) Handle(s pulling[T], msg gen.Msg) (pulling[T], []actor.Effect
 	case gen.InfoMsg:
 		return p.info(s, m.Msg)
 	case actor.CallMsg:
-		if _, ok := m.Req.(takeReq); ok {
+		if _, ok := m.Req.(takeReq[T]); ok {
 			return s.take(m.From)
 		}
 	case actor.CastMsg:

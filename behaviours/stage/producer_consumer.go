@@ -136,8 +136,8 @@ func (a producerConsumer[S, In]) handleMsg(p ProducerConsumerState[S, In], msg g
 	case gen.ContinueMsg:
 		return a.handleInfo(p, m.Msg)
 	}
-	if from, ok := isStatsCall(msg); ok {
-		return p, actor.Do(actor.Reply{To: from, Value: p.stats()})
+	if r, from, ok := statsCall(msg); ok {
+		return p, actor.Do(r.Reply(from, p.stats()))
 	}
 	return a.handleInfo(p, msg)
 }

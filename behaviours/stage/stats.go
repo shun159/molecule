@@ -27,29 +27,26 @@ type Stats struct {
 	Received      uint64 // events received
 }
 
+// anyStage marks the requests any stage answers: a producer, a consumer or
+// a producer-consumer.
+type anyStage struct{}
+
 // statsReq is the call StatsOf makes.
-type statsReq struct{}
+type statsReq struct{ actor.Req[anyStage, Stats] }
 
 func init() { dist.Register(statsReq{}, Stats{}) }
 
 // StatsOf returns the Stats of the stage at to, of this node or another.
 func StatsOf(ctx context.Context, caller actor.Caller, to actor.Dest) (Stats, error) {
-	v, err := actor.Call(ctx, caller, to, statsReq{})
-	if err != nil {
-		return Stats{}, err
-	}
-	return v.(Stats), nil
+	return actor.NewRef[anyStage](to).Call(ctx, caller, statsReq{})
 }
 
-// isStatsCall reports whether msg is the call of StatsOf, and returns its
-// From.
-func isStatsCall(msg any) (actor.From, bool) {
-	c, ok := msg.(actor.CallMsg)
-	if !ok {
-		return actor.From{}, false
-	}
-	_, ok = c.Req.(statsReq)
-	return c.From, ok
+// statsCall returns msg as the call of StatsOf, its request and From, if
+// it is one.
+func statsCall(msg any) (statsReq, actor.From, bool) {
+	c, isCall := msg.(actor.CallMsg)
+	r, isStats := c.Req.(statsReq)
+	return r, c.From, isCall && isStats
 }
 
 // stats is the Stats of the sides of a stage, nil if it has not, and of

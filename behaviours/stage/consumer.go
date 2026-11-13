@@ -80,8 +80,8 @@ func (a consumer[S, In]) Handle(c ConsumerState[S], msg gen.Msg) (ConsumerState[
 	case gen.ContinueMsg:
 		return a.handleInfo(c, m.Msg)
 	}
-	if from, ok := isStatsCall(msg); ok {
-		return c, actor.Do(actor.Reply{To: from, Value: stats(nil, &c.in, 0)})
+	if r, from, ok := statsCall(msg); ok {
+		return c, actor.Do(r.Reply(from, stats(nil, &c.in, 0)))
 	}
 	return a.handleInfo(c, msg)
 }
