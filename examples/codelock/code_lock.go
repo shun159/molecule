@@ -40,8 +40,8 @@ type Data struct {
 type (
 	// Button is a button press, a cast.
 	Button struct{ N int }
-	// Status asks for the state, a call.
-	Status struct{}
+	// Status asks for the state, a call replied the name of the state.
+	Status struct{ actor.Req[CodeLock, string] }
 )
 
 // clearTime is how long a partial code is kept without a press.
@@ -71,7 +71,10 @@ func (l CodeLock) HandleEvent(state State, data Data, ev genstatem.Event) (State
 			genstatem.StartStateTimeout{After: l.OpenTime, Msg: lock{}})
 
 	case genstatem.Call: // Status, in any state
-		return state, data, actor.Do(e.Reply(state.String()))
+		if r, ok := e.Req.(Status); ok {
+			return state, data, actor.Do(r.Reply(e.From, state.String()))
+		}
+		return state, data, actor.Do(actor.Unknown(e.From, e.Req))
 
 	case genstatem.StateTimeout: // lock, in Open
 		return Locked, data, nil
