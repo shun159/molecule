@@ -39,6 +39,30 @@
 // callback. A request of another type, which only actor.Call or actor.SendCast
 // can send, stops the server with a [*BadMessageError].
 //
+// Calls of one reply type are best typed by Rep: [From.Reply] and [Ref]
+// check it, a reply made later from a From kept in the state too. Calls
+// of replies of several types take actor.Of the server instead, Rep being
+// any, each request embedding actor.Req with the type of its reply: the
+// caller calls through an actor.Ref, the reply of the type of the request,
+// and the server replies with the Reply of the request:
+//
+//	type (
+//		Get  struct{ actor.Req[Counter, int] }
+//		Even struct{ actor.Req[Counter, bool] }
+//	)
+//
+//	func (Counter) HandleCall(n int, req actor.Of[Counter], from genserver.From[any]) (int, []actor.Effect) {
+//		switch r := req.(type) {
+//		case Get:
+//			return n, actor.Do(r.Reply(from, n))
+//		case Even:
+//			return n, actor.Do(r.Reply(from, n%2 == 0))
+//		}
+//		return n, actor.Do(actor.Unknown(from, req))
+//	}
+//
+// A reply made from From then is not checked: From.Reply takes any.
+//
 // # Replies
 //
 // HandleCall answers with the effect of [From.Reply], which only takes a
