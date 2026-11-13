@@ -132,6 +132,7 @@ func (p *process) die(reason error) {
 	// find it gone.
 	p.node.procs.del(p.pid.id)
 	close(p.done) // last: once it is closed, the context is cancelled too
+	p.mbox.wake() // a Receive waiting on the mailbox alone
 	links, monitors, monitoring := p.links, p.monitors, p.monitoring
 	p.links, p.monitors, p.monitoring = nil, nil, nil
 	p.mu.Unlock()
@@ -460,6 +461,10 @@ func (s *Self) Receive(ctx context.Context) (any, error) {
 		}
 		if msg, ok := p.mbox.pop(); ok {
 			return msg, nil
+		}
+		if ctx.Done() == nil { // a select of one case: die wakes it too
+			<-p.mbox.notify
+			continue
 		}
 		select {
 		case <-p.mbox.notify:

@@ -28,11 +28,16 @@ func (m *mailbox) push(msg any) (full bool) {
 	m.q = append(m.q, msg)
 	full = m.max > 0 && len(m.q)-m.head > m.max
 	m.mu.Unlock()
+	m.wake()
+	return full
+}
+
+// wake wakes the owner, if it waits on notify: of a push, or of its death.
+func (m *mailbox) wake() {
 	select {
 	case m.notify <- struct{}{}:
 	default:
 	}
-	return full
 }
 
 func (m *mailbox) pop() (any, bool) {
