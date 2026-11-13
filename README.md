@@ -25,8 +25,8 @@ simulation.
 
 ## Example
 
-A counter, as a gen_server. Its state is the count; a cast adds to it, a
-call returns it.
+A counter, as a gen_server. Its state is the count; a cast adds to it,
+and each call has a reply of its own type.
 
 ```go
 package main
@@ -44,11 +44,21 @@ import (
 // Counter counts; its state is the count.
 type Counter struct{ genserver.Default[int] }
 
-type Get struct{}
-type Add struct{ N int }
+// The calls of Counter, each with the type of its reply, and its cast.
+type (
+	Get  struct{ actor.Req[Counter, int] }
+	Even struct{ actor.Req[Counter, bool] }
+	Add  struct{ N int }
+)
 
-func (Counter) HandleCall(n int, _ Get, from genserver.From[int]) (int, []actor.Effect) {
-	return n, actor.Do(from.Reply(n))
+func (Counter) HandleCall(n int, req actor.Of[Counter], from genserver.From[any]) (int, []actor.Effect) {
+	switch r := req.(type) {
+	case Get:
+		return n, actor.Do(r.Reply(from, n))
+	case Even:
+		return n, actor.Do(r.Reply(from, n%2 == 0))
+	}
+	return n, actor.Do(actor.Unknown(from, req))
 }
 
 func (Counter) HandleCast(n int, a Add) (int, []actor.Effect) {
@@ -58,21 +68,25 @@ func (Counter) HandleCast(n int, a Add) (int, []actor.Effect) {
 func main() {
 	ctx := context.Background()
 	node := proc.NewNode("")
-	counter, err := genserver.Start(ctx, node, Counter{})
+	started, err := genserver.Start(ctx, node, Counter{})
 	if err != nil {
 		log.Fatal(err)
 	}
+	counter := actor.NewRef[Counter](started.Dest())
 	counter.Cast(node, Add{2})
 	counter.Cast(node, Add{3})
-	n, err := counter.Call(ctx, node, Get{})
-	fmt.Println(n, err) // 5 <nil>
+	n, _ := counter.Call(ctx, node, Get{})     // an int
+	even, _ := counter.Call(ctx, node, Even{}) // a bool
+	fmt.Println(n, even)                       // 5 false
 }
 ```
 
-`Default` supplies the callbacks the counter does not need, Init among
-them: the count starts at zero. The reply is an effect returned by
-HandleCall, not a call made from it, so the callbacks are tested without a
-process:
+A call is checked by the compiler: `Call` returns the type of the reply of
+its request, a request to another server does not compile, nor does a
+reply of the wrong type. `Default` supplies the callbacks the counter does
+not need, Init among them: the count starts at zero. The reply is an
+effect returned by HandleCall, not a call made from it, so the callbacks
+are tested without a process:
 
 ```go
 n, effs := Counter{}.HandleCast(2, Add{3}) // 5, no effects

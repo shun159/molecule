@@ -70,6 +70,9 @@ func NewRef[Srv any](dest Dest) Ref[Srv] { return Ref[Srv]{dest} }
 // Dest returns where the server is.
 func (r Ref[Srv]) Dest() Dest { return r.dest }
 
+// Cast sends msg to the server without waiting. See SendCast.
+func (r Ref[Srv]) Cast(caller Caller, msg any) { SendCast(caller, r.dest, msg) }
+
 // Call calls the server with req, and returns its reply, of the type of
 // req. See Call.
 func (r Ref[Srv]) Call[Rep any](ctx context.Context, caller Caller, req request[Srv, Rep]) (Rep, error) {

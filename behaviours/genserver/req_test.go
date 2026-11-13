@@ -12,8 +12,13 @@ import (
 	"github.com/shun159/molecule/proc"
 )
 
-// calc takes requests bound to it, each replied a type of its own.
+// calc takes requests bound to it, each replied a type of its own, and
+// casts adding to its number.
 type calc struct{ genserver.Default[int] }
+
+type addN struct{ N int }
+
+func (calc) HandleCast(n int, a addN) (int, []actor.Effect) { return n + a.N, nil }
 
 type (
 	getN struct{ actor.Req[calc, int] }
@@ -61,8 +66,9 @@ func TestRefCall(t *testing.T) {
 	if v, err := ref.Call(ctx, n, forgotten{}); v != 0 || !errors.As(err, &unknown) {
 		t.Errorf("forgotten = %d, %v; want an UnknownRequestError", v, err)
 	}
-	if v, err := ref.Call(ctx, n, getN{}); v != 4 || err != nil {
-		t.Errorf("getN after = %d, %v", v, err)
+	ref.Cast(n, addN{8})
+	if v, err := ref.Call(ctx, n, getN{}); v != 12 || err != nil {
+		t.Errorf("getN after a cast = %d, %v", v, err)
 	}
 }
 
