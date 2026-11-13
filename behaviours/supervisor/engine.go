@@ -505,26 +505,29 @@ func (b sup) which(s state) []ChildInfo {
 	return infos
 }
 
-// call handles the calls of the API.
+// call handles the calls of the API. A reply left for later, once an op
+// is done, is made of the From kept: stopReq, a startChild started, and a
+// terminateChild found.
 func (b sup) call(s *state, from actor.From, req any) []actor.Effect {
-	reply := func(v any) []actor.Effect { return actor.Do(actor.Reply{To: from, Value: v}) }
 	switch r := req.(type) {
 	case whichChildren:
-		return reply(b.which(*s))
+		return actor.Do(r.Reply(from, b.which(*s)))
 	case stopReq:
 		s.stopCalls = append(s.stopCalls, from)
 		b.finish(s, proc.Shutdown)
 	case countChildren:
-		return reply(s.children.len())
+		return actor.Do(r.Reply(from, s.children.len()))
 	case startChild:
 		if err := b.mayStart(*s); err != nil {
-			return reply(startResult{err: err})
+			return actor.Do(r.Reply(from, startResult{err: err}))
 		}
 		s.nextKey++
 		s.children = s.children.set(child{key: s.nextKey, spec: r.spec})
 		s.ops = append(s.ops, op{kind: opStart, keys: []uint64{s.nextKey}, call: true, from: from})
 	case terminateChild:
-		return b.terminateChild(s, from, r.pid)
+		return b.terminateChild(s, from, r)
+	default:
+		return actor.Do(actor.Unknown(from, req))
 	}
 	return nil
 }
@@ -542,12 +545,12 @@ func (b sup) mayStart(s state) error {
 	return nil
 }
 
-// terminateChild queues the stop of the child pid, a child of a dynamic
+// terminateChild queues the stop of the child of r, a child of a dynamic
 // supervisor, then its removal, then the reply to from.
-func (b sup) terminateChild(s *state, from actor.From, pid proc.PID) []actor.Effect {
-	k, ok := s.children.keyOf(pid)
+func (b sup) terminateChild(s *state, from actor.From, r terminateChild) []actor.Effect {
+	k, ok := s.children.keyOf(r.pid)
 	if !ok || !b.dynamic {
-		return actor.Do(actor.Reply{To: from, Value: ErrNotFound})
+		return actor.Do(r.Reply(from, ErrNotFound))
 	}
 	s.ops = append(s.ops,
 		op{kind: opStop, keys: []uint64{k}},

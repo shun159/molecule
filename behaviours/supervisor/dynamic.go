@@ -59,11 +59,18 @@ func dynamicOf(spec DynamicSpec) sup {
 	return b
 }
 
+// The requests of a dynamic supervisor, each with the type of its reply.
 type (
-	startChild     struct{ spec ChildSpec }
-	terminateChild struct{ pid proc.PID }
-	countChildren  struct{}
-	startResult    struct {
+	startChild struct {
+		actor.Req[sup, startResult]
+		spec ChildSpec
+	}
+	terminateChild struct {
+		actor.Req[sup, error]
+		pid proc.PID
+	}
+	countChildren struct{ actor.Req[sup, int] }
+	startResult   struct {
 		pid proc.PID
 		err error
 	}
@@ -77,31 +84,25 @@ func StartChild(ctx context.Context, caller actor.Caller, sup actor.Dest, spec C
 	if spec.Start == nil {
 		return proc.PID{}, errors.New("supervisor: child has no Start")
 	}
-	v, err := actor.Call(ctx, caller, sup, startChild{spec})
+	r, err := refTo(sup).Call(ctx, caller, startChild{spec: spec})
 	if err != nil {
 		return proc.PID{}, err
 	}
-	r := v.(startResult)
 	return r.pid, r.err
 }
 
 // TerminateChild stops the child pid of the dynamic supervisor at sup, as
 // on shutdown, and forgets it.
 func TerminateChild(ctx context.Context, caller actor.Caller, sup actor.Dest, pid proc.PID) error {
-	v, err := actor.Call(ctx, caller, sup, terminateChild{pid})
+	notFound, err := refTo(sup).Call(ctx, caller, terminateChild{pid: pid})
 	if err != nil {
 		return err
 	}
-	err, _ = v.(error)
-	return err
+	return notFound
 }
 
 // CountChildren returns the number of children of the dynamic supervisor
 // at sup, including those waiting to be restarted.
 func CountChildren(ctx context.Context, caller actor.Caller, sup actor.Dest) (int, error) {
-	v, err := actor.Call(ctx, caller, sup, countChildren{})
-	if err != nil {
-		return 0, err
-	}
-	return v.(int), nil
+	return refTo(sup).Call(ctx, caller, countChildren{})
 }
