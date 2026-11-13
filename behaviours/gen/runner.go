@@ -200,17 +200,28 @@ func (r *runner[S]) parentExit(pe ParentExiter[S], reason error) (effs []actor.E
 }
 
 // performed performs the effects a callback returned, or terminates the
-// behaviour on its panic, err, or on a Stop among them. It reports
-// whether the behaviour terminated, and its exit reason if so.
+// behaviour on its panic, err, on the panic of an effect, or on a Stop
+// among them. It reports whether the behaviour terminated, and its exit
+// reason if so.
 func (r *runner[S]) performed(effs []actor.Effect, err error) (bool, error) {
+	if err == nil {
+		err = r.applied(effs)
+	}
 	if err != nil {
 		return true, r.terminate(r.state, err)
 	}
-	r.apply(effs)
 	if r.stopping {
 		return true, r.terminate(r.state, r.stopReason)
 	}
 	return false, nil
+}
+
+// applied performs effs, and returns the panic of one as that of the
+// callback returning them: an effect unknown, or a Performer panicking.
+func (r *runner[S]) applied(effs []actor.Effect) (err error) {
+	defer recovered(&err)
+	r.apply(effs)
+	return nil
 }
 
 // recovered, deferred, turns a panic of the callback it is deferred in
