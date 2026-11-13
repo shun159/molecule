@@ -35,13 +35,17 @@ type (
 	}
 )
 
-// Queries to a scope, for actor.SendRequest from a behaviour, or gensim.
+// Queries to a scope, for actor.SendRequest from a behaviour, or gensim,
+// each with the type of its reply: called through an actor.Ref[Scope] too.
 type (
 	// MembersRequest asks for the members of Group, as Members returns
 	// them.
-	MembersRequest struct{ Group any }
+	MembersRequest struct {
+		actor.Req[Scope, []proc.PID]
+		Group any
+	}
 	// WhichRequest asks for the groups, as Which returns them.
-	WhichRequest struct{}
+	WhichRequest struct{ actor.Req[Scope, []any] }
 )
 
 // Messages between the scopes of a name on several nodes, as in Erlang's
@@ -137,16 +141,12 @@ func Leave(ctx context.Context, caller actor.Caller, scope actor.Dest, group any
 // in the order they joined, a process once per join, then those of the
 // scopes of other nodes.
 func Members(ctx context.Context, caller actor.Caller, scope actor.Dest, group any) ([]proc.PID, error) {
-	v, err := actor.Call(ctx, caller, scope, MembersRequest{group})
-	pids, _ := v.([]proc.PID)
-	return pids, err
+	return actor.NewRef[Scope](scope).Call(ctx, caller, MembersRequest{Group: group})
 }
 
 // Which returns the groups having members, on any node.
 func Which(ctx context.Context, caller actor.Caller, scope actor.Dest) ([]any, error) {
-	v, err := actor.Call(ctx, caller, scope, WhichRequest{})
-	groups, _ := v.([]any)
-	return groups, err
+	return actor.NewRef[Scope](scope).Call(ctx, caller, WhichRequest{})
 }
 
 // JoinEffect is the effect making pids members of group, for a behaviour.
@@ -177,9 +177,9 @@ func (sc Scope) Init(self proc.PID) (state, []actor.Effect, error) {
 func (sc Scope) HandleCall(s state, req any, from genserver.From[any]) (state, []actor.Effect) {
 	switch r := req.(type) {
 	case MembersRequest:
-		return s, actor.Do(from.Reply(s.members(r.Group)))
+		return s, actor.Do(r.Reply(from, s.members(r.Group)))
 	case WhichRequest:
-		return s, actor.Do(from.Reply(s.which()))
+		return s, actor.Do(r.Reply(from, s.which()))
 	}
 	s, effs := sc.HandleCast(s, req)
 	return s, append(effs, from.Reply(nil))

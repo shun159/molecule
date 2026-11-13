@@ -55,7 +55,7 @@ func (c *cluster) do(node string, req any) {
 // sorted.
 func (c *cluster) members(node, group string) []proc.PID {
 	c.t.Helper()
-	v, err := c.s.Call(c.scopes[node], MembersRequest{group})
+	v, err := c.s.Call(c.scopes[node], MembersRequest{Group: group})
 	if err != nil {
 		c.t.Fatal(err)
 	}
