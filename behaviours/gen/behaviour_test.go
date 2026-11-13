@@ -369,6 +369,28 @@ func TestHandlePanic(t *testing.T) {
 	})
 }
 
+// unknownEffect is an effect the runner does not know: one of another
+// behaviour, as an action of genstatem returned to gen.
+type unknownEffect struct{ actor.Extension }
+
+// An effect that panics, as one unknown, ends the behaviour as a panic of
+// its callback does: through Terminate.
+func TestEffectPanic(t *testing.T) {
+	inWorld(t, func(w *world) {
+		pid := w.start()
+		actor.SendCast(w.n, pid, 5)
+		_, err := actor.Call(context.Background(), w.n, pid, do{actor.Do(unknownEffect{})})
+		var pe *proc.PanicError
+		if !errors.As(err, &pe) {
+			t.Errorf("Call = %v, want the panic as exit reason", err)
+		}
+		e := (<-w.events).(terminated)
+		if e.n != 5 || !errors.As(e.reason, &pe) {
+			t.Errorf("Terminate got %#v", e)
+		}
+	})
+}
+
 func TestParentExit(t *testing.T) {
 	for _, trap := range []bool{true, false} {
 		inWorld(t, func(w *world) {
