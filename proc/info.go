@@ -62,8 +62,9 @@ func (p *process) info() ProcessInfo {
 	for pid := range p.links {
 		info.Links = append(info.Links, pid)
 	}
-	info.MonitoredBy, info.Monitoring = len(p.monitors), len(p.monitoring)
+	info.Monitoring = len(p.monitoring)
 	p.mu.Unlock()
+	info.MonitoredBy = p.monitors.len()
 	slices.SortFunc(info.Links, comparePIDs)
 	return info
 }

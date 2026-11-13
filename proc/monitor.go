@@ -88,9 +88,9 @@ func (s *Self) Monitor(target PID) Ref {
 	case p.dead.Load():
 	case t.dead.Load():
 		p.push(DownMsg{Ref: ref, PID: target, Reason: NoProc})
-	default:
+	default: // t not dead, as it holds the lock of t
 		p.watch(ref, target)
-		t.watchedBy(ref, watcher{pid: p.pid})
+		t.monitors.add(ref, watcher{pid: p.pid}, &t.dead)
 	}
 	return ref
 }
@@ -140,9 +140,7 @@ func (s *Self) Demonitor(ref Ref) bool {
 
 	if active {
 		if t := p.node.lookup(target); t != nil {
-			t.mu.Lock()
-			delete(t.monitors, ref)
-			t.mu.Unlock()
+			t.monitors.del(ref)
 		} else {
 			p.node.demonitorRemote(ref, target)
 		}
@@ -191,19 +189,13 @@ func (n *Node) Watch(parent context.Context, pid PID) (context.Context, context.
 	}
 
 	ref := n.MakeRef()
-	t.mu.Lock()
-	if t.dead.Load() {
-		t.mu.Unlock()
+	if !t.monitors.add(ref, watcher{cancel: cancel}, &t.dead) {
 		cancel(NoProc)
 		return ctx, stop
 	}
-	t.watchedBy(ref, watcher{cancel: cancel})
-	t.mu.Unlock()
 
 	return ctx, func() {
-		t.mu.Lock()
-		delete(t.monitors, ref)
-		t.mu.Unlock()
+		t.monitors.del(ref)
 		stop()
 	}
 }

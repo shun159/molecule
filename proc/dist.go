@@ -153,16 +153,8 @@ func (r Remote) Unlink(from, to PID) {
 // of ref. If target does not exist, that node is told it is down with
 // NoProc.
 func (r Remote) Monitor(ref Ref, target PID) {
-	if p := r.n.lookup(target); p != nil {
-		p.mu.Lock()
-		dead := p.dead.Load()
-		if !dead {
-			p.watchedBy(ref, watcher{remote: true})
-		}
-		p.mu.Unlock()
-		if !dead {
-			return
-		}
+	if p := r.n.lookup(target); p != nil && p.monitors.add(ref, watcher{remote: true}, &p.dead) {
+		return
 	}
 	if d := r.n.distribution(); d != nil {
 		d.Down(ref, target, NoProc)
@@ -192,9 +184,7 @@ func (r Remote) DemonitorName(ref Ref, name string) {
 // Demonitor stops the monitor ref of the local process target.
 func (r Remote) Demonitor(ref Ref, target PID) {
 	if p := r.n.lookup(target); p != nil {
-		p.mu.Lock()
-		delete(p.monitors, ref)
-		p.mu.Unlock()
+		p.monitors.del(ref)
 	}
 }
 
@@ -236,12 +226,12 @@ func (r Remote) NodeDown(node string) {
 				from = append(from, pid)
 			}
 		}
-		for ref, w := range p.monitors {
-			if w.remote && ref.node == node {
-				delete(p.monitors, ref)
-			}
-		}
 		p.mu.Unlock()
+		p.monitors.each(func(m map[Ref]watcher, ref Ref, w watcher) {
+			if w.remote && ref.node == node {
+				delete(m, ref)
+			}
+		})
 		for _, pid := range from {
 			p.signalExit(pid, NoConnection, true)
 		}
