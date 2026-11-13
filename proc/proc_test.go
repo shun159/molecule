@@ -251,6 +251,25 @@ func TestReceiveWakesOnSend(t *testing.T) {
 	})
 }
 
+// A process blocked in Receive without a ctx to wait on wakes once it is
+// killed: its death is in the mailbox's wakeup too.
+func TestReceiveWakesOnDeath(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		n := NewNode("")
+		got := make(chan error, 1)
+		p := n.spawn(func(s *Self) error {
+			_, err := s.Receive(context.Background())
+			got <- err
+			return err
+		})
+		synctest.Wait() // the process is now blocked in Receive
+		p.die(Kill)
+		if err := <-got; err != Kill {
+			t.Errorf("Receive = %v, want Kill", err)
+		}
+	})
+}
+
 func TestSelfContextCause(t *testing.T) {
 	n := NewNode("")
 	boom := errors.New("boom")
