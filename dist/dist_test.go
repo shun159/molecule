@@ -489,3 +489,50 @@ func TestMonitorNodes(t *testing.T) {
 		t.Errorf("got %#v", m)
 	}
 }
+
+// oracle is a genserver of typed requests, knowing one of them.
+type oracle struct{}
+
+type (
+	known   struct{ actor.Req[oracle, int] }
+	unknown struct{ actor.Req[oracle, int] }
+	asked   struct {
+		actor.Req[oracle, int]
+		Q string
+	}
+)
+
+func init() { dist.Register(known{}, unknown{}, asked{}) }
+
+func (oracle) Init(proc.PID) (int, []actor.Effect, error) { return 0, nil, nil }
+
+func (oracle) HandleCall(n int, req actor.Of[oracle], from genserver.From[any]) (int, []actor.Effect) {
+	if r, ok := req.(known); ok {
+		return n, actor.Do(r.Reply(from, 42))
+	}
+	return n, actor.Do(actor.Unknown(from, req))
+}
+
+func (oracle) HandleCast(n int, _ struct{}) (int, []actor.Effect) { return n, nil }
+
+func TestUnknownRequest(t *testing.T) {
+	nodes, _ := cluster(t, "secret", "a@test", "b@test")
+	a, b := nodes[0], nodes[1]
+	if _, err := genserver.Start(context.Background(), b, oracle{}, actor.WithName(actor.Local("oracle"))); err != nil {
+		t.Fatal(err)
+	}
+	ref := actor.NewRef[oracle](actor.Remote{Node: "b@test", Name: "oracle"})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if got, err := ref.Call(ctx, a, known{}); err != nil || got != 42 {
+		t.Errorf("known: %v, %v", got, err)
+	}
+	// Told at once, not left waiting until ctx is done.
+	var unk *actor.UnknownRequestError
+	if _, err := ref.Call(ctx, a, unknown{}); !errors.As(err, &unk) || unk.Req != (unknown{}) {
+		t.Errorf("unknown: %v", err)
+	}
+	if _, err := ref.Call(ctx, a, asked{Q: "why"}); !errors.As(err, &unk) || unk.Req != (asked{Q: "why"}) {
+		t.Errorf("asked: %v", err)
+	}
+}
