@@ -39,8 +39,8 @@ type Decoder interface {
 // nodes, by a value of each, as the default Codec needs: it sends a
 // message of a type it knows, with its exported fields. Every node
 // registers the types it sends or receives, at init, before connecting.
-// Built-in types, PIDs, Refs and the calls and casts of gen need not be
-// registered.
+// Built-in types, PIDs, Refs, the calls and casts of gen and the reply of
+// actor.Unknown need not be registered.
 //
 //	func init() { dist.Register(Ping{}, Pong{}) }
 //
@@ -142,6 +142,7 @@ func init() {
 	gob.Register(actor.CallMsg{})
 	gob.Register(actor.CastMsg{})
 	gob.Register(actor.CallAbandoned{})
+	gob.Register(&actor.UnknownRequestError{})
 }
 
 // gobCodec is the default Codec, of encoding/gob.
